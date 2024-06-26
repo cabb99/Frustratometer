@@ -243,7 +243,8 @@ def replica_exchanges(energies, temperatures, kb=0.008314, exchange_id=0):
         exponent = delta / kb # Sign is correct, as we want to swap when the system with higher temperature has lower energy
         prob = np.exp(min(0., exponent)) 
 
-        if 1 <= prob:
+        #if 1 <= prob:
+        if np.random.random() < acceptance_probability:
             order[i]=i+1
             order[i+1]=i
     return order
