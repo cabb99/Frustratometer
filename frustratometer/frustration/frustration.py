@@ -796,7 +796,7 @@ def compute_auc(roc_score):
     auc : float
         AUC value
     """
-    fpr, tpr = roc
+    fpr, tpr = roc_score
     auc = np.sum(tpr[:-1] * (fpr[1:] - fpr[:-1]))
     return auc
 
@@ -811,7 +811,7 @@ def plot_roc(roc_score):
         Array containing lists of false and true positive rates 
     """
     import matplotlib.pyplot as plt
-    plt.plot(roc[0], roc[1])
+    plt.plot(roc_score[0], roc_score[1])
     plt.xlabel('False positive rate (1-specificity)')
     plt.ylabel('True positive rate (sensiticity)')
     plt.suptitle('Receiver operating characteristic')
