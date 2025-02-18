@@ -57,6 +57,7 @@ class AWSEM(Frustratometer):
                  pdb_structure: object,
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
+                 sparse: bool=False,
                  **parameters)->object:
         """
         Generate AWSEM object
