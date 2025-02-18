@@ -26,7 +26,9 @@ jobs:
         #os: [macOS-latest, ubuntu-latest, windows-latest]
         #python-version: [3.8, 3.9, "3.10"]
         os: [ubuntu-latest]
-        python-version: [3.8, 3.9, "3.10", "3.11"]
+        python-version: ["3.10", "3.11"]
+        #numpy-version: ["1.25", "2"]
+
     steps:
     - uses: actions/checkout@v1
 
@@ -49,7 +51,7 @@ jobs:
        cd ..  
 
     - name: checkout source
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 #      with:
 #        path: main
     
@@ -73,12 +75,12 @@ jobs:
 #        pwd
 
     # More info on options: https://github.com/conda-incubator/setup-miniconda
-    - uses: conda-incubator/setup-miniconda@v2
+    - uses: conda-incubator/setup-miniconda@v3
       with:
         python-version: ${{ matrix.python-version }}
         environment-file: devtools/conda-envs/test_env.yaml
 
-        channels: conda-forge, defaults, bioconda
+        channels: conda-forge,defaults,bioconda
 
         activate-environment: test
         auto-update-conda: false
@@ -90,17 +92,18 @@ jobs:
 #        cd main
 #        pwd
     
-    #Install numpy first
-    - name: Install numpy
+    - name: Install NumPy
       run: |
-        conda install "numpy<2"
+        conda install numpy=${{ matrix.numpy-version }}
+        python -c "import numpy as np; print('NumPy version:', np.__version__)"
 
     #Install pydca
     - name: Check out pydca
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: cabb99/pydca
         path: pydca_dir
+
     - name: Install pydca
       run: |
         cd pydca_dir
