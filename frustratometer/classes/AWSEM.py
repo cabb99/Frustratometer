@@ -5,9 +5,9 @@ from .Frustratometer import Frustratometer
 from .Gamma import Gamma
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic.types import Path
-from typing import List,Optional,Union
+from typing import List,Optional,Union,Generator
 
-__all__ = ['AWSEM']
+__all__ = ['AWSEM','AWSEMEnsemble']
 
 class AWSEMParameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
@@ -75,73 +75,88 @@ class AWSEM(Frustratometer):
         AWSEM object
         """
         
-        #Set attributes
-        p = AWSEMParameters(**parameters)
-        if p.min_sequence_separation_contact is None:
-            p.min_sequence_separation_contact = 1
-        if p.min_sequence_separation_rho is None:
-            p.min_sequence_separation_rho = 1
-        if p.min_sequence_separation_electrostatics is None:
-            p.min_sequence_separation_electrostatics = 1
-
-        for field, value in p:
+        #Set parameters attributes
+        self.p = AWSEMParameters(**parameters)
+        if self.p.min_sequence_separation_contact is None:
+            self.p.min_sequence_separation_contact = 1
+        if self.p.min_sequence_separation_rho is None:
+            self.p.min_sequence_separation_rho = 1
+        if self.p.min_sequence_separation_electrostatics is None:
+            self.p.min_sequence_separation_electrostatics = 1
+        for field, value in self.p:
             setattr(self, field, value)
-        
-        #Gamma parameters
-        if isinstance(p.gamma, Gamma):
-            gamma = p.gamma
-        elif isinstance(p.gamma, Path):
-            gamma = Gamma(p.gamma)
+        if isinstance(self.p.gamma, Gamma):
+            gamma = self.p.gamma
+        elif isinstance(self.p.gamma, Path):
+            gamma = Gamma(self.p.gamma)
         else:
             raise ValueError("Gamma parameter must be a path or a Gamma object.")
-                
         self.gamma=gamma
         self.burial_gamma = gamma['Burial'].T
         self.direct_gamma = gamma['Direct'][0]
         self.protein_gamma = gamma['Protein'][0]
         self.water_gamma = gamma['Water'][0]
-        self.burial_in_context=p.burial_in_context
+        self.burial_in_context=self.p.burial_in_context
 
-        #Structure details
-        self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
+        # ??????
+        self._decoy_fluctuation = {} # don't know what this does
+        self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
+
+        # sequence details
         if sequence is None:
             self.sequence=pdb_structure.sequence
         else:
             self.sequence=sequence
+        self.aa_freq = frustration.compute_aa_freq(self.sequence)
+        self.contact_freq = frustration.compute_contact_freq(self.sequence)
+
+        # structure details
+        self.expose_indicator_functions = expose_indicator_functions
+        self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
+        self.pdb_structure = pdb_structure
+
+
+    @property
+    def pdb_structure(self):
+        return self._pdb_structure
+    @pdb_structure.setter
+    def pdb_structure(self,pdb_structure):
+        # check structure
+        selection_CB = pdb_structure.structure.select('name CB or (resname GLY IGL and name CA)')
+        resid = selection_CB.getResindices()
+        N=len(resid)
+        if N != len(self.sequence):
+            raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
+        self.resid = resid
+        self.N = N
+        # set structure-dependent proterties
+        self.pdb_structure  = pdb_structure
         self.structure=pdb_structure.structure
         self.chain=pdb_structure.chain
         self.pdb_file=pdb_structure.pdb_file
         self.init_index_shift=pdb_structure.init_index_shift
         self.distance_matrix=pdb_structure.distance_matrix
         self.full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
-        selection_CB = self.structure.select('name CB or (resname GLY IGL and name CA)')
+        # reset indicator functions, energies, and potts model
+        self.compute_indicators_energies_potts_model()
 
-        resid = selection_CB.getResindices()
-        self.resid=resid
-        self.N=len(self.resid)
-        assert self.N == len(self.sequence), "The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object."
-
+    def compute_indicators_energies_potts_model():
         if self.burial_in_context==True:
             selected_matrix=self.full_pdb_distance_matrix
         else:
             selected_matrix=self.distance_matrix
         sequence_mask_rho = frustration.compute_mask(selected_matrix, 
                                                      maximum_contact_distance=None, 
-                                                     minimum_sequence_separation = p.min_sequence_separation_rho)
+                                                     minimum_sequence_separation = self.p.min_sequence_separation_rho)
         sequence_mask_contact = frustration.compute_mask(self.distance_matrix, 
-                                                     maximum_contact_distance=p.distance_cutoff_contact, 
-                                                     minimum_sequence_separation = p.min_sequence_separation_contact)
-        
-        self._decoy_fluctuation = {}
-        self.minimally_frustrated_threshold=.78
-
+                                                     maximum_contact_distance=self.p.distance_cutoff_contact, 
+                                                     minimum_sequence_separation = self.p.min_sequence_separation_contact)
         # Calculate rho
         rho = 0.25 
-        rho *= (1 + np.tanh(p.eta * (selected_matrix- p.r_min)))
-        rho *= (1 + np.tanh(p.eta * (p.r_max - selected_matrix)))
+        rho *= (1 + np.tanh(self.p.eta * (selected_matrix- self.p.r_min)))
+        rho *= (1 + np.tanh(self.p.eta * (self.p.r_max - selected_matrix)))
         rho *= sequence_mask_rho
         self.rho=rho
-        
         #Calculate sigma water
         rho_r = (rho).sum(axis=1)
         if self.full_pdb_distance_matrix.shape!=self.distance_matrix.shape:
@@ -153,23 +168,21 @@ class AWSEM(Frustratometer):
         rho_b = np.expand_dims(rho_r, 1)
         rho1 = np.expand_dims(rho_r, 0)
         rho2 = np.expand_dims(rho_r, 1)
-        sigma_water = 0.25 * (1 - np.tanh(p.eta_sigma * (rho1 - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho2 - p.rho_0)))
+        sigma_water = 0.25 * (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) * (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0)))
         sigma_protein = 1 - sigma_water
-
         #Calculate theta and indicators
-        theta = 0.25 * (1 + np.tanh(p.eta * (self.distance_matrix - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - self.distance_matrix)))
-        thetaII = 0.25 * (1 + np.tanh(p.eta * (self.distance_matrix - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - self.distance_matrix)))
-        burial_indicator = np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min)) + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b))
+        theta = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_min))) * (1 + np.tanh(self.p.eta * (self.p.r_max - self.distance_matrix)))
+        thetaII = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_minII))) * (1 + np.tanh(self.p.eta * (self.p.r_maxII - self.distance_matrix)))
+        burial_indicator = np.tanh(self.p.burial_kappa * (rho_b - self.p.burial_ro_min)) + np.tanh(self.p.burial_kappa * (self.p.burial_ro_max - rho_b))
         direct_indicator = theta[:, :, np.newaxis, np.newaxis]
         water_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_water[:, :, np.newaxis, np.newaxis]
         protein_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_protein[:, :, np.newaxis, np.newaxis]
-        
-        if expose_indicator_functions:
+        # store indicators and gammas for our particular sequence as attributes
+        if self.expose_indicator_functions:
             self.indicators=[]
             self.indicators.append(burial_indicator[:,0])
             self.indicators.append(burial_indicator[:,1])
             self.indicators.append(burial_indicator[:,2])
-            
             self.indicators.append(direct_indicator[:,:,0,0]*sequence_mask_contact)
             self.indicators.append(protein_indicator[:,:,0,0]*sequence_mask_contact)
             self.indicators.append(water_indicator[:,:,0,0]*sequence_mask_contact)
@@ -194,60 +207,52 @@ class AWSEM(Frustratometer):
             self.water_indicator = water_indicator
             self.protein_indicator = protein_indicator
             
-
+        
         J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
         h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
-
-        #Burial energy
-        burial_energy = 0.5 * p.k_contact * self.burial_gamma[h_index[1]] * burial_indicator[:, np.newaxis, :]
-        self.burial_energy = burial_energy
-
-        #Contact energy
+        
+        # compute burial and contact energies
+        self.burial_energy = 0.5 * p.k_contact * self.burial_gamma[h_index[1]] * burial_indicator[:, np.newaxis, :]
         direct = direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
         water_mediated = water_indicator * self.water_gamma[J_index[2], J_index[3]]
         protein_mediated = protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
-        contact_energy = p.k_contact * np.array([direct, water_mediated, protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
-
-        # Compute electrostatics
-        if p.k_electrostatics!=0:
-            self.sequence_cutoff=min(p.min_sequence_separation_electrostatics, p.min_sequence_separation_contact)
+        self.contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+        # Compute electrostatics and add to contact energy
+        if self.p.k_electrostatics!=0:
+            self.sequence_cutoff=min(p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
             self.distance_cutoff=None
-            
-            
-            electrostatics_mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=p.min_sequence_separation_electrostatics)
+            electrostatics_mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=self.p.min_sequence_separation_electrostatics)
             # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
             charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
             charges2 = charges[:,np.newaxis]*charges[np.newaxis,:]
-
-            electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / p.electrostatics_screening_length) * electrostatics_mask
-            electrostatics_energy = -p.k_electrostatics * (charges2[np.newaxis,np.newaxis,:,:]*electrostatics_indicator[:,:,np.newaxis,np.newaxis])
-
+            electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * electrostatics_mask
+            electrostatics_energy = -self.p.k_electrostatics * (charges2[np.newaxis,np.newaxis,:,:]*electrostatics_indicator[:,:,np.newaxis,np.newaxis])
             contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
-            if expose_indicator_functions:
+            if self.expose_indicator_functions:
                 self.indicators.append(electrostatics_indicator)
-                temp_gamma=0.5 * p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
+                temp_gamma=0.5 * self.p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
                 temp_gamma[0,:]=0
                 temp_gamma[:,0]=0
                 self.gamma_array.append(temp_gamma)
         else:
-            self.sequence_cutoff=p.min_sequence_separation_contact
-            self.distance_cutoff=p.distance_cutoff_contact
+            self.sequence_cutoff=self.p.min_sequence_separation_contact
+            self.distance_cutoff=self.p.distance_cutoff_contact
         self.mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=self.distance_cutoff, minimum_sequence_separation = self.sequence_cutoff)
-
         self.contact_energy = contact_energy
 
-        # Compute fast properties
-        self.aa_freq = frustration.compute_aa_freq(self.sequence)
-        self.contact_freq = frustration.compute_contact_freq(self.sequence)
+        # Compute potts model
         self.potts_model = {}
         self.potts_model['h'] = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
         self.potts_model['J'] = contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
-        
         # Set the gap energy to zero
         self.potts_model['h'][:, 0] = 0
         self.potts_model['J'][:, :, 0, :] = 0
         self.potts_model['J'][:, :, :, 0] = 0
-        self._native_energy=None
+        self._native_energy=None # don't know what this does
+
+    def change_conformation(alternative_pdb_structure):
+        # this function is an alias for the pdb_structure setter
+        self.pdb_structure = alternative_pdb_structure
 
     def compute_configurational_decoy_statistics(self, n_decoys=4000,aa_freq=None):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
@@ -367,3 +372,146 @@ class AWSEM(Frustratometer):
     def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000):
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
+
+
+class AWSEMEnsemble(): # don't think it's necessary for this one to inherit from Frustratometer
+                       # also, note that the functions compute_configurational_decoy_statistics,
+                       # compute_configurational_energies, and configuration_frustration are
+                       # present in the AWSEM class but removed here, since we don't expect to 
+                       # compute frustration on an entire ensemble
+    #Mapping to DCA
+    q = 20
+    aa_map_awsem_list = [0, 0, 4, 3, 6, 13, 7, 8, 9, 11, 10, 12, 2, 14, 5, 1, 15, 16, 19, 17, 18] #A gap has no energy
+    aa_map_awsem_x, aa_map_awsem_y = np.meshgrid(aa_map_awsem_list, aa_map_awsem_list, indexing='ij')
+    
+    def __init__(self, 
+                 pdb_structures: Generator[object,None,None],
+                 **parameters)->object:
+        """
+        Generate AWSEMEnsemble object
+
+        Parameters
+        ----------
+        pdb_structures : Generator[object,None,None]
+            yields Structure objects representing decoy structures
+        
+        Returns
+        -------
+        AWSEMEnsemble object
+        """
+        
+        #Set attributes
+        p = AWSEMParameters(**parameters)
+        if p.min_sequence_separation_contact is None:
+            p.min_sequence_separation_contact = 1
+        if p.min_sequence_separation_rho is None:
+            p.min_sequence_separation_rho = 1
+        if p.min_sequence_separation_electrostatics is None:
+            p.min_sequence_separation_electrostatics = 1
+
+        for field, value in p:
+            setattr(self, field, value)
+        
+        #Gamma parameters
+        if isinstance(p.gamma, Gamma):
+            gamma = p.gamma
+        elif isinstance(p.gamma, Path):
+            gamma = Gamma(p.gamma)
+        else:
+            raise ValueError("Gamma parameter must be a path or a Gamma object.")
+                
+        self.gamma=gamma
+        self.burial_gamma = gamma['Burial'].T
+        self.direct_gamma = gamma['Direct'][0]
+        self.protein_gamma = gamma['Protein'][0]
+        self.water_gamma = gamma['Water'][0]
+        self.burial_in_context=p.burial_in_context # need to be careful here--the same choice will have to apply to all structures,
+                                              # the way this code is currently written
+        self.indicators = [] # we're always going to expose indicator functions for this class
+        #self._decoy_fluctuation = {} # not sure what this does
+        if p.k_electrostatics!=0:
+            self.sequence_cutoff=min(p.min_sequence_separation_electrostatics, p.min_sequence_separation_contact)
+            self.distance_cutoff=None
+        else:
+            self.sequence_cutoff=p.min_sequence_separation_contact
+            self.distance_cutoff=p.distance_cutoff_contact
+       
+        Ns = [] # number of residues in each structure
+        for pdb_structure in pdb_structures: 
+            self.indicators.append(AWSEM(pdb_structure,expose_indicator_functions=True).indicators)
+            """
+            #Structure details
+            # we can exclude most of the details present in the AWSEM class
+            structure=pdb_structure.structure
+            init_index_shift=pdb_structure.init_index_shift
+            distance_matrix=pdb_structure.distance_matrix
+            full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
+            selection_CB = structure.select('name CB or (resname GLY IGL and name CA)')
+
+            resid = selection_CB.getResindices()
+            N = len(resid)
+            Ns.append(N) # we'll check this later do make sure every structure has the same number of residues
+
+            if self.burial_in_context==True:
+                selected_matrix=full_pdb_distance_matrix # use a matrix that includes extra residues to compute local density and contacts
+                                                         # like the case where we're trying to design a protein that binds 
+                                                         # to another protein, and those residues affect the local environment even if they're
+                                                         # not part of the sequence space that we're sampling
+            else:
+                selected_matrix=distance_matrix
+            sequence_mask_rho = frustration.compute_mask(selected_matrix, 
+                                                        maximum_contact_distance=None, 
+                                                        minimum_sequence_separation = p.min_sequence_separation_rho)
+            sequence_mask_contact = frustration.compute_mask(distance_matrix, 
+                                                        maximum_contact_distance=p.distance_cutoff_contact, 
+                                                        minimum_sequence_separation = p.min_sequence_separation_contact)
+
+            # Calculate rho
+            rho = 0.25 
+            rho *= (1 + np.tanh(p.eta * (selected_matrix- p.r_min)))
+            rho *= (1 + np.tanh(p.eta * (p.r_max - selected_matrix)))
+            rho *= sequence_mask_rho
+            
+            #Calculate sigma water
+            rho_r = (rho).sum(axis=1)
+            if full_pdb_distance_matrix.shape!=distance_matrix.shape:
+                if self.burial_in_context==True:
+                    init_index_shift=pdb_structure.init_index_shift
+                    fin_index_shift=pdb_structure.fin_index_shift
+                    rho_r=rho_r[init_index_shift:fin_index_shift]
+            rho_b = np.expand_dims(rho_r, 1)
+            rho1 = np.expand_dims(rho_r, 0)
+            rho2 = np.expand_dims(rho_r, 1)
+            sigma_water = 0.25 * (1 - np.tanh(p.eta_sigma * (rho1 - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho2 - p.rho_0)))
+            sigma_protein = 1 - sigma_water
+
+            #Calculate theta and indicators
+            theta = 0.25 * (1 + np.tanh(p.eta * (distance_matrix - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - distance_matrix)))
+            thetaII = 0.25 * (1 + np.tanh(p.eta * (distance_matrix - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - distance_matrix)))
+            burial_indicator = np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min)) + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b))
+            direct_indicator = theta[:, :, np.newaxis, np.newaxis]
+            water_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_water[:, :, np.newaxis, np.newaxis]
+            protein_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_protein[:, :, np.newaxis, np.newaxis]
+            
+            self.indicators.append([])
+            self.indicators[-1].append(burial_indicator[:,0])
+            self.indicators[-1].append(burial_indicator[:,1])
+            self.indicators[-1].append(burial_indicator[:,2])
+            self.indicators[-1].append(direct_indicator[:,:,0,0]*sequence_mask_contact)
+            self.indicators[-1].append(protein_indicator[:,:,0,0]*sequence_mask_contact)
+            self.indicators[-1].append(water_indicator[:,:,0,0]*sequence_mask_contact)
+
+            # Compute electrostatics
+            if p.k_electrostatics!=0:
+                electrostatics_mask = frustration.compute_mask(distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=p.min_sequence_separation_electrostatics)
+                # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
+                charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+                charges2 = charges[:,np.newaxis]*charges[np.newaxis,:]
+                electrostatics_indicator = 1 / (distance_matrix + 1E-6) * np.exp(-distance_matrix / p.electrostatics_screening_length) * electrostatics_mask
+                self.indicators[-1].append(electrostatics_indicator)
+            """
+
+        self._native_energy=None # not sure what this does
+
+        #assert len(list(set(Ns))) == 1, f"Not all structures had the same number of residues! Numbers of residues found were {set(Ns)}"
+        #self.N = Ns[0] # doesn't matter which one we choose, they're all the same if we passed the assert

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from frustratometer.classes import Frustratometer
 from frustratometer.classes import Structure
-from frustratometer.classes import AWSEM
+from frustratometer.classes import AWSEM, AWSEMEnsemble
 from frustratometer.optimization.EnergyTerm import EnergyTerm
 from frustratometer.optimization.inner_product import compute_all_region_means
 from frustratometer.optimization.inner_product import build_mean_inner_product_matrix
@@ -1109,111 +1109,29 @@ class MonteCarlo:
 
 if __name__ == '__main__':
 
-    native_pdb = "tests/data/1r69.pdb"
-    
-    structure_bound = Structure.full_pdb(native_pdb, chain=None)
-    structure_free = Structure.full_pdb(native_pdb, "A")
+    pdb_list = ["tests/data/1r69.pdb"]
+    pdb_structures = (Structure(pdb, chain=None) for pdb in pdb_list)
+    ensemble = AWSEMEnsemble(pdb_structures, distance_cutoff_contact=10, min_sequence_separation_contact=2, expose_indicator_functions=True)
+    ###########################################################
+    # temporary changes for testing it while it's not yet fully implemented
+    assert len(ensemble.indicators)==1, ensemble.indicators
+    #assert len(ensemble.potts_model['h'])==1, ensemble.potts_model['h']
+    #assert len(ensemble.potts_model['J'])==1, ensemble.potts_model['J']
+    ensemble.indicators = ensemble.indicators[0]
+    #ensemble.potts_model['h'] = ensemble.potts_model['h'][0]
+    #ensemble.potts_model['J'] = ensemble.potts_model['J'][0]
+    ensemble.mask = np.ones((63,63))
+    #########################################################
 
-    model_bound = AWSEM(structure_bound, distance_cutoff_contact=10, min_sequence_separation_contact=2, expose_indicator_functions=True)
-    model_free = AWSEM(structure_free, distance_cutoff_contact=10, min_sequence_separation_contact=2, expose_indicator_functions=True)
-    reduced_alphabet = 'ADEFHIKLMNQRSTVWY'
+    reduced_alphabet = 'ADEFGHIKLMNQRSTVWY'
 
-    print(model_bound.sequence)
-    print(model_free.sequence)
-
-    # binding_region=np.array([1, 2, 3, 4, 26, 27, 28, 29, 30, 31, 32, 33, 49, 50, 51, 52, 53, 54, 55, 56, 57, 68, 69, 70, 90, 91, 92, 93, 94, 95, 96, 97, 109, 110, 111, 112, 113, 114, 115, 116, 117, 127, 128, 129, 130, 131, 132, 133, 134, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 190, 191, 192, 193, 194, 195, 196, 197])-1
-    energy_bound = AwsemEnergySelected(model_bound, alphabet=reduced_alphabet, selection=np.array(range(len(model_free.sequence))))
-    energy_free = AwsemEnergySelected(model_free, alphabet=reduced_alphabet)
-    energy_average = AwsemEnergyAverage(model_free, alphabet=reduced_alphabet)
-    energy_std = AwsemEnergyStd(model_free, alphabet=reduced_alphabet)
-    energy_std_100 = AwsemEnergyStd(model_free, alphabet=reduced_alphabet, n_decoys=100)
-    energy_std_1000 = AwsemEnergyStd(model_free, alphabet=reduced_alphabet, n_decoys=1000)
-    energy_std_10000 = AwsemEnergyStd(model_free, alphabet=reduced_alphabet, n_decoys=10000)
-    energy_variance = AwsemEnergyVariance(model_free, alphabet=reduced_alphabet)
+    awsem_energy = AwsemEnergy(ensemble, alphabet=reduced_alphabet)
     heterogeneity = Heterogeneity(exact=False, use_numba=True)
-    similarity = Similarity(model_free.sequence, use_numba=True)
 
-    # energy_mix = energy_free - 20 * heterogeneity
-    energy_mix = (energy_free - energy_average) / energy_std
-    # energy_mix = energy_bound - energy_free
-
-    energy_mixes = {"EnergyFree": energy_free,
-                    "EnergyBound": energy_bound,
-                    "Heterogeneity": heterogeneity,
-                    "EnergyAverage": energy_average, 
-                    "EnergyStd_ndecoys100": energy_std_100,
-                    "EnergyStd_ndecoys1000": energy_std_1000,
-                    "EnergyStd_ndecoys10000": energy_std_10000,
-                    "EnergyStd": energy_std,
-                    "Zscore_ndecoys10000":(energy_free - energy_average) / energy_std_10000,
-                    "Zscore":(energy_free - energy_average) / energy_std,
-                    "EnergyVariance": energy_variance,
-                    "Binding": (energy_bound - energy_free),
-                    "Similarity": similarity, 
-                    "Ivan":energy_bound - 40 * heterogeneity, 
-                    "Takada": (energy_bound - energy_average) / energy_std, 
-                    "Ivan_binding":(energy_bound - energy_free) - 40 * heterogeneity,
-                    "Takada_binding":(energy_free - energy_average) / energy_std + (energy_bound - energy_free),
-                    "Ivan_Takada_binding": (energy_free - energy_average) / energy_std + (energy_bound - energy_free) - 40 * heterogeneity,
-                    "Corrected_Takada": (energy_bound - energy_average) / (energy_std+5), 
-                    "Corrected_Takada_binding":(energy_free - energy_average) / (energy_std+5) + (energy_bound - energy_free),
-                    "Ivan_Corrected_Takada_binding": (energy_free - energy_average) / (energy_std+5) + (energy_bound - energy_free) - 40 * heterogeneity,
-                    "Ivan_bindidng similarity": (energy_bound - energy_free) - 40 * heterogeneity - 100*similarity,
-                    "Corrected_Takada_binding_similarity":(energy_free - energy_average) / (energy_std+5) + (energy_bound - energy_free) - 100*similarity,
-                    "Ivan_bindidng_similarityv2": (energy_bound - energy_free) - 40 * heterogeneity}
+    energy_mix = awsem_energy - 10*heterogeneity
     
-    for energy_name,energy_term in energy_mixes.items():
-        print (f"Energy term: {energy_name}")
-        energy_term.benchmark(seq_indices=np.random.randint(0, len(reduced_alphabet), size=(100,len(structure_free.sequence))))
-        if "ndecoys" not in energy_name:
-            energy_term.test(seq_index=np.random.randint(0, len(reduced_alphabet), size=len(structure_free.sequence)))
-        
-        monte_carlo = MonteCarlo(sequence = structure_free.sequence, energy=energy_term, alphabet=reduced_alphabet)
-        monte_carlo.benchmark_montecarlo_steps(n_repeats=3,n_steps=10000)
-        monte_carlo.benchmark_parallel_montecarlo_steps(n_repeats=3, n_steps=10000, n_replicas=8)
-
-
-
-    # Profiling of the parallel tempering
-    import cProfile
-    import pstats
-    import io
-
-    monte_carlo = MonteCarlo(sequence=model_free.sequence,  energy=energy_mix, alphabet=reduced_alphabet)
-                                    # evaluation_energies={"EnergyFree": energy_free, "Heterogeneity": heterogeneity, 
-                                    #                     "EnergyAverage": energy_average, "EnergyStd": energy_std,
-                                    #                     "Similarity": similarity, "Zscore":(energy_free - energy_average) / energy_std})
-            
-    monte_carlo.benchmark_montecarlo_steps(n_repeats=3, n_steps=100)
-    for n_replicas in [1, 2, 4, 8, 16]:
-        print(f"Running parallel tempering with {n_replicas} replicas")
-        monte_carlo.benchmark_parallel_montecarlo_steps(n_repeats=3, n_steps=100, n_replicas=n_replicas)
-
-    for n_replicas in [1, 2, 4, 8, 16]:
-        print(f"Running parallel tempering with {n_replicas} replicas")
-        monte_carlo.benchmark_parallel_montecarlo_steps(n_repeats=3, n_steps=1000, n_replicas=n_replicas)
-
-    monte_carlo.find_optimal_replicas(max_replicas=32, n_repeats=5, n_steps=1000)
-    monte_carlo.find_optimal_replicas(max_replicas=8, n_repeats=5, n_steps=10000)
-    monte_carlo.find_optimal_replicas(max_replicas=8, n_repeats=5, n_steps=100000)
-
-    # # Run the profiler
-    # profiler = cProfile.Profile()
-    # profiler.enable()
-
-    # monte_carlo.parallel_tempering(temperatures=np.logspace(3,-4,8), n_steps=1E4, n_steps_per_cycle=1E2)
-    # profiler.disable()
-    
-    # # Print the stats
-    # s = io.StringIO()
-    # ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
-    # ps.print_stats()
-    # ps.dump_stats('parallel_temperingv2.prof')
-    
-    
-    
-    
-    
+    monte_carlo = MonteCarlo(sequence = "SISSRVKSKRIQLGLNQAELAQKVGTTQQSIEQLENGKTKRPRFLPELASALGVSVDWLLNGT", energy=energy_mix, alphabet=reduced_alphabet)
+    monte_carlo.annealing(n_steps=1000)
     
     
     
