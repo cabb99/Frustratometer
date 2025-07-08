@@ -140,7 +140,7 @@ class AWSEM(Frustratometer):
         # reset indicator functions, energies, and potts model
         self.compute_indicators_energies_potts_model()
 
-    def compute_indicators_energies_potts_model():
+    def compute_indicators_energies_potts_model(self):
         if self.burial_in_context==True:
             selected_matrix=self.full_pdb_distance_matrix
         else:
@@ -190,7 +190,7 @@ class AWSEM(Frustratometer):
             self.gamma_array=[]
             temp_burial_gamma=self.burial_gamma[self.aa_map_awsem_list]
             temp_burial_gamma[0]=0
-            temp_burial_gamma *= -0.5 * p.k_contact
+            temp_burial_gamma *= -0.5 * self.p.k_contact
             self.gamma_array.append(temp_burial_gamma[:,0])
             self.gamma_array.append(temp_burial_gamma[:,1])
             self.gamma_array.append(temp_burial_gamma[:,2])
@@ -212,14 +212,14 @@ class AWSEM(Frustratometer):
         h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
         
         # compute burial and contact energies
-        self.burial_energy = 0.5 * p.k_contact * self.burial_gamma[h_index[1]] * burial_indicator[:, np.newaxis, :]
+        self.burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * burial_indicator[:, np.newaxis, :]
         direct = direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
         water_mediated = water_indicator * self.water_gamma[J_index[2], J_index[3]]
         protein_mediated = protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
-        self.contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+        contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
         # Compute electrostatics and add to contact energy
         if self.p.k_electrostatics!=0:
-            self.sequence_cutoff=min(p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
+            self.sequence_cutoff=min(self.p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
             self.distance_cutoff=None
             electrostatics_mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=self.p.min_sequence_separation_electrostatics)
             # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
@@ -242,8 +242,8 @@ class AWSEM(Frustratometer):
 
         # Compute potts model
         self.potts_model = {}
-        self.potts_model['h'] = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        self.potts_model['J'] = contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
+        self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
+        self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
         # Set the gap energy to zero
         self.potts_model['h'][:, 0] = 0
         self.potts_model['J'][:, :, 0, :] = 0
