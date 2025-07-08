@@ -130,7 +130,7 @@ class AWSEM(Frustratometer):
         self.resid = resid
         self.N = N
         # set structure-dependent proterties
-        self.pdb_structure  = pdb_structure
+        self._pdb_structure  = pdb_structure
         self.structure=pdb_structure.structure
         self.chain=pdb_structure.chain
         self.pdb_file=pdb_structure.pdb_file
