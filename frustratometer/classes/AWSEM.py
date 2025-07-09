@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from pydantic.types import Path
 from typing import List,Optional,Union,Generator
 
-__all__ = ['AWSEM','AWSEMEnsemble']
+__all__ = ['AWSEM','DecoyEnsemble']
 
 class AWSEMParameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
@@ -379,64 +379,28 @@ class DecoyEnsemble(): # don't think it's necessary for this one to inherit from
                        # also, note that the functions compute_configurational_decoy_statistics,
                        # compute_configurational_energies, and configuration_frustration are
                        # present in the AWSEM class but removed here, since we don't expect to 
-                       # compute frustration on an entire ensemble
-    #Mapping to DCA
-    q = 20
-    aa_map_awsem_list = [0, 0, 4, 3, 6, 13, 7, 8, 9, 11, 10, 12, 2, 14, 5, 1, 15, 16, 19, 17, 18] #A gap has no energy
-    aa_map_awsem_x, aa_map_awsem_y = np.meshgrid(aa_map_awsem_list, aa_map_awsem_list, indexing='ij')
-    
+                       # compute frustration on an entire ensemble  
     def __init__(self, 
                  pdb_structures: Generator[object,None,None],
                  **parameters)->object:
         """
-        Generate AWSEMEnsemble object
+        Generate DecoyEnsemble object
 
         Parameters
         ----------
         pdb_structures : Generator[object,None,None]
             yields Structure objects representing decoy structures
+        other parameters:
+            masks and cutoffs affecting the AWSEM class's indicator function calculations;
+            they must be the same for all structures; burial_in_context also available, but use at your own risk
         
         Returns
         -------
-        AWSEMEnsemble object, which holds a list of indicator functions for each decoy structure,
-            as calculated by the AWSEM class. 
+        DecoyEnsemble object, which holds a list of 7 numpy arrays, ordered by indicator function type:
+            [low density (rho), medium density (rho), high density (rho), direct, protein, water, electrostatics].
+            The numpy arrays' first axes vary the structure, while the second axis and third axis, if it exists, 
+            hold the (appropriately masked) indicator functions for each residue or pair of residues
         """
-        
-        #Set attributes
-        p = AWSEMParameters(**parameters)
-        if p.min_sequence_separation_contact is None:
-            p.min_sequence_separation_contact = 1
-        if p.min_sequence_separation_rho is None:
-            p.min_sequence_separation_rho = 1
-        if p.min_sequence_separation_electrostatics is None:
-            p.min_sequence_separation_electrostatics = 1
-
-        for field, value in p:
-            setattr(self, field, value)
-        
-        #Gamma parameters
-        if isinstance(p.gamma, Gamma):
-            gamma = p.gamma
-        elif isinstance(p.gamma, Path):
-            gamma = Gamma(p.gamma)
-        else:
-            raise ValueError("Gamma parameter must be a path or a Gamma object.")
-                
-        self.gamma=gamma
-        self.burial_gamma = gamma['Burial'].T
-        self.direct_gamma = gamma['Direct'][0]
-        self.protein_gamma = gamma['Protein'][0]
-        self.water_gamma = gamma['Water'][0]
-        self.burial_in_context=p.burial_in_context # need to be careful here--the same choice will have to apply to all structures,
-                                              # the way this code is currently written
-        #self._decoy_fluctuation = {} # not sure what this does
-        if p.k_electrostatics!=0:
-            self.sequence_cutoff=min(p.min_sequence_separation_electrostatics, p.min_sequence_separation_contact)
-            self.distance_cutoff=None
-        else:
-            self.sequence_cutoff=p.min_sequence_separation_contact
-            self.distance_cutoff=p.distance_cutoff_contact
-       
         burial_low_density_indicators = []
         burial_medium_density_indicators = []   
         burial_high_density_indicators = []
@@ -445,7 +409,10 @@ class DecoyEnsemble(): # don't think it's necessary for this one to inherit from
         contact_water_indicators = []
         electrostatics_indicators = []
         for pdb_structure in pdb_structures: 
-            all_indicators = AWSEM(pdb_structure,expose_indicator_functions=True).indicators
+            # the AWSEM class takes care of the indicator calculation (including masking) for us
+            #     AWSEM normally accepts an amino acid sequence argument, but we don't need that here
+            #     However, we do need to pass through parameters used to generate the indicator functions
+            all_indicators = AWSEM(pdb_structure, expose_indicator_functions=True, **parameters).indicators
             burial_low_density_indicators.append(all_indicators[0])
             burial_medium_density_indicators.append(all_indicators[1]) 
             burial_high_density_indicators.append(all_indicators[2])
@@ -453,8 +420,8 @@ class DecoyEnsemble(): # don't think it's necessary for this one to inherit from
             contact_protein_indicators.append(all_indicators[4])
             contact_water_indicators.append(all_indicators[5])
             electrostatics_indicators.append(all_indicators[6])
-            # indicator function order: burial low density, burial medium density, burial high density,
-            #                           direct, protein, water, electrostatics
+        # the idea here is that we have different conformers of a chain of a particular length;
+        #     if not, we'll get a ValueError when trying to initialize numpy arrays from a ragged set of lists
         self.indicators = [np.array(burial_low_density_indicators),
                            np.array(burial_medium_density_indicators),
                            np.array(contact_direct_indicators),
