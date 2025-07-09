@@ -1113,13 +1113,6 @@ if __name__ == '__main__':
     pdb_structures = (Structure(pdb, chain=None) for pdb in pdb_list)
     ensemble = AWSEMEnsemble(pdb_structures, distance_cutoff_contact=10, min_sequence_separation_contact=2, expose_indicator_functions=True)
     ###########################################################
-    # temporary changes for testing it while it's not yet fully implemented
-    assert len(ensemble.indicators)==1, ensemble.indicators
-    #assert len(ensemble.potts_model['h'])==1, ensemble.potts_model['h']
-    #assert len(ensemble.potts_model['J'])==1, ensemble.potts_model['J']
-    ensemble.indicators = ensemble.indicators[0]
-    #ensemble.potts_model['h'] = ensemble.potts_model['h'][0]
-    #ensemble.potts_model['J'] = ensemble.potts_model['J'][0]
     ensemble.mask = np.ones((63,63))
     #########################################################
 

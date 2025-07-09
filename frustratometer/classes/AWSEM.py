@@ -115,7 +115,8 @@ class AWSEM(Frustratometer):
         self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
         self.pdb_structure = pdb_structure
 
-
+    
+    # allows us to update coordinates only by passing in a pdb file
     @property
     def pdb_structure(self):
         return self._pdb_structure
@@ -397,7 +398,8 @@ class AWSEMEnsemble(): # don't think it's necessary for this one to inherit from
         
         Returns
         -------
-        AWSEMEnsemble object
+        AWSEMEnsemble object, which holds a list of indicator functions for each decoy structure,
+            as calculated by the AWSEM class. 
         """
         
         #Set attributes
@@ -427,7 +429,6 @@ class AWSEMEnsemble(): # don't think it's necessary for this one to inherit from
         self.water_gamma = gamma['Water'][0]
         self.burial_in_context=p.burial_in_context # need to be careful here--the same choice will have to apply to all structures,
                                               # the way this code is currently written
-        self.indicators = [] # we're always going to expose indicator functions for this class
         #self._decoy_fluctuation = {} # not sure what this does
         if p.k_electrostatics!=0:
             self.sequence_cutoff=min(p.min_sequence_separation_electrostatics, p.min_sequence_separation_contact)
@@ -436,82 +437,27 @@ class AWSEMEnsemble(): # don't think it's necessary for this one to inherit from
             self.sequence_cutoff=p.min_sequence_separation_contact
             self.distance_cutoff=p.distance_cutoff_contact
        
-        Ns = [] # number of residues in each structure
+        burial_low_density_indicators = []
+        burial_medium_density_indicators = []   
+        burial_high_density_indicators = []
+        contact_direct_indicators = []
+        contact_protein_indicators = []
+        contact_water_indicators = []
+        electrostatics_indicators = []
         for pdb_structure in pdb_structures: 
-            self.indicators.append(AWSEM(pdb_structure,expose_indicator_functions=True).indicators)
-            """
-            #Structure details
-            # we can exclude most of the details present in the AWSEM class
-            structure=pdb_structure.structure
-            init_index_shift=pdb_structure.init_index_shift
-            distance_matrix=pdb_structure.distance_matrix
-            full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
-            selection_CB = structure.select('name CB or (resname GLY IGL and name CA)')
-
-            resid = selection_CB.getResindices()
-            N = len(resid)
-            Ns.append(N) # we'll check this later do make sure every structure has the same number of residues
-
-            if self.burial_in_context==True:
-                selected_matrix=full_pdb_distance_matrix # use a matrix that includes extra residues to compute local density and contacts
-                                                         # like the case where we're trying to design a protein that binds 
-                                                         # to another protein, and those residues affect the local environment even if they're
-                                                         # not part of the sequence space that we're sampling
-            else:
-                selected_matrix=distance_matrix
-            sequence_mask_rho = frustration.compute_mask(selected_matrix, 
-                                                        maximum_contact_distance=None, 
-                                                        minimum_sequence_separation = p.min_sequence_separation_rho)
-            sequence_mask_contact = frustration.compute_mask(distance_matrix, 
-                                                        maximum_contact_distance=p.distance_cutoff_contact, 
-                                                        minimum_sequence_separation = p.min_sequence_separation_contact)
-
-            # Calculate rho
-            rho = 0.25 
-            rho *= (1 + np.tanh(p.eta * (selected_matrix- p.r_min)))
-            rho *= (1 + np.tanh(p.eta * (p.r_max - selected_matrix)))
-            rho *= sequence_mask_rho
-            
-            #Calculate sigma water
-            rho_r = (rho).sum(axis=1)
-            if full_pdb_distance_matrix.shape!=distance_matrix.shape:
-                if self.burial_in_context==True:
-                    init_index_shift=pdb_structure.init_index_shift
-                    fin_index_shift=pdb_structure.fin_index_shift
-                    rho_r=rho_r[init_index_shift:fin_index_shift]
-            rho_b = np.expand_dims(rho_r, 1)
-            rho1 = np.expand_dims(rho_r, 0)
-            rho2 = np.expand_dims(rho_r, 1)
-            sigma_water = 0.25 * (1 - np.tanh(p.eta_sigma * (rho1 - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho2 - p.rho_0)))
-            sigma_protein = 1 - sigma_water
-
-            #Calculate theta and indicators
-            theta = 0.25 * (1 + np.tanh(p.eta * (distance_matrix - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - distance_matrix)))
-            thetaII = 0.25 * (1 + np.tanh(p.eta * (distance_matrix - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - distance_matrix)))
-            burial_indicator = np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min)) + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b))
-            direct_indicator = theta[:, :, np.newaxis, np.newaxis]
-            water_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_water[:, :, np.newaxis, np.newaxis]
-            protein_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_protein[:, :, np.newaxis, np.newaxis]
-            
-            self.indicators.append([])
-            self.indicators[-1].append(burial_indicator[:,0])
-            self.indicators[-1].append(burial_indicator[:,1])
-            self.indicators[-1].append(burial_indicator[:,2])
-            self.indicators[-1].append(direct_indicator[:,:,0,0]*sequence_mask_contact)
-            self.indicators[-1].append(protein_indicator[:,:,0,0]*sequence_mask_contact)
-            self.indicators[-1].append(water_indicator[:,:,0,0]*sequence_mask_contact)
-
-            # Compute electrostatics
-            if p.k_electrostatics!=0:
-                electrostatics_mask = frustration.compute_mask(distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=p.min_sequence_separation_electrostatics)
-                # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
-                charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-                charges2 = charges[:,np.newaxis]*charges[np.newaxis,:]
-                electrostatics_indicator = 1 / (distance_matrix + 1E-6) * np.exp(-distance_matrix / p.electrostatics_screening_length) * electrostatics_mask
-                self.indicators[-1].append(electrostatics_indicator)
-            """
-
-        self._native_energy=None # not sure what this does
-
-        #assert len(list(set(Ns))) == 1, f"Not all structures had the same number of residues! Numbers of residues found were {set(Ns)}"
-        #self.N = Ns[0] # doesn't matter which one we choose, they're all the same if we passed the assert
+            all_indicators = AWSEM(pdb_structure,expose_indicator_functions=True).indicators
+            burial_low_density_indicators.append(all_indicators[0])
+            burial_medium_density_indicators.append(all_indicators[1]) 
+            burial_high_density_indicators.append(all_indicators[2])
+            contact_direct_indicators.append(all_indicators[3])
+            contact_protein_indicators.append(all_indicators[4])
+            contact_water_indicators.append(all_indicators[5])
+            electrostatics_indicators.append(all_indicators[6])
+            # indicator function order: burial low density, burial medium density, burial high density,
+            #                           direct, protein, water, electrostatics
+        self.indicators = [np.array(burial_low_density_indicators),
+                           np.array(burial_medium_density_indicators),
+                           np.array(contact_direct_indicators),
+                           np.array(contact_protein_indicators),
+                           np.array(contact_water_indicators),
+                           np.array(electrostatics_indicators),]
