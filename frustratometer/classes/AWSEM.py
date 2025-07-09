@@ -375,7 +375,7 @@ class AWSEM(Frustratometer):
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
 
-class AWSEMEnsemble(): # don't think it's necessary for this one to inherit from Frustratometer
+class DecoyEnsemble(): # don't think it's necessary for this one to inherit from Frustratometer
                        # also, note that the functions compute_configurational_decoy_statistics,
                        # compute_configurational_energies, and configuration_frustration are
                        # present in the AWSEM class but removed here, since we don't expect to 
