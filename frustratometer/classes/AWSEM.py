@@ -444,11 +444,11 @@ class AWSEM(AWSEMBase):
 class AWSEMIndicators(AWSEMBase):
 
     def __init__(self, 
-                 burial_indicator,
-                 direct_indicator,
-                 protein_indicator,
-                 water_indicator,
-                 electrostatics_indicator,
+                 burial_indicator: np.ndarray,
+                 direct_indicator: np.ndarray,
+                 protein_indicator: np.ndarray,
+                 water_indicator: np.ndarray,
+                 electrostatics_indicator: Union[np.ndarray, None],
                  sequence: str,          # sequence is optional if we initialize from a Structure but not here
                  expose_indicator_functions: bool=False,
                  **parameters)->object:
@@ -457,8 +457,17 @@ class AWSEMIndicators(AWSEMBase):
 
         Parameters
         ----------
-        indicators : list
-            List of numpy.ndarray holding the indicator functions, with different decoys stacked along axis 0
+        burial_indicator : np.ndarray
+            Burial indicator array, most likely accessed using the burial_indicator attribute of an AWSEM
+        direct_indicator : np.ndarray
+            Direct indicator array, most likely accessed using the direct_indicator attribute of an AWSEM
+        protein_indicator : np.ndarray
+            Protein indicator array, most likely accessed using the protein_indicator attribute of an AWSEM
+        water_indicator : np.ndarray
+            Water indicator array, most likely accessed using the water_indicator attribute of an AWSEM
+        electrostatics_indicator : Union[np.ndarray, None]
+            Electrostatics indicator array, most likely accessed using the electrostatics_indicator attribute of an AWSEM.
+            May be None is electrostatics were turned off (k_electrostatics=0).
         sequence :  str
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. 
         expose_indicator_functions: bool
@@ -503,10 +512,7 @@ class DecoyEnsemble():
         
         Returns
         -------
-        DecoyEnsemble object, which holds a list of 7 numpy arrays, ordered by indicator function type:
-            [low density (rho), medium density (rho), high density (rho), direct, protein, water, electrostatics].
-            The numpy arrays' first axes vary the structure, while the second axis and third axis, if it exists, 
-            hold the (appropriately masked) indicator functions for each residue or pair of residues
+        DecoyEnsemble object, which holds indicator arrays and gammas computed by the AWSEM class.
         """
         burial_indicators = []
         direct_indicators = []
