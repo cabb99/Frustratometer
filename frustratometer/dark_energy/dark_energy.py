@@ -31,7 +31,20 @@ def compute_dark_energy_matrix(EVO_matrix: np.array,
                                Tsel = None,
                                return_evo_rescaled = False):
     
-    
+    """
+        Compute the Dark Energy Variations.
+
+        Args:
+            np.ndarray: Evolutionary Energy Variations (matrix).
+            np.ndarray: Folding Energy Variations (matrix).
+            Tsel_from (str): Method to compute Tsel ('variance', 'slope_folding_to_evo', 'slope_evo_to_folding', 'user_defined').
+            return_evo_rescaled (bool): Whether to return the rescaled evolutionary matrix.
+
+        Returns:
+            np.ndarray: Dark Energy Variations.
+            np.ndarray: Rescaled evolutionary matrix (optional).
+            
+    """
     valid = {'variance', 'slope_folding_to_evo', 'slope_evo_to_folding', 'user_defined'}
     
     if Tsel_from not in valid:
@@ -68,6 +81,16 @@ def compute_dark_energy_matrix(EVO_matrix: np.array,
 
     
 def compute_N_eff(evo_matrix): 
+     """
+         Compute effective number of amino acids (N_eff) for each site
+
+        Args:
+            np.ndarray: Energy Variations (matrix).
+    
+        Returns:
+            np.array: Effective number of amino acids (N_eff)
+            
+    """
     # Step 1: Compute Boltzmann weights (w_i) for all sites
     w_i = np.exp(-evo_matrix)  # Shape: (L, 20)
     # Step 2: Compute partition function (Z_i) for each site
@@ -237,7 +260,7 @@ def map_hist_to_colors(h_, vmin, vmax, center_value, cmap="coolwarm",hex=True):
     return colors
 
 
-def view_3d_exon_hist(ali_seq, colors, pdb_filename, zip_file_path=None, zip_=False, chain='A',
+def view_3dmol(ali_seq, colors, pdb_filename, zip_file_path=None, zip_=False, chain='A',
                       clean_not_A_chain=True, highlight_residues=None,
                       second_chain=None, second_chain_surface=True,
                       second_chain_opacity=0.3, second_chain_color='lightgray'):
@@ -298,6 +321,7 @@ def plot_correlation_color(A, B, C,correlation_type, T_sel, index=None, alphabet
 
     Parameters:
         A, B: Input matrices (sequence_length x num_amino_acids).
+        C: color scale
         correlation_type: "all_values", "sequence_position_level", or "amino_acid_level".
         index: For "sequence_position_level" or "amino_acid_level", specify the position or amino acid index.
         alphabet: Amino acid single-letter codes.

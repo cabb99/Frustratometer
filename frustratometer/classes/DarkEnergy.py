@@ -31,15 +31,17 @@ class DarkEnergy:
 
     def compute_dark_energy_matrix(self, Tsel_from='variance', return_evo_rescaled=True):
         """
-        Compute the Dark Energy Matrix (DEM) and rescaled evolutionary matrix.
+        Compute the Dark Energy Variations.
 
         Args:
+            
             Tsel_from (str): Method to compute Tsel ('variance', 'slope_folding_to_evo', 'slope_evo_to_folding', 'user_defined').
             return_evo_rescaled (bool): Whether to return the rescaled evolutionary matrix.
 
         Returns:
-            np.ndarray: Dark Energy Matrix (DEM).
+            np.ndarray: Dark Energy Variations.
             np.ndarray: Rescaled evolutionary matrix (optional).
+            
         """
         self.DEM, self.EVO_r,self.Tsel = dark_energy.compute_dark_energy_matrix(
             self.EVO_matrix, self.FOLD_matrix, Tsel_from, self.kB, self.Tsel, return_evo_rescaled
@@ -144,7 +146,7 @@ class DarkEnergy:
         """
         return dark_energy.map_hist_to_colors(h_, vmin, vmax, center_value, cmap, hex)
 
-    def view_3d_exon_hist(self, ali_seq, colors, pdb_filename, zip_file_path=None, zip_=False, chain='A',
+    def view_3dmol(self, ali_seq, colors, pdb_filename, zip_file_path=None, zip_=False, chain='A',
                          clean_not_A_chain = True,highlight_residues = None,
                                 second_chain=None, second_chain_surface=True,
                                 second_chain_opacity=0.3, second_chain_color='lightgray'):
@@ -161,7 +163,7 @@ class DarkEnergy:
         Returns:
             py3Dmol.view: 3D visualization object.
         """
-        return dark_energy.view_3d_exon_hist(ali_seq, colors, pdb_filename, zip_file_path, zip_,chain, clean_not_A_chain,
+        return dark_energy.view_3dmol(ali_seq, colors, pdb_filename, zip_file_path, zip_,chain, clean_not_A_chain,
                                  highlight_residues = highlight_residues,
                                 second_chain=second_chain, second_chain_surface=second_chain_surface,
                                   second_chain_opacity=second_chain_opacity, second_chain_color=second_chain_color)
@@ -205,7 +207,7 @@ class DarkEnergy:
             pdb_seq_num_=pdb_seq_num
         # Visualize the PDB structure
         
-        view = self.view_3d_exon_hist(pdb_seq_num_, colors_, pdb_filename, zip_file_path, zip_, chain,
+        view = self.view_3dmol(pdb_seq_num_, colors_, pdb_filename, zip_file_path, zip_, chain,
                                      clean_not_A_chain,highlight_residues=highlight_residues,
                                      second_chain=second_chain, second_chain_surface=second_chain_surface,
                                        second_chain_opacity=second_chain_opacity, second_chain_color=second_chain_color)
