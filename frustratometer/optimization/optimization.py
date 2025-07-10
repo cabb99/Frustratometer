@@ -1277,9 +1277,10 @@ if __name__ == '__main__':
     pdb_list = ["tests/data/1r69.pdb","tests/data/1r69.pdb","tests/data/1r69.pdb"]
     pdb_structures = (Structure(pdb, chain=None) for pdb in pdb_list)
     ensemble = DecoyEnsemble(pdb_structures,  distance_cutoff_contact=10, min_sequence_separation_contact=10)
-    indicators, burial_indicators, direct_indicators, protein_indicators, water_indicators = ensemble.average()
-    average = AWSEMIndicators(indicators, burial_indicators, direct_indicators, protein_indicators, water_indicators,"SISSRVKSKRIQLGLNQAELAQKVGTTQQSIEQLENGKTKRPRFLPELASALGVSVDWLLNGT")
-
+    burial_indicators, direct_indicators, protein_indicators, water_indicators, electrostatics_indicators = ensemble.average()
+    average = AWSEMIndicators(burial_indicators, direct_indicators, protein_indicators, water_indicators, electrostatics_indicators,
+                                  "SISSRVKSKRIQLGLNQAELAQKVGTTQQSIEQLENGKTKRPRFLPELASALGVSVDWLLNGT")
+    
     reduced_alphabet = 'ADEFGHIKLMNQRSTVWY'
 
     awsem_energy = AwsemEnergy(average, alphabet=reduced_alphabet)
