@@ -7,7 +7,7 @@ from datetime import datetime
 
 from frustratometer.classes import Frustratometer
 from frustratometer.classes import Structure
-from frustratometer.classes import AWSEM, DecoyEnsemble
+from frustratometer.classes import AWSEM, AWSEMIndicators, DecoyEnsemble
 from frustratometer.optimization.EnergyTerm import EnergyTerm
 from frustratometer.optimization.inner_product import compute_all_region_means
 from frustratometer.optimization.inner_product import build_mean_inner_product_matrix
@@ -1274,14 +1274,15 @@ class MonteCarlo:
 
 if __name__ == '__main__':
 
-    pdb_list = ["tests/data/1r69.pdb"]
+    pdb_list = ["tests/data/1r69.pdb","tests/data/1r69.pdb","tests/data/1r69.pdb"]
     pdb_structures = (Structure(pdb, chain=None) for pdb in pdb_list)
-    ensemble = DecoyEnsemble(pdb_structures, distance_cutoff_contact=10, min_sequence_separation_contact=10)
-
+    ensemble = DecoyEnsemble(pdb_structures,  distance_cutoff_contact=10, min_sequence_separation_contact=10)
+    indicators, burial_indicators, direct_indicators, protein_indicators, water_indicators = ensemble.average()
+    average = AWSEMIndicators(indicators, burial_indicators, direct_indicators, protein_indicators, water_indicators,"SISSRVKSKRIQLGLNQAELAQKVGTTQQSIEQLENGKTKRPRFLPELASALGVSVDWLLNGT")
 
     reduced_alphabet = 'ADEFGHIKLMNQRSTVWY'
 
-    awsem_energy = AwsemEnergy(ensemble, alphabet=reduced_alphabet)
+    awsem_energy = AwsemEnergy(average, alphabet=reduced_alphabet)
     heterogeneity = Heterogeneity(exact=False, use_numba=True)
 
     energy_mix = awsem_energy - 10*heterogeneity

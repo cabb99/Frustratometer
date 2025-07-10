@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from pydantic.types import Path
 from typing import List,Optional,Union,Generator
 
-__all__ = ['AWSEM','DecoyEnsemble']
+__all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble']
 
 class AWSEMParameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
@@ -74,6 +74,7 @@ class AWSEMBase(Frustratometer):
         """
         
         # set sequence based on argument
+        self.N = len(sequence)
         self.sequence = sequence
 
         # set indicator function exposure based on argument
@@ -109,7 +110,7 @@ class AWSEMBase(Frustratometer):
         self.burial_in_context = self.p.burial_in_context
         self.aa_freq = frustration.compute_aa_freq(self.sequence)
         self.contact_freq = frustration.compute_contact_freq(self.sequence)
-        if self.p.k_electrostatics == 0:
+        if self.p.k_electrostatics != 0:
             self.sequence_cutoff=min(self.p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
             self.distance_cutoff=None # the distance matrix isn't guaranteed to exist in all subclasses,
                                       # but it doesn't hurt to define the distance_cutoff attribute--
@@ -204,9 +205,14 @@ class AWSEM(AWSEMBase):
         self.electrostatics_mask = frustration.compute_mask(self.distance_matrix, 
                                                      maximum_contact_distance=None, 
                                                      minimum_sequence_separation=self.p.min_sequence_separation_electrostatics)
+        with open('my_data.txt','w') as f:
+            f.write(f"self.distance_cutoff: {self.distance_cutoff}\n")
+            f.write(f"self.sequence_cutoff: {self.sequence_cutoff}\n")
+        np.save('my_distance_matrix.npy',self.distance_matrix)
         self.mask = frustration.compute_mask(self.distance_matrix, 
                                              maximum_contact_distance=self.distance_cutoff, 
                                              minimum_sequence_separation = self.sequence_cutoff)
+        np.save('my_mask_new.npy',self.mask)
         self.selected_matrix = selected_matrix # we'll need this in the calculate_indicators function 
         self.setup_model()
 
@@ -301,7 +307,7 @@ class AWSEM(AWSEMBase):
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * self.electrostatics_mask
             self.indicators.append(electrostatics_indicator)
             self.electrostatics_indicator = electrostatics_indicator # probably could get rid of either this or indicators list
-            self.electrostatics_gamma = -self.p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y][1:,1:]
+            self.electrostatics_gamma = -self.p.k_electrostatics * charges2[np.newaxis, np.newaxis, :, :]
             temp_gamma = 0.5 * self.p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
             temp_gamma[0,:]=0
             temp_gamma[:,0]=0
@@ -439,6 +445,10 @@ class AWSEMIndicators(AWSEMBase):
 
     def __init__(self, 
                  indicators: list,
+                 burial_indicator,
+                 direct_indicator,
+                 protein_indicator,
+                 water_indicator,
                  sequence: str,          # sequence is optional if we initialize from a Structure but not here
                  expose_indicator_functions: bool=False,
                  **parameters)->object:
@@ -460,7 +470,12 @@ class AWSEMIndicators(AWSEMBase):
 
         """
         super().__init__(sequence, expose_indicator_functions, **parameters)
+        self.N
         self.indicators = indicators
+        self.burial_indicator = burial_indicator
+        self.direct_indicator = direct_indicator
+        self.protein_indicator = protein_indicator
+        self.water_indicator = water_indicator
         self.setup_model()
 
     def calculate_indicators(self):
@@ -500,13 +515,18 @@ class DecoyEnsemble(): # don't think it's necessary for this one to inherit from
         contact_protein_indicators = []
         contact_water_indicators = []
         electrostatics_indicators = []
+        burial_indicators_other = []
+        direct_indicators_other = []
+        protein_indicators_other = []
+        water_indicators_other = []
+        electrostatics_indicators_other = []
         # the AWSEM class takes care of the indicator calculation (including masking) for us
         #     AWSEM normally accepts an amino acid sequence argument, but we don't need that here
         #     However, we do need to pass through parameters used to generate the indicator functions
-        awsem_obj = AWSEM(pdb_structures[0], expose_indicator_functions=True, **parameters)
+        awsem_obj = AWSEM(next(pdb_structures), expose_indicator_functions=True, **parameters)
         for pdb_structure in pdb_structures: 
-            awsem_obj.pdb_structure = pdb_structures[pdb_structure] # we can use the pdb_structure setter to update structural 
-                                                                    # stuff without fully re-initializing the object
+            awsem_obj.pdb_structure = pdb_structure # we can use the pdb_structure setter to update structural 
+                                                    # stuff without fully re-initializing the object
             all_indicators = awsem_obj.indicators
             burial_low_density_indicators.append(all_indicators[0])
             burial_medium_density_indicators.append(all_indicators[1]) 
@@ -515,6 +535,11 @@ class DecoyEnsemble(): # don't think it's necessary for this one to inherit from
             contact_protein_indicators.append(all_indicators[4])
             contact_water_indicators.append(all_indicators[5])
             electrostatics_indicators.append(all_indicators[6])
+            burial_indicators_other.append(awsem_obj.electrostatics_indicator)
+            direct_indicators_other.append(awsem_obj.electrostatics_indicator)
+            protein_indicators_other.append(awsem_obj.electrostatics_indicator)
+            water_indicators_other.append(awsem_obj.electrostatics_indicator)
+            electrostatics_indicators_other.append(awsem_obj.electrostatics_indicator)
         # the idea here is that we have different conformers of a chain of a particular length;
         #     if not, we'll get a ValueError when trying to initialize numpy arrays from a ragged set of lists
         self.indicators = [np.array(burial_low_density_indicators),
@@ -523,6 +548,11 @@ class DecoyEnsemble(): # don't think it's necessary for this one to inherit from
                            np.array(contact_protein_indicators),
                            np.array(contact_water_indicators),
                            np.array(electrostatics_indicators),]
+        self.burial_indicator = np.average(np.array(burial_indicators_other),axis=0)
+        self.direct_indicator = np.average(np.array(direct_indicators_other),axis=0)
+        self.protein_indicator = np.average(np.array(protein_indicators_other),axis=0)
+        self.water_indicator = np.average(np.array(water_indicators_other),axis=0)
+        self.electrostatics_indicator = np.average(np.array(electrostatics_indicators_other),axis=0)
         # Although a DecoyEnsemble does not have an energy or frustration in the same sense as an AWSEM,
         #     it is helpful to attach gamma parameters to the DecoyEnsemble so that DecoyEnergyAverage, etc.
         #     can read them through class inheritance in the same way that AwsemEnergyAverage, etc. read the gammas
@@ -531,3 +561,6 @@ class DecoyEnsemble(): # don't think it's necessary for this one to inherit from
         #     Technically, we generated one AWSEM for each pdb_structure, but the parameters are identical,
         #     so we can for convenience read the gammas from the most recently initialized awsem_obj
         self.gamma_array = awsem_obj.gamma_array
+
+    def average(self):
+        return [np.average(indicator, axis=0) for indicator in self.indicators], self.burial_indicator, self.direct_indicator, self.protein_indicator, self.water_indicator
