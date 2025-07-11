@@ -220,7 +220,7 @@ class AWSEM(AWSEMBase):
     def setup_structure(self, pdb_structure):
         # check structure
         selection_CB = pdb_structure.structure.select('name CB or (resname GLY IGL and name CA)')
-        resid = list(set(selection_CB.getResindices())) # sometimes, it decides to split a single residue in 2 
+        resid = selection_CB.getResindices()
         N=len(resid)
         self.resid = resid
         self.N = N
