@@ -566,13 +566,14 @@ class DecoyEnsemble():
                 except EOFError:
                     break
 
+    # average indicator functions over all decoys
     def avg(self):
         # average burial computation from generator
         avg_burial = 0
         counter = 0
         for array in self.burial_indicators:
             counter += 1
-            burial_indicator += array
+            avg_burial += array
         avg_burial /= counter
         self.avg_burial = avg_burial
         # average direct computation from generator
@@ -580,7 +581,7 @@ class DecoyEnsemble():
         counter = 0
         for array in self.direct_indicators:
             counter += 1
-            direct_indicator += array
+            avg_direct += array
         avg_direct /= counter
         self.avg_direct = avg_direct
         # average prot computation from generator
@@ -588,7 +589,7 @@ class DecoyEnsemble():
         counter = 0
         for array in self.protein_indicators:
             counter += 1
-            protein_indicator += array
+            avg_prot += array
         avg_prot /= counter
         self.avg_prot = avg_prot
         # average wat computation from generator
@@ -596,7 +597,7 @@ class DecoyEnsemble():
         counter = 0
         for array in self.water_indicators:
             counter += 1
-            water_indicator += array
+            avg_wat += array
         avg_wat /= counter
         self.avg_wat = avg_wat
         # average elec computation from generator
@@ -613,6 +614,7 @@ class DecoyEnsemble():
         self.avg_elec = avg_elec
         return self.avg_burial, self.avg_direct, self.avg_prot, self.avg_wat, self.avg_elec
 
+    # standard deviation of indicator functions over all decoys
     def std(self):
         if self.avg_burial is None or self.avg_direct is None or \
            self.avg_prot is None or self.avg_wat is None or \
