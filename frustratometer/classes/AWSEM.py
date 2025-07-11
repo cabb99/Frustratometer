@@ -566,7 +566,7 @@ class DecoyEnsemble():
                 except EOFError:
                     break
 
-    def average(self):
+    def avg(self):
         # average burial computation from generator
         avg_burial = 0
         counter = 0
@@ -617,7 +617,7 @@ class DecoyEnsemble():
         if self.avg_burial is None or self.avg_direct is None or \
            self.avg_prot is None or self.avg_wat is None or \
            self.avg_elec is None:
-            self.average()  # compute averages if not already done
+            self.avg()  # compute averages if not already done
         # std burial computation from generator and previously computed average
         std_burial = 0
         counter = 0
