@@ -178,9 +178,6 @@ class AWSEMBase(Frustratometer):
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
 
-
-
-
 class AWSEM(AWSEMBase):
 
     def __init__(self, 
@@ -223,7 +220,7 @@ class AWSEM(AWSEMBase):
     def setup_structure(self, pdb_structure):
         # check structure
         selection_CB = pdb_structure.structure.select('name CB or (resname GLY IGL and name CA)')
-        resid = selection_CB.getResindices()
+        resid = list(set(selection_CB.getResindices())) # sometimes, it decides to split a single residue in 2 
         N=len(resid)
         self.resid = resid
         self.N = N
@@ -246,6 +243,7 @@ class AWSEM(AWSEMBase):
         self.setup_structure(pdb_structure)
         # check that our new structure is compatible with our old one
         if self.N != len(self.sequence):
+            import pdb; pdb.set_trace()
             raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
         self.calculate_indicators()
     def change_conformation(alternative_pdb_structure):
@@ -512,41 +510,147 @@ class DecoyEnsemble():
         
         Returns
         -------
-        DecoyEnsemble object, which holds indicator arrays and gammas computed by the AWSEM class.
+        DecoyEnsemble object, which holds indicator arrays (and gammas???) computed by the AWSEM class.
         """
-        burial_indicators = []
-        direct_indicators = []
-        protein_indicators = []
-        water_indicators = []
-        electrostatics_indicators = []
         # the AWSEM class takes care of the indicator calculation (including masking) for us
         #     AWSEM normally accepts an amino acid sequence argument, but we don't need that here
         #     However, we do need to pass through parameters used to generate the indicator functions
-        awsem_obj = AWSEM(next(pdb_structures), expose_indicator_functions=True, **parameters)
+        awsem_obj = AWSEM(next(pdb_structures), expose_indicator_functions=True, repair_pdb=True, **parameters)
         for pdb_structure in pdb_structures: 
             awsem_obj.pdb_structure = pdb_structure # we can use the pdb_structure setter to update structural 
                                                     # stuff without fully re-initializing the object
-            burial_indicators.append(awsem_obj.burial_indicator)
-            direct_indicators.append(awsem_obj.direct_indicator)
-            protein_indicators.append(awsem_obj.protein_indicator)
-            water_indicators.append(awsem_obj.water_indicator)
-            if hasattr(awsem_obj, 'electrostatics_indicator'):
-                electrostatics_indicators.append(awsem_obj.electrostatics_indicator)
+            with open('burial_indicators.npy','ab') as f:
+                np.save(f,awsem_obj.burial_indicator)
+            with open('direct_indicators.npy','ab') as f:
+                np.save(f,awsem_obj.direct_indicator)
+            with open('protein_indicators.npy','ab') as f:
+                np.save(f,awsem_obj.protein_indicator)
+            with open('water_indicators.npy','ab') as f:
+                np.save(f,awsem_obj.water_indicator)
+            with open('electrostatics_indicators.npy','ab') as f:
+                if hasattr(awsem_obj, 'electrostatics_indicator'):
+                    np.save(f,awsem_obj.electrostatics_indicator)
+                else:
+                    np.save(f,None)
         # Stack and average indicators, ensuring correct shape for calculate_energy_and_potts
-        self.burial_indicator = np.mean(np.stack(burial_indicators, axis=0), axis=0)  # (N, 3)
-        self.direct_indicator = np.mean(np.stack(direct_indicators, axis=0), axis=0)  # (N, N, 1, 1)
-        self.protein_indicator = np.mean(np.stack(protein_indicators, axis=0), axis=0)  # (N, N, 1, 1)
-        self.water_indicator = np.mean(np.stack(water_indicators, axis=0), axis=0)  # (N, N, 1, 1)
-        if electrostatics_indicators:
-            self.electrostatics_indicator = np.mean(np.stack(electrostatics_indicators, axis=0), axis=0)  # (N, N)
-        else:
-            self.electrostatics_indicator = None
-        # Attach gamma parameters from the AWSEM object
-        self.burial_gamma = awsem_obj.burial_gamma
-        self.direct_gamma = awsem_obj.direct_gamma
-        self.protein_gamma = awsem_obj.protein_gamma
-        self.water_gamma = awsem_obj.water_gamma
-        self.electrostatics_gamma = getattr(awsem_obj, 'electrostatics_gamma', None)
+        self.burial_indicators = self.get_indicators("burial_indicators.npy")
+        self.direct_indicators = self.get_indicators("direct_indicators.npy")
+        self.protein_indicators = self.get_indicators("protein_indicators.npy")
+        self.water_indicators = self.get_indicators("water_indicators.npy")
+        self.electrostatics_indicators = self.get_indicators("electrostatics_indicators.npy")
+
+        # averages are needed to compute standard deviation, so it's useful to have them as attributes
+        self.avg_burial = None
+        self.avg_direct = None
+        self.avg_prot = None
+        self.avg_wat = None
+        self.avg_elect = None
+
+        ## Attach gamma parameters from the AWSEM object
+        ## Kind of off-topic from my current use of this class
+        #self.burial_gamma = awsem_obj.burial_gamma
+        #self.direct_gamma = awsem_obj.direct_gamma
+        #self.protein_gamma = awsem_obj.protein_gamma
+        #self.water_gamma = awsem_obj.water_gamma
+        #self.electrostatics_gamma = getattr(awsem_obj, 'electrostatics_gamma', None)
+        
+        # this might help with memory
+        del awsem_obj
+ 
+    def get_indicators(self, filename):
+        # expecting a numpy file
+        with open(filename, 'rb') as f:
+            while True:
+                try:
+                    yield np.load(f, allow_pickle=True) # needed to load None if not electrostatics
+                except EOFError:
+                    break
 
     def average(self):
-        return self.burial_indicator, self.direct_indicator, self.protein_indicator, self.water_indicator, self.electrostatics_indicator
+        # average burial computation from generator
+        avg_burial = 0
+        counter = 0
+        for array in self.burial_indicators:
+            counter += 1
+            burial_indicator += array
+        avg_burial /= counter
+        self.avg_burial = avg_burial
+        # average direct computation from generator
+        avg_direct = 0
+        counter = 0
+        for array in self.direct_indicators:
+            counter += 1
+            direct_indicator += array
+        avg_direct /= counter
+        self.avg_direct = avg_direct
+        # average prot computation from generator
+        avg_prot = 0
+        counter = 0
+        for array in self.protein_indicators:
+            counter += 1
+            protein_indicator += array
+        avg_prot /= counter
+        self.avg_prot = avg_prot
+        # average wat computation from generator
+        avg_wat = 0
+        counter = 0
+        for array in self.water_indicators:
+            counter += 1
+            water_indicator += array
+        avg_wat /= counter
+        self.avg_wat = avg_wat
+        # average elec computation from generator
+        #     if not defined, set to zero, which will have no impact
+        if self.electrostatics_indicators == None:
+            avg_elec = 0
+        else:
+            avg_elec = 0
+            counter = 0
+            for array in self.electrostatics_indicators:
+                counter += 1
+                avg_elec += array
+            avg_elec /= counter
+        self.avg_elec = avg_elec
+        return self.avg_burial, self.avg_direct, self.avg_prot, self.avg_wat, self.avg_elec
+
+    def std(self):
+        if self.avg_burial is None or self.avg_direct is None or \
+           self.avg_prot is None or self.avg_wat is None or \
+           self.avg_elec is None:
+            self.average()  # compute averages if not already done
+        # std burial computation from generator and previously computed average
+        std_burial = 0
+        counter = 0
+        for array in self.burial_indicators:
+            counter += 1
+            std_burial += (array - self.avg_burial) ** 2
+        std_burial = np.sqrt(std_burial / counter)
+        # std direct computation from generator and previously computed average
+        std_direct = 0
+        counter = 0
+        for array in self.direct_indicators:
+            counter += 1
+            std_direct += (array - self.avg_direct) ** 2
+        std_direct = np.sqrt(std_direct / counter)
+        # std prot computation from generator and previously computed average
+        std_prot = 0
+        counter = 0
+        for array in self.protein_indicators:
+            counter += 1
+            std_prot += (array - self.avg_prot) ** 2
+        std_prot = np.sqrt(std_prot / counter)
+        # std wat computation from generator and previously computed average
+        std_wat = 0
+        counter = 0
+        for array in self.water_indicators:
+            counter += 1
+            std_wat += (array - self.avg_wat) ** 2
+        std_wat = np.sqrt(std_wat / counter)
+        # std elec computation from generator and previously computed average
+        std_elec = 0
+        counter = 0
+        for array in self.electrostatics_indicators:
+            counter += 1
+            std_elec += (array - self.avg_elec) ** 2
+        std_elec = np.sqrt(std_elec / counter)
+        return std_burial, std_direct, std_prot, std_wat, std_elec
