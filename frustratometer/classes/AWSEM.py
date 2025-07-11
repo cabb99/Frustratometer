@@ -532,20 +532,15 @@ class DecoyEnsemble():
                     np.save(f,awsem_obj.electrostatics_indicator)
                 else:
                     np.save(f,None)
-        # Stack and average indicators, ensuring correct shape for calculate_energy_and_potts
-        self.burial_indicators = self.get_indicators("burial_indicators.npy")
-        self.direct_indicators = self.get_indicators("direct_indicators.npy")
-        self.protein_indicators = self.get_indicators("protein_indicators.npy")
-        self.water_indicators = self.get_indicators("water_indicators.npy")
-        self.electrostatics_indicators = self.get_indicators("electrostatics_indicators.npy")
-
-        # averages are needed to compute standard deviation, so it's useful to have them as attributes
+        # averages are needed to compute standard deviation
+        #     having these be attributes allows them to be easily passed
+        #     from the avg method to the std method
         self.avg_burial = None
         self.avg_direct = None
         self.avg_prot = None
         self.avg_wat = None
         self.avg_elect = None
-
+        ################################################
         ## Attach gamma parameters from the AWSEM object
         ## Kind of off-topic from my current use of this class
         #self.burial_gamma = awsem_obj.burial_gamma
@@ -553,10 +548,31 @@ class DecoyEnsemble():
         #self.protein_gamma = awsem_obj.protein_gamma
         #self.water_gamma = awsem_obj.water_gamma
         #self.electrostatics_gamma = getattr(awsem_obj, 'electrostatics_gamma', None)
-        
+        ################################################
         # this might help with memory
         del awsem_obj
  
+    # To manage memory, we need the indicator attributes to be generators (see self.get_indicators).
+    # But to ensure that we can iterate over them more than once, we need to 
+    #     be able to reinitialize the generators. We accomplish this with properties
+    @property
+    def burial_indicators(self):
+        return self.get_indicators("burial_indicators.npy")
+    @property
+    def direct_indicators(self):
+        return self.get_indicators("direct_indicators.npy")
+    @property
+    def protein_indicators(self):
+        return self.get_indicators("protein_indicators.npy")
+    @property
+    def water_indicators(self):
+        return self.get_indicators("water_indicators.npy")
+    @property
+    def electrostatics_indicators(self):
+        return self.get_indicators("electrostatics_indicators.npy")
+
+    # allows us to process indicators without holding them all in memory
+    #    this requires that every method that acts on the indicators iterates over them
     def get_indicators(self, filename):
         # expecting a numpy file
         with open(filename, 'rb') as f:
