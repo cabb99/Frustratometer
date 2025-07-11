@@ -449,6 +449,7 @@ class AWSEMIndicators(AWSEMBase):
                  electrostatics_indicator: Union[np.ndarray, None],
                  sequence: str,          # sequence is optional if we initialize from a Structure but not here
                  expose_indicator_functions: bool=False,
+                 absolute_value_gamma: bool=False,
                  **parameters)->object:
         """
         A stripped-down version of the AWSEM class that can be initialized from a set of indicator functions
@@ -470,7 +471,9 @@ class AWSEMIndicators(AWSEMBase):
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. 
         expose_indicator_functions: bool
             If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
-        
+        absolute_value_gamma: bool
+            If True, replace gammas with their absolute values. This is helpful for the standard deviation approximation
+
         Returns
         -------
         AWSEMIndicators object
@@ -484,6 +487,13 @@ class AWSEMIndicators(AWSEMBase):
         self.electrostatics_indicator = electrostatics_indicator
         self.sequence_mask_contact = np.full((self.N,self.N), True) 
         self.mask = np.full((self.N,self.N), True) 
+        if absolute_value_gamma:
+            self.burial_gamma = np.abs(self.burial_gamma)
+            self.direct_gamma = np.abs(self.direct_gamma)
+            self.protein_gamma = np.abs(self.protein_gamma)
+            self.water_gamma = np.abs(self.water_gamma)
+            self.electrostatics_gamma = np.abs(self.electrostatics_gamma)
+        self.absolute_value_gamma = absolute_value_gamma
         # mask should have been applied when calculating the indicator functions,
         #     so we set it such that no further masking is performed
         self.setup_model()
