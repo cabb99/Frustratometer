@@ -488,11 +488,11 @@ class AWSEMIndicators(AWSEMBase):
         self.sequence_mask_contact = np.full((self.N,self.N), True) 
         self.mask = np.full((self.N,self.N), True) 
         if absolute_value_gamma:
-            self.burial_gamma = np.abs(self.burial_gamma)
-            self.direct_gamma = np.abs(self.direct_gamma)
-            self.protein_gamma = np.abs(self.protein_gamma)
-            self.water_gamma = np.abs(self.water_gamma)
-            self.electrostatics_gamma = np.abs(self.electrostatics_gamma)
+            self.burial_gamma = -np.abs(self.burial_gamma)
+            self.direct_gamma = -np.abs(self.direct_gamma)
+            self.protein_gamma = -np.abs(self.protein_gamma)
+            self.water_gamma = -np.abs(self.water_gamma)
+            self.electrostatics_gamma = -np.abs(self.electrostatics_gamma)
         self.absolute_value_gamma = absolute_value_gamma
         # mask should have been applied when calculating the indicator functions,
         #     so we set it such that no further masking is performed
