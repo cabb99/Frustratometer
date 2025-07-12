@@ -37,7 +37,8 @@ def download(pdbID: str,directory: Union[Path,str]=Path.cwd()) -> Path:
     return pdb_file
 
 def get_sequence(pdb_file: str, 
-                 chain: str
+                 chain: str,
+                 return_start_mask: bool=False
                  ) -> str:
     """
     Get a protein sequence from a pdb file
@@ -46,8 +47,10 @@ def get_sequence(pdb_file: str,
     ----------
     pdb_file : str,
         PDB file location.
-    chain: str,
-        Chain ID of the selected protein.
+    chain: str or list,
+        Chain ID(s) of the selected protein.
+    return_start_mask: bool,
+        Return binary mask list indicating whether each position is the start of a chain
 
     Returns
     -------
@@ -58,37 +61,63 @@ def get_sequence(pdb_file: str,
     Get a protein sequence from a PDB file
     
     :param pdb: PDB file location
-    :param chain: chain name of PDB file to get sequence
+    :param chain: chain name(s) of PDB file to get sequence
     :return: protein sequence
     """
 
-    if ".cif" in str(pdb_file):
-        parser = MMCIFParser()
-    else:
-        parser = PDBParser()
-    structure = parser.get_structure('name', pdb_file)
+    if ".cif" in str(pdb_file): # BIOPYTHON
+        parser = MMCIFParser() # BIOPYTHON
+    else:                     # BIOPYTHON
+        parser = PDBParser() # BIOPYTHON
+    structure = parser.get_structure('name', pdb_file) #BIOPYTHON
+    #structure = prody.parsePDB(str(pdb_file)) # PRODY
+    #hv = structure.getHierView() # PRODY
     if chain==None:
-        all_chains=[i.get_id() for i in structure.get_chains()]
+        all_chains=[i.get_id() for i in structure.get_chains()] # BIOPYTHON
+        #all_chains = [structure_chain.getChid() for structure_chain in hv] # PRODY
     else:
-        all_chains=[chain]
+        if type(chain) == list:
+            all_chains = chain
+        elif type(chain) == str:
+            all_chains = [id for id in chain if id != " "] # remove spaces if present in string
+        else:
+            raise TypeError(f"chain must be list or str but was {type(chain)}")
     sequence = ""
-    for chain in all_chains:
-        c = structure[0][chain]
+    start_mask = []
+    for single_chain in all_chains:
+        c = structure[0][single_chain] # BIOPYTHON
+        #c = hv[single_chain] # PRODY
         chain_seq = ""
         for residue in c:
-            is_regular_res = residue.has_id('CA') and residue.has_id('O')
-            res_id = residue.get_id()[0]
-            if (res_id==' ' or res_id=='H_MSE' or res_id=='H_M3L' or res_id=='H_CAS') and is_regular_res:
-                residue_name = residue.get_resname()
+            is_regular_res = residue.has_id('CA') and residue.has_id('O') # BIOPYTHON
+            #atom_names = [atom.getName() for atom in residue] # PRODY
+            #is_regular_res = ("CA" in atom_names and "O" in atom_names) # PRODY
+            res_id = residue.get_id()[0] #BIOPYTHON
+            if (res_id==' ' or res_id=='H_MSE' or res_id=='H_M3L' or res_id=='H_CAS') and is_regular_res: # BIOPYTHON
+            # i don't know what H_HSE, H_M3L, and H_CAS are doing 
+            # because they aren't in three_to_one, so those should throw an error
+            # long story short, I don't think we have to worry about them when switching from biopython to prody
+            #if is_regular_res: # PRODY
+                residue_name = residue.get_resname() # BIOPYTHON
+                #residue_name = residue.getResname() # PRODY
                 chain_seq += three_to_one[residue_name]
+        if chain_seq == "": # empty chain, like a nucleic acid chain (see 8ZWK)
+            continue        # FYI, currently, a non-empty chain with certain invalid residues will throw an error at the three_to_one[residue_name] above
         sequence += chain_seq
-    return sequence
+        start_mask.append(1)
+        for _ in range(1,len(chain_seq)):
+            start_mask.append(0)
+    if return_start_mask:
+        return (sequence,start_mask)
+    else:
+        return sequence
 
 
 
 def get_distance_matrix(pdb_file: Union[Path,str],
                         chain: str,
-                        method: str = 'CB'
+                        method: str = 'CB',
+                        return_distance_midpoints: bool = False,
                         ) -> np.array:
     """
     Calculate the distance matrix of the specified atoms in a PDB file.
@@ -106,6 +135,10 @@ def get_distance_matrix(pdb_file: Union[Path,str],
             'CA' for using only the CA atom,
             'minimum' for using the minimum distance between all atoms in each residue,
             'CB_force' computes a new coordinate for the CB atom based on the CA, C, and N atoms and uses CB distance even for glycine.
+    return_distance_midpoints: bool
+        Whether to return a matrix of the same shape as distance_matrix representing the same contacts as distance_matrix
+        that indicates the absolute coordinates of the midpoint between the pair of atoms. This helps us compute the pair distribution
+        functions of the different classes of contacts. So this matrix isn't really a matrix because each "element" has 3 channels: x, y, and z
 
     Returns:
         np.array: The distance matrix of the selected atoms.
@@ -121,7 +154,7 @@ def get_distance_matrix(pdb_file: Union[Path,str],
     if method == 'CA':
         coords = structure.select('protein and name CA' + chain_selection).getCoords()
     elif method == 'CB':
-        coords = structure.select('(protein and (name CB) or (resname GLY and name CA))' + chain_selection).getCoords()
+        coords = structure.select('(protein and (name CB) or (resname GLY IGL and name CA))' + chain_selection).getCoords()
     elif method == 'minimum':
         selection = structure.select('protein' + chain_selection)
         coords = selection.getCoords()
@@ -163,8 +196,20 @@ def get_distance_matrix(pdb_file: Union[Path,str],
     if len(coords) == 0:
         raise IndexError('Empty selection for distance map')
 
+    # coords should be a numpy array of shape (N,3)
     distance_matrix = sdist.squareform(sdist.pdist(coords))
-    return distance_matrix
+    assert distance_matrix.shape[0] == distance_matrix.shape[1]
+    if return_distance_midpoints:
+        midpoint_matrix = np.zeros((distance_matrix.shape[0],distance_matrix.shape[1],3))
+        for i in range(distance_matrix.shape[0]):
+            for j in range(distance_matrix.shape[1]):
+                midpoint_matrix[i,j,:] = (coords[None,i,:] + coords[None,j,:])/2
+                # check that indexing is consistent with distance_matrix
+                assert np.allclose(np.linalg.norm(coords[i,:]-coords[j,:]),distance_matrix[i,j])
+        assert np.allclose(midpoint_matrix,midpoint_matrix.transpose(1,0,2)) # check symmetry
+        return distance_matrix, midpoint_matrix
+    else:    
+        return distance_matrix
 
 
 def full_to_filtered_aligned_mapping(aligned_sequence: str,
