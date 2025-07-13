@@ -988,7 +988,7 @@ class MonteCarlo:
         # Run the simulation and append data periodically
         for s, updated_seq_indices, total_energy in self.parallel_tempering_steps(seq_indices, temperatures, n_steps, n_steps_per_cycle):
             # Prepare data for this chunk
-            energies={key:energy_term.energies(seq_indices) for key,energy_term in self.evaluation_energies.items()}
+            energies={key:energy_term.energies(updated_seq_indices) for key,energy_term in self.evaluation_energies.items()}
             for i, temp in enumerate(temperatures):
                 sequence_str = index_to_sequence(updated_seq_indices[i],alphabet=self.alphabet)  # Convert sequence index back to string
                 step_data=({'Step': (s+1) * n_steps_per_cycle, 'Temperature': temp, 'Sequence': sequence_str, 'Total Energy': total_energy[i]})

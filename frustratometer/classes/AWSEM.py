@@ -439,7 +439,7 @@ class AWSEM(AWSEMBase):
         return configurational_energies #, pd.DataFrame(decoy_data, columns=decoy_data_columns)
     
 
-class AWSEMIndicators(AWSEMBase):
+class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyEvaluatorFromIndicators?
 
     def __init__(self, 
                  burial_indicator: np.ndarray,
