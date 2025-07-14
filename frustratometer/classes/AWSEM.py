@@ -526,6 +526,7 @@ class DecoyEnsemble():
         #     AWSEM normally accepts an amino acid sequence argument, but we don't need that here
         #     However, we do need to pass through parameters used to generate the indicator functions
         awsem_obj = AWSEM(next(pdb_structures), expose_indicator_functions=True, repair_pdb=True, **parameters)
+        self.N = awsem_obj.N
         for pdb_structure in pdb_structures: 
             awsem_obj.pdb_structure = pdb_structure # we can use the pdb_structure setter to update structural 
                                                     # stuff without fully re-initializing the object
@@ -549,7 +550,14 @@ class DecoyEnsemble():
         self.avg_direct = None
         self.avg_prot = None
         self.avg_wat = None
-        self.avg_elect = None
+        self.avg_elec = None
+        # and standard deviations can help us check our work 
+        # on the covariance matrix calculation
+        self.std_burial = None
+        self.std_direct = None
+        self.std_prot = None
+        self.std_wat = None
+        self.std_elec = None
         ################################################
         ## Attach gamma parameters from the AWSEM object
         ## Kind of off-topic from my current use of this class
@@ -593,6 +601,7 @@ class DecoyEnsemble():
                     break
 
     # average indicator functions over all decoys
+    # these averages can then be averaged to get the average of all indicator functions over all decoys
     def avg(self):
         # average burial computation from generator
         avg_burial = 0
@@ -640,7 +649,10 @@ class DecoyEnsemble():
         self.avg_elec = avg_elec
         return self.avg_burial, self.avg_direct, self.avg_prot, self.avg_wat, self.avg_elec
 
-    # standard deviation of indicator functions over all decoys
+    # standard deviation of each indicator function over all decoys
+    # ** averaging these averages
+    #    DOES NOT equal 
+    #    the variance over all structures of the sum of the indicator functions of each structure **
     def std(self):
         if self.avg_burial is None or self.avg_direct is None or \
            self.avg_prot is None or self.avg_wat is None or \
@@ -653,6 +665,7 @@ class DecoyEnsemble():
             counter += 1
             std_burial += (array - self.avg_burial) ** 2
         std_burial = np.sqrt(std_burial / counter)
+        self.std_burial = std_burial
         # std direct computation from generator and previously computed average
         std_direct = 0
         counter = 0
@@ -660,6 +673,7 @@ class DecoyEnsemble():
             counter += 1
             std_direct += (array - self.avg_direct) ** 2
         std_direct = np.sqrt(std_direct / counter)
+        self.std_direct = std_direct
         # std prot computation from generator and previously computed average
         std_prot = 0
         counter = 0
@@ -667,6 +681,7 @@ class DecoyEnsemble():
             counter += 1
             std_prot += (array - self.avg_prot) ** 2
         std_prot = np.sqrt(std_prot / counter)
+        self.std_prot = std_prot
         # std wat computation from generator and previously computed average
         std_wat = 0
         counter = 0
@@ -674,6 +689,7 @@ class DecoyEnsemble():
             counter += 1
             std_wat += (array - self.avg_wat) ** 2
         std_wat = np.sqrt(std_wat / counter)
+        self.std_wat = std_wat
         # std elec computation from generator and previously computed average
         std_elec = 0
         counter = 0
@@ -681,4 +697,69 @@ class DecoyEnsemble():
             counter += 1
             std_elec += (array - self.avg_elec) ** 2
         std_elec = np.sqrt(std_elec / counter)
+        self.std_elec = std_elec
         return std_burial, std_direct, std_prot, std_wat, std_elec
+
+    def covariance_matrix(self):
+        # return covariance matrix of the set of all indicator functions
+        # the indicator functions will be grouped by residue:
+        # low density burial                 |  <-- Residue 1  
+        # medium density burial              |  <-- Residue 1  
+        # high density burial                |  <-- Residue 1  
+        # direct with residue 1              |  <-- Residue 1 
+        # protein-mediated with residue 1    |  <-- Residue 1
+        # water-mediated with residue 1      |  <-- Residue 1
+        # electrostatics with residue 1      |  <-- Residue 1
+        # ...                                |  <-- Residue 1
+        # direct with residue N              |  <-- Residue 1
+        # protein-mediated with residue N    |  <-- Residue 1
+        # water-mediated with residue N      |  <-- Residue 1
+        # electrostatics with residue N      |  <-- Residue 1
+        # ...                                |  <-- Residue 2
+        # ...                                |  <-- ...
+        # ...                                |  <-- Residue N 
+        # however, the reindexing is performed at the end
+        #
+        # compute averages
+        if self.avg_burial is None or self.avg_direct is None or \
+           self.avg_prot is None or self.avg_wat is None or \
+           self.avg_elec is None:
+            self.avg()  
+        all_avg = np.concatenate([indicators.flatten() for indicators in
+                    [self.avg_burial, self.avg_direct, self.avg_prot, self.avg_wat, self.avg_elec]])
+        ex_ey = np.outer(all_avg, all_avg)
+        # compute covariances
+        number_indicators = 4*self.N**2 + 3*self.N
+        exy = np.zeros((number_indicators, number_indicators))
+        num_decoys = 0
+        for b, d, p, w, e in zip(self.burial_indicators, self.direct_indicators,
+                                 self.protein_indicators, self.water_indicators, 
+                                 self.electrostatics_indicators):
+            all_decoy = np.concatenate([b.flatten(), d.flatten(), p.flatten(), w.flatten(), e.flatten()])
+            exy += np.outer(all_decoy, all_decoy)
+            num_decoys += 1
+        exy /= num_decoys
+        covariance_matrix = exy - ex_ey
+        # check our work
+        variances = np.concatenate([self.std_burial.flatten(), self.std_direct.flatten(),
+                                    self.std_prot.flatten(), self.std_wat.flatten(),
+                                    self.std_elec.flatten()])**2
+        assert np.allclose(variances, np.diag(covariance_matrix))
+        assert np.all(covariance_matrix==covariance_matrix.T)
+        # reindex to implement convention expressed in comments above
+        #n*3:(n+1)*3 burial where n ranges from 0 to 62
+        #3*N + n*N:(n+1)*N  direct
+        #3*N + N**2 + n*N:(n+1)*N   protein
+        #3*N + 2*N**2 + n*N:(n+1)*N   water
+        #3*N + 3*N**2 + n*N:(n+1)*N   electrostatics
+        #so we reindex each axis by the same index array
+        #this index array is
+        index_array = np.concatenate(
+            [[3*n, 3*n+1, 3*n+2] \
+                + list(range(3*self.N + self.N*n, 3*self.N + self.N*(n+1))) \
+                + list(range(3*self.N + self.N**2 + self.N*n, 3*self.N + self.N**2 + self.N*(n+1)))  \
+                + list(range(3*self.N + 2*self.N**2 + self.N*n, 3*self.N + 2*self.N**2 + self.N*(n+1))) \
+                + list(range(3*self.N + 3*self.N**2 + self.N*n, 3*self.N + 3*self.N**2 + self.N*(n+1))) \
+            for n in range(self.N)])
+        covariance_matrix = covariance_matrix[index_array, index_array]
+        return covariance_matrix
