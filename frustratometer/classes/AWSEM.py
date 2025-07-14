@@ -762,4 +762,5 @@ class DecoyEnsemble():
                 + list(range(3*self.N + 3*self.N**2 + self.N*n, 3*self.N + 3*self.N**2 + self.N*(n+1))) \
             for n in range(self.N)])
         covariance_matrix = covariance_matrix[index_array, index_array]
+        self.residue_order_index_array = index_array
         return covariance_matrix
