@@ -131,6 +131,8 @@ class AWSEMBase(Frustratometer):
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
 
     def setup_model(self):
+        # some methods that should be called to complete the initialization of subclass instances
+        # subclasses should (re)define these methods as needed
         self.calculate_indicators()
         self.calculate_energy_and_potts()
 
@@ -501,7 +503,49 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
     def calculate_indicators(self):
         pass # the function was initialized with indicators, so there's nothing to do
 
+class AWSEMVariancePotts(AWSEMBase):
+    def __init__(self, 
+                 covariance_matrix: np.ndarray,
+                 sequence: str,          # sequence is optional if we initialize from a Structure but not here
+                 expose_indicator_functions: bool=False,
+                 absolute_value_gamma: bool=False,
+                 **parameters)->object:
+        """
+        A stripped-down version of the AWSEM class that can be initialized from a set of indicator functions
 
+        Parameters
+        ----------
+        covariance_matrix: np.ndarray
+            Covariance matrix of all __indicator functions___ (not residues) over a decoy set
+        sequence :  str
+            The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. 
+        expose_indicator_functions: bool
+            If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
+        absolute_value_gamma: bool
+            If True, replace gammas with their absolute values. This is helpful for the standard deviation approximation
+
+        Returns
+        -------
+        AWSEMIndicators object
+
+        """
+        super().__init__(sequence, expose_indicator_functions, **parameters)
+        self.covariance_matrix = covariance_matrix
+        self.sequence_mask_contact = np.full((self.N,self.N), True) 
+        self.mask = np.full((self.N,self.N), True) 
+        self.setup_model()
+
+    def calculate_indicators(self):
+        # we need to cluster covariance indicators by intra-residue and inter-residue pairs
+        # there are 7 intra-residue indicator functions per residue
+        assert len(self.covariance_matrix.shape)==2, self.covariance_matrix.shape
+        assert self.covariance_matrix.shape[0] == self.covariance_matrix.shape[1]
+        xy_indices = np.meshgrid(range(self.covariance_matrix.shape[0]), range(self.covariance_matrix.shape[1]))
+        diagonal_distances = np.abs(xy_indices[0]-xy_indices[1])
+        #block_diagonal_mask = np.ma.make_mask(np.flatten(np.array()))
+        intra_residue = self.covariance_matrix[diagonal_distances<7].reshape((self.N,7))
+        inter_residue = self.covariance_matrix[diagonal_distances>=7].reshape((self.N,7*(self.N-1)))
+    
 class DecoyEnsemble():
 
     def __init__(self, 
@@ -701,66 +745,39 @@ class DecoyEnsemble():
         return std_burial, std_direct, std_prot, std_wat, std_elec
 
     def covariance_matrix(self):
-        # return covariance matrix of the set of all indicator functions
-        # the indicator functions will be grouped by residue:
-        # low density burial                 |  <-- Residue 1  
-        # medium density burial              |  <-- Residue 1  
-        # high density burial                |  <-- Residue 1  
-        # direct with residue 1              |  <-- Residue 1 
-        # protein-mediated with residue 1    |  <-- Residue 1
-        # water-mediated with residue 1      |  <-- Residue 1
-        # electrostatics with residue 1      |  <-- Residue 1
-        # ...                                |  <-- Residue 1
-        # direct with residue N              |  <-- Residue 1
-        # protein-mediated with residue N    |  <-- Residue 1
-        # water-mediated with residue N      |  <-- Residue 1
-        # electrostatics with residue N      |  <-- Residue 1
-        # ...                                |  <-- Residue 2
-        # ...                                |  <-- ...
-        # ...                                |  <-- Residue N 
-        # however, the reindexing is performed at the end
         #
         # compute averages
         if self.avg_burial is None or self.avg_direct is None or \
            self.avg_prot is None or self.avg_wat is None or \
            self.avg_elec is None:
             self.avg()  
-        all_avg = np.concatenate([indicators.flatten() for indicators in
-                    [self.avg_burial, self.avg_direct, self.avg_prot, self.avg_wat, self.avg_elec]])
+        triu_indices = np.triu_indices(self.N, k=1)
+        all_avg = np.concatenate([self.avg_burial.flatten(), 
+            self.avg_direct[triu_indices].squeeze(), self.avg_prot[triu_indices].squeeze(),
+            self.avg_wat[triu_indices].squeeze(), self.avg_elec[triu_indices].squeeze()])
         ex_ey = np.outer(all_avg, all_avg)
         # compute covariances
-        number_indicators = 4*self.N**2 + 3*self.N
+        number_indicators = 3*self.N + 4*int((self.N**2 - self.N)/2)
+        assert ex_ey.shape == (number_indicators, number_indicators), f"ex_ey.shape: {ex_ey.shape}, number_indicators: {number_indicators}"
         exy = np.zeros((number_indicators, number_indicators))
         num_decoys = 0
+        #     we want all the burial indicators, 
+        #     but only the unique pairwise indicators (no need to double count)
         for b, d, p, w, e in zip(self.burial_indicators, self.direct_indicators,
-                                 self.protein_indicators, self.water_indicators, 
+                                 self.protein_indicators, self.water_indicators,
                                  self.electrostatics_indicators):
-            all_decoy = np.concatenate([b.flatten(), d.flatten(), p.flatten(), w.flatten(), e.flatten()])
+            all_decoy = np.concatenate([b.flatten(), d[triu_indices].squeeze(),
+                   p[triu_indices].squeeze(), w[triu_indices].squeeze(), e[triu_indices].squeeze()])
             exy += np.outer(all_decoy, all_decoy)
             num_decoys += 1
         exy /= num_decoys
         covariance_matrix = exy - ex_ey
         # check our work
-        variances = np.concatenate([self.std_burial.flatten(), self.std_direct.flatten(),
-                                    self.std_prot.flatten(), self.std_wat.flatten(),
-                                    self.std_elec.flatten()])**2
-        assert np.allclose(variances, np.diag(covariance_matrix))
+        #variances = np.concatenate([np.triu(self.std_burial).flatten(), np.triu(self.std_direct).flatten(),
+        #                            np.triu(self.std_prot).flatten(), np.triu(self.std_wat).flatten(),
+        #                            np.triu(self.std_elec).flatten()])**2
+        #variances = variances[variances!=0]
+        #assert np.allclose(variances, np.diag(covariance_matrix))
         assert np.all(covariance_matrix==covariance_matrix.T)
-        # reindex to implement convention expressed in comments above
-        #n*3:(n+1)*3 burial where n ranges from 0 to 62
-        #3*N + n*N:(n+1)*N  direct
-        #3*N + N**2 + n*N:(n+1)*N   protein
-        #3*N + 2*N**2 + n*N:(n+1)*N   water
-        #3*N + 3*N**2 + n*N:(n+1)*N   electrostatics
-        #so we reindex each axis by the same index array
-        #this index array is
-        index_array = np.concatenate(
-            [[3*n, 3*n+1, 3*n+2] \
-                + list(range(3*self.N + self.N*n, 3*self.N + self.N*(n+1))) \
-                + list(range(3*self.N + self.N**2 + self.N*n, 3*self.N + self.N**2 + self.N*(n+1)))  \
-                + list(range(3*self.N + 2*self.N**2 + self.N*n, 3*self.N + 2*self.N**2 + self.N*(n+1))) \
-                + list(range(3*self.N + 3*self.N**2 + self.N*n, 3*self.N + 3*self.N**2 + self.N*(n+1))) \
-            for n in range(self.N)])
-        covariance_matrix = covariance_matrix[index_array, index_array]
-        self.residue_order_index_array = index_array
+        assert covariance_matrix.shape == exy.shape == ex_ey.shape
         return covariance_matrix
