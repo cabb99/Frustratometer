@@ -81,7 +81,8 @@ def compute_dark_energy_matrix(EVO_matrix: np.array,
 
     
 def compute_N_eff(evo_matrix): 
-     """
+    
+    """
          Compute effective number of amino acids (N_eff) for each site
 
         Args:
