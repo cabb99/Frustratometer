@@ -213,7 +213,8 @@ def plot_mutational_matrix(matrix: np.array,
                            vmin= None,
                            vmax= None,
                            ax = None,
-                           cbar_ax = None):
+                           cbar_ax = None,
+                           pdb_beg = 1):
     if ax is None:
         fig, ax = plt.subplots(1, figsize=(10,3.3))
     
@@ -226,7 +227,13 @@ def plot_mutational_matrix(matrix: np.array,
     
     ax.set_yticks(np.arange(len(alphabet))+0.5, list(alphabet))
 
-    if highlighted_sites is not None:
+    if highlighted_sites is None:
+        # Default: show all positions (Matplotlib will auto-thin)
+        xticks = ax.get_xticks()
+
+        xlabels = [str(int(i + pdb_beg)) for i in xticks-.5]
+        ax.set_xticks(xticks, xlabels)
+    else:    
         ax.set_xticks(highlighted_sites+.5, ['*']*len(highlighted_sites))
         
     if cbar_ax is not None:

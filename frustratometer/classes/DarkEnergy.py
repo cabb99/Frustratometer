@@ -85,7 +85,7 @@ class DarkEnergy:
 
     
     
-    def plot_correlation_color(self, A_label=r'$\Delta E^{fold}$', B_label=r'$\Delta E^{evo}$',
+    def plot_correlation_color(self, A_label=r'$\Delta E^{fold}$', B_label=r'$\Delta \Psi^{evo}$',
                         correlation_type ="all_values", show_r=False, show_p=False, show_slope=False, show_T_sel=True, index=None,cmap='RdBu_r',alpha=0.5, lw=1, s=5,vmax=None):
         """
         Plot correlations for a specific type and index, handling NaN values.
@@ -104,7 +104,8 @@ class DarkEnergy:
     
     def plot_mutational_matrix(self, highlighted_sites=None,
                                vmin= None,
-                               vmax= None):
+                               vmax= None,
+                               pdb_beg = 1):
         """
         Plot the Dark Energy Matrix (DEM) with highlighted sites.
 
@@ -112,7 +113,7 @@ class DarkEnergy:
             highlighted_sites (list or np.ndarray): Indices of sites to highlight.
         """
         dark_energy.plot_mutational_matrix(self.DEM, alphabet=self.alphabet, highlighted_sites=highlighted_sites,
-                              vmin= None, vmax= None)
+                              vmin= vmin, vmax= vmax, pdb_beg = pdb_beg)
         
         
         
