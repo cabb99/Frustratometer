@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from pydantic.types import Path
 from typing import List,Optional,Union,Generator
 
-__all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble']
+__all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble', 'AWSEMVariancePotts']
 
 class AWSEMParameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
@@ -211,11 +211,11 @@ class AWSEM(AWSEMBase):
         with open('my_data.txt','w') as f:
             f.write(f"self.distance_cutoff: {self.distance_cutoff}\n")
             f.write(f"self.sequence_cutoff: {self.sequence_cutoff}\n")
-        np.save('my_distance_matrix.npy',self.distance_matrix)
+        #np.save('my_distance_matrix.npy',self.distance_matrix)
         self.mask = frustration.compute_mask(self.distance_matrix, 
                                              maximum_contact_distance=self.distance_cutoff, 
                                              minimum_sequence_separation = self.sequence_cutoff)
-        np.save('my_mask_new.npy',self.mask)
+        #np.save('my_mask_new.npy',self.mask)
         self.selected_matrix = selected_matrix # we'll need this in the calculate_indicators function 
         self.setup_model()
 
@@ -487,17 +487,32 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
         self.protein_indicator = protein_indicator
         self.water_indicator = water_indicator
         self.electrostatics_indicator = electrostatics_indicator
-        self.sequence_mask_contact = np.full((self.N,self.N), True) 
-        self.mask = np.full((self.N,self.N), True) 
+        # we don't have a distance matrix to a apply a minimum sequence separation to--
+        #     we have to assume that this consideration was already made when computing the indicators.
+        #     So we just set the "distance" matrix to zeros and set no maximum cutoff, so that nothing changes
+        # however, we can apply a minimum sequence separation-based mask to the matrix
+        self.sequence_mask_contact = frustration.compute_mask(np.zeros((self.N,self.N)), 
+                                    maximum_contact_distance=None, 
+                                    minimum_sequence_separation = self.p.min_sequence_separation_contact)
+        self.electrostatics_mask = frustration.compute_mask(np.zeros((self.N,self.N)),
+                                    maximum_contact_distance=None, 
+                                    minimum_sequence_separation=self.p.min_sequence_separation_electrostatics)
+        self.mask = frustration.compute_mask(np.zeros((self.N,self.N)), 
+                                             maximum_contact_distance=self.distance_cutoff, 
+                                             minimum_sequence_separation = self.sequence_cutoff)
         if absolute_value_gamma:
             self.burial_gamma = np.abs(self.burial_gamma)
             self.direct_gamma = np.abs(self.direct_gamma)
             self.protein_gamma = np.abs(self.protein_gamma)
             self.water_gamma = np.abs(self.water_gamma)
             self.electrostatics_gamma = np.abs(self.electrostatics_gamma)
-        self.absolute_value_gamma = absolute_value_gamma
-        # mask should have been applied when calculating the indicator functions,
-        #     so we set it such that no further masking is performed
+        self.absolute_value_gamma = absolute_value_gamma 
+        #np.save('absolute_value_gamma_1.npy',absolute_value_gamma)
+        #np.save('burial_indicator_1.npy',burial_indicator)
+        #np.save('direct_indicator_1.npy', direct_indicator)
+        #np.save('protein_indicator_1.npy', protein_indicator)
+        #np.save('water_indicator_1.npy', water_indicator)
+        #np.save('electrostatics_indicator_1.npy', electrostatics_indicator)
         self.setup_model()
 
     def calculate_indicators(self):
@@ -511,7 +526,6 @@ class AWSEMVariancePotts(AWSEMBase):
                  absolute_value_gamma: bool=False,
                  **parameters)->object:
         """
-        A stripped-down version of the AWSEM class that can be initialized from a set of indicator functions
 
         Parameters
         ----------
@@ -526,26 +540,178 @@ class AWSEMVariancePotts(AWSEMBase):
 
         Returns
         -------
-        AWSEMIndicators object
+        AWSEMVariancePotts object
 
         """
         super().__init__(sequence, expose_indicator_functions, **parameters)
         self.covariance_matrix = covariance_matrix
-        self.sequence_mask_contact = np.full((self.N,self.N), True) 
-        self.mask = np.full((self.N,self.N), True) 
+        self.num_indicators = 3*self.N + 4*(self.N**2-self.N)/2 # low, med, high burial for each N, 4 classes of pair interactions
         self.setup_model()
 
+    @staticmethod # trying to avoid loading down memory with too many permanent attributes
+    def pairwise_mask(l): # l for length
+        # Helps us figure out where a 1D array's elements were in an upper triangular matrix,
+        #     assuming the matrix was flattened row-major style and the main diagonal was excluded.
+        #     Each index i of this list gives us the indices of the 1D array that were in row i of the matrix
+        #NbyN_matrix_rows = [[range(n*l-int(((n**2)+n)/2),(n+1)*l-int((((n+1)**2)+(n+1))/2)),
+        #                     ] for n in range(l)] 
+        mask = np.zeros((l,l))
+        for i in range(l):
+            temp = np.zeros((l,l))
+            # set elements involving i equal to 1
+            temp[:,i] = 1
+            temp[i,:] = 1
+            temp = temp[np.triu_indices(l,k=1)] # this flattens the array, keeping only the upper triangle
+            found = np.where(temp==1)[0]
+            try:
+                mask[i, :] = [1 if index in found else 0 for index in range(l)]#[1 if index in NbyN_matrix_rows[i] else 0 for index in range(l)]
+            except: 
+                import pdb; pdb.set_trace()
+        return mask
+
     def calculate_indicators(self):
-        # we need to cluster covariance indicators by intra-residue and inter-residue pairs
-        # there are 7 intra-residue indicator functions per residue
+        print("start calculate indicators")
         assert len(self.covariance_matrix.shape)==2, self.covariance_matrix.shape
         assert self.covariance_matrix.shape[0] == self.covariance_matrix.shape[1]
-        xy_indices = np.meshgrid(range(self.covariance_matrix.shape[0]), range(self.covariance_matrix.shape[1]))
-        diagonal_distances = np.abs(xy_indices[0]-xy_indices[1])
-        #block_diagonal_mask = np.ma.make_mask(np.flatten(np.array()))
-        intra_residue = self.covariance_matrix[diagonal_distances<7].reshape((self.N,7))
-        inter_residue = self.covariance_matrix[diagonal_distances>=7].reshape((self.N,7*(self.N-1)))
-    
+        print("assertions complete")
+        # each "indicator function" is actually a covariance of two indicator functions.
+        # There are a few different kinds of pairs of indicator functions.
+        #     The first kind is self-covariances, AKA variances, which we further break down
+        #     into burial (dependent on AA identity at a single position) 
+        #     and pairwise (dependent on two positions)
+        self.burial_variances = np.diag(self.covariance_matrix[:3*self.N,:3*self.N]) # shape (3N,)
+        self.pairwise_variances = np.diag(self.covariance_matrix[3*self.N:,3*self.N:]) # shape (4N,)
+        np.save("burial_variances.npy", self.burial_variances)
+        np.save("pairwise_variances.npy", self.pairwise_variances)
+        print("variances calculated")
+        #     The other kind of covariance is a covarience between indicator functions.
+        #     We break these down into burial-burial covariances (dependent on two identities),
+        #     burial-pairwise indicator covariances (some dependent on 2, others dependent on 3 identities),
+        #     and pairwise indicator-pairwise indicator covariances (dependent on 3 or 4 identities)
+        self.burial_burial_covariances = self.covariance_matrix[np.triu_indices(3*self.N,k=1)] # shape (((3N)**2-3N)/2,)
+        print("first covariances calculated")
+        num_upper = int((self.N**2-self.N)/2)
+        burial_pairwise_covariances_2 = np.zeros((3*self.N, 4*num_upper)) # shape (3N, 4((N**2-N)/2))
+        #self.burial_pairwise_covariances_2 = np.concatenate([ # can be represented by 2-body term in Potts model
+            # pairwise_mask tells us which pairwise indicator functions in a given row
+            # involve the residue whose burial covariances are evaluated in that row
+            # (the covariance matrix has more elements than there are energy terms--
+            #  some elements represent relationships between residues that don't interact directly,
+            #  so there are many indicators in each row i involving residues j and k but not i)
+            #     
+            # We repeat pairwise_mask 3 times because each residue is repeated 3 times (low, med, high density)
+        #    self.covariance_matrix[:3*self.N, 3*self.N+i*num_upper:3*self.N+(i+1)*num_upper]\
+        #            *self.pairwise_mask(num_upper)[:self.N,:].repeat(3,axis=0)\
+        #                for i in range(4)], axis=1) # shape (3N,4((N**2-N)/2))
+        for counter in range(4):
+            burial_pairwise_covariances_2[:,counter*num_upper:(counter+1)*num_upper] =\
+                (self.covariance_matrix[:3*self.N, 3*self.N+counter*num_upper:3*self.N+(counter+1)*num_upper]+1E-10)\
+                    *self.pairwise_mask(num_upper)[:self.N,:].repeat(3,axis=0) # tiny shift of 1E-10 ensures that the only contacts at exactly 0 are those that fail the mask
+        self.burial_pairwise_covariances_2 = burial_pairwise_covariances_2
+        print("second covariances calculated")
+        # these last three components contain many more covariances than the others
+        # and are likely to be sparse
+        self.burial_pairwise_covariances_3 = None # set to every burial-pairwise covariance not in the previous one
+        self.pairwise_pairwise_covariances_3 = None # set to every pairwise where one residue is common between the two
+        self.pairwise_pairwise_covariances_4 = None # everything not in pairwise_pairwise_covariances_3
+
+    def calculate_energy_and_potts(self):
+
+        J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
+        h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
+        
+        # compute burial and contact energies
+        #     the "energy" of our potts model representing the covariance, not a physical energy
+        #     this "burial energy" is the sum of variances of the burial indicators (the one-body part of the model)
+        self.burial_energy = (0.5*self.p.k_contact*self.burial_gamma[h_index[1]])**2 * self.burial_variances.reshape((self.N,1,3))
+        #     the "contact energy" is ordinarily the sum of all two-body components of the model
+        #     (direct, protein, water, electrostatics), so we do the analogous thing here
+        template = np.zeros((self.N,self.N))
+        num_upper = int((self.N**2-self.N)/2)
+        triu_indices = np.triu_indices(self.N,k=1)
+        template[triu_indices] = self.pairwise_variances[:num_upper]
+        direct = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.direct_gamma[J_index[2], J_index[3]]**2
+        template[triu_indices] = self.pairwise_variances[num_upper:2*num_upper]
+        protein_mediated = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.protein_gamma[J_index[2], J_index[3]]**2
+        template[triu_indices] = self.pairwise_variances[2*num_upper:3*num_upper]
+        water_mediated = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.water_gamma[J_index[2], J_index[3]]**2
+        contact_energy = self.p.k_contact * np.array([direct, protein_mediated, water_mediated])
+        if self.p.k_electrostatics!=0:
+            template[triu_indices] = self.pairwise_variances[3*num_upper:]
+            electrostatics_energy = self.electrostatics_gamma * (template+template.T)[:,:,np.newaxis,np.newaxis]**2
+            contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
+        #    for the variance potts model, there is one more kind of two-body interaction:
+        #    burial-pairwise covariance when the pairwise energy term involves the residue in the burial term
+        #        self.burial_pairwise_covariances_2 has shape (3N, 4(N^2-N)/2)
+        #        we first multiply each row by the appropriate burial energy
+        temp = self.burial_pairwise_covariances_2
+        low = temp[::3,:,np.newaxis]*0.5*self.p.k_contact*self.burial_gamma[h_index[1],0]
+        med = temp[1::3,:,:]*0.5*self.p.k_contact*self.burial_gamma[h_index[1],1]
+        high = temp[2::3,:,:]*0.5*self.p.k_contact*self.burial_gamma[h_index[1],2]
+        #        we can now collapse our 3 burial indicator types
+        temp = np.sum(np.concatenate((low[None,...], med[None,...], high[None,...]), axis=0), axis=0)
+        assert temp.shape == (self.N, 4*((self.N**2-self.N)/2)), temp.shape
+        #        now we split into our 4 pairwise contact types, keeping only the elements of each row
+        #        that represent a pairwise interaction involving the residue whose burial covariances are found in that row
+        direct, prot, wat, elec = np.split(temp[temp!=0], 4, axis=1)
+        #        now we need to go from shape (N, (N^2-N)/2) to (N,N)
+        #        (each residue burial indicator covaries with (N^2-N)/2 pairwise indicators,
+        #         but only N of them include the same residue from the burial indicator;
+        #         others have a value of 0, which we can easily eliminate)
+        #        we also need to multiply by our pairwise gammas
+        direct = direct[direct != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.direct_gamma[J_index[3]]*self.p.k_contact
+        prot = prot[prot != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.protein_gamma[J_index[3]]*self.p.k_contact
+        wat = wat[wat != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.water_gamma[J_index[3]]*self.p.k_contact
+        elec = elec[elec != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.electrostatics_gamma[J_index[3]]*self.p.k_contact
+
+        contact_energy = np.append(contact_energy, direct[np.newaxis,...], axis=0)
+        contact_energy = np.append(contact_energy, prot[np.newaxis,...], axis=0)
+        contact_energy = np.append(contact_energy, wat[np.newaxis,...], axis=0)
+        contact_energy = np.append(contact_energy, elec[np.newaxis,...], axis=0)
+
+        """
+        direct = np.zeros((self.N,self.N))
+        direct[triu_indices] = 
+        direct
+
+        num_upper = int((self.N**2-self.N)/2)
+        triu_indices = np.triu_indices(self.N,k=1)        
+        template = np.zeros((self.N,self.N))
+        
+        assert direct.shape==(self.N,self.N), direct.shape
+        assert prot.shape==(self.N,self.N), prot.shape
+        assert wat.shape==(self.N,self.N), wat.shape
+        assert elec.shape==(self.N,self.N), elec.shape
+
+
+        for counter,row in enumerate(self.burial_pairwise_covariances_2):
+            direct_indicators = row[:len(row)//4]
+            direct_energy = direct_indicators[direct_indicators>0].reshape((-1,1))\
+                *0.5*self.p.k_contact*self.burial_gamma[:,counter%3]\
+                *self.p.k_contact*self.direct_gamma[]
+            direct = row[row!=0] * 0.5*self.p.k_contact*self.burial_gamma[]
+            template[counter] = row[row==1] # where the residue corresponding to the burial row is involved in the pairwise indicator
+        burial_pairwise_2 = self.burial_pairwise_covariances_2[]
+        """
+        ####################################################################
+        # the potts model that we're using (AWSEMEnergy) multiplies each of the J terms by 1/2,
+        # so we should multiply them by 2 to cancel that out
+        contact_energy[np.diag_indices(contact_energy.shape[0])] *= 1/2
+        contact_energy *= 2
+        ####################################################################
+
+        self.contact_energy = contact_energy
+
+        # Compute potts model
+        self.potts_model = {}
+        self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
+        self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
+        # Set the gap energy to zero
+        self.potts_model['h'][:, 0] = 0
+        self.potts_model['J'][:, :, 0, :] = 0
+        self.potts_model['J'][:, :, :, 0] = 0
+        self._native_energy=None # don't know what this does
+
 class DecoyEnsemble():
 
     def __init__(self, 
@@ -560,7 +726,7 @@ class DecoyEnsemble():
             yields Structure objects representing decoy structures
         other parameters:
             masks and cutoffs affecting the AWSEM class's indicator function calculations;
-            they must be the same for all structures; burial_in_context also available, but use at your own risk
+            they are applied to all structures in the ensemble; burial_in_context also available, but use at your own risk
         
         Returns
         -------
@@ -570,8 +736,21 @@ class DecoyEnsemble():
         #     AWSEM normally accepts an amino acid sequence argument, but we don't need that here
         #     However, we do need to pass through parameters used to generate the indicator functions
         awsem_obj = AWSEM(next(pdb_structures), expose_indicator_functions=True, repair_pdb=True, **parameters)
-        self.N = awsem_obj.N
-        for pdb_structure in pdb_structures: 
+        self.N = awsem_obj.N # number of residues
+        with open('burial_indicators.npy','ab') as f:
+            np.save(f,awsem_obj.burial_indicator)
+        with open('direct_indicators.npy','ab') as f:
+            np.save(f,awsem_obj.direct_indicator)
+        with open('protein_indicators.npy','ab') as f:
+            np.save(f,awsem_obj.protein_indicator)
+        with open('water_indicators.npy','ab') as f:
+            np.save(f,awsem_obj.water_indicator)
+        with open('electrostatics_indicators.npy','ab') as f:
+            if hasattr(awsem_obj, 'electrostatics_indicator'):
+                np.save(f,awsem_obj.electrostatics_indicator)
+            else:
+                np.save(f,None)
+        for pdb_structure in pdb_structures: # iterate over the rest of the structures without re-initializing the entire AWSEM class
             awsem_obj.pdb_structure = pdb_structure # we can use the pdb_structure setter to update structural 
                                                     # stuff without fully re-initializing the object
             with open('burial_indicators.npy','ab') as f:
@@ -780,4 +959,22 @@ class DecoyEnsemble():
         #assert np.allclose(variances, np.diag(covariance_matrix))
         assert np.all(covariance_matrix==covariance_matrix.T)
         assert covariance_matrix.shape == exy.shape == ex_ey.shape
+        self.covariance_matrix = covariance_matrix
         return covariance_matrix
+
+    def all_decoy_indicators(self):
+        # returns lists of indicator functions for each decoy
+        # memory scales with the size of the structure and decoy set
+        all_burial = []
+        all_direct = []
+        all_prot = []
+        all_wat = []
+        all_elec = []
+        for burial, direct, prot, wat, elec in zip(self.burial_indicators,self.direct_indicators,
+            self.protein_indicators, self.water_indicators, self.electrostatics_indicators):
+            all_burial.append(burial)
+            all_direct.append(direct)
+            all_prot.append(prot)
+            all_wat.append(wat)
+            all_elec.append(elec)
+        return all_burial, all_direct, all_prot, all_wat, all_elec

@@ -7,7 +7,7 @@ and energy values associated with this structure using either the DCA or AWSEM c
 """
 
 from .DCA import DCA
-from .AWSEM import AWSEM, AWSEMIndicators, DecoyEnsemble
+from .AWSEM import AWSEM, AWSEMIndicators, DecoyEnsemble, AWSEMVariancePotts
 from .Structure import Structure
 from .Map import Map
 from .Gamma import Gamma

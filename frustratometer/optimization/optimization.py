@@ -7,7 +7,7 @@ from datetime import datetime
 
 from frustratometer.classes import Frustratometer
 from frustratometer.classes import Structure
-from frustratometer.classes import AWSEM, AWSEMIndicators, DecoyEnsemble
+from frustratometer.classes import AWSEM, AWSEMIndicators, DecoyEnsemble, AWSEMVariancePotts
 from frustratometer.optimization.EnergyTerm import EnergyTerm
 from frustratometer.optimization.inner_product import compute_all_region_means
 from frustratometer.optimization.inner_product import build_mean_inner_product_matrix
@@ -365,6 +365,152 @@ class AwsemEnergy(EnergyTerm):
         energy=self.compute_energy(seq_index)
         assert np.isclose(energy,expected_energy), f"Expected energy {expected_energy} but got {energy}"
 
+#@numba.experimental.jitclass([('_use_numba',numba.float32),('std',numba.float32),('total_energies',numba.float32[:])])
+class AwsemStdSlow(EnergyTerm):
+    """ Computes the standard deviation of the AWSEM energies of a set of decoy structures
+        by computing the energy of each decoy structure and then computing the std of the energies
+        """
+    def __init__(self, all_burial, all_direct, all_prot, all_wat, all_elec, sequence, 
+                       alphabet=_AA, use_numba=True, **parameters):
+
+        self._use_numba=use_numba
+        self.alphabet=alphabet
+
+        self.models_h = []
+        self.models_J = []
+        for burial, direct, prot, wat, elec in zip(all_burial, all_direct, all_prot, all_wat, all_elec):
+            model = AWSEMIndicators(burial, direct, prot, wat, elec, sequence, **parameters)
+            self.models_h.append(model.potts_model['h'])
+            self.models_J.append(model.potts_model['J'])
+        self.mask = model.mask # should be the same for all, so we put this outside the loop
+
+        if alphabet!=_AA:
+            raise NotImplementedError("Reindex your potts models according to your alphabet")
+            self.reindex_dca=[_AA.index(aa) for aa in alphabet]
+            self.model_h=self.model_h[:,self.reindex_dca]
+            self.model_J=self.model_J[:,:,self.reindex_dca][:,:,:,self.reindex_dca]
+       
+        self.stds = []
+        self.total_energies = []
+
+        self.initialize_functions()
+    
+    def initialize_functions(self):
+        mask=self.mask.copy()
+        models_h=self.models_h.copy()
+        models_J=self.models_J.copy()
+        
+        def compute_energy(seq_index: np.array) -> float:
+            seq_len = len(seq_index)
+            to_append = np.zeros(len(models_h)) # a new array for each seq index, with a length equal to the number of decoys
+            for counter, models in enumerate(zip(models_h, models_J)):
+                model_h = models[0]
+                model_J = models[1]
+                energy_h = 0.0
+                energy_J = 0.0
+                for i in range(seq_len):
+                    energy_h -= model_h[i, seq_index[i]]
+                for i in range(seq_len):
+                    for j in range(seq_len):
+                        aa_i = seq_index[i]
+                        aa_j = seq_index[j]
+                        energy_J -= model_J[i, j, aa_i, aa_j] * mask[i, j]
+                decoy_energy = energy_h + energy_J / 2
+                to_append[counter] = decoy_energy
+            
+            self.total_energies.append(to_append)
+        
+            std = to_append.std()
+            self.stds.append(std)
+            #std = np.array([1,2]).var()#total_energies.var() # doing variance for now because variances are additive
+            #self.stds.append(std)
+            return std
+
+        def compute_denergy_mutation(seq_index: np.ndarray, pos: int, aa_new: int) -> float:
+            aa_old=seq_index[pos]
+
+            for counter, models in enumerate(zip(models_h, models_J)):
+                model_h = models[0]
+                model_J = models[1]
+                #import pdb; pdb.set_trace()
+                energy_difference = -model_h[pos,aa_new] + model_h[pos,aa_old]
+                # Initialize j_correction to 0
+                j_correction = 0.0
+                # Manually iterate over the sequence indices
+                for idx in range(len(seq_index)):
+                    aa_idx = seq_index[idx]  # The amino acid at the current position
+                    # Accumulate corrections for positions other than the mutated one
+                    j_correction += model_J[idx, pos, aa_idx, aa_old] * mask[idx, pos]
+                    j_correction -= model_J[idx, pos, aa_idx, aa_new] * mask[idx, pos]
+                # For self-interaction, subtract the old interaction and add the new one
+                j_correction -= model_J[pos, pos, aa_old, aa_old] * mask[pos, pos]
+                j_correction += model_J[pos, pos, aa_new, aa_new] * mask[pos, pos]
+                energy_difference += j_correction
+                self.total_energies[pos][counter] += energy_difference
+            #import pdb; pdb.set_trace()
+            new_std = self.total_energies[pos].std()
+            delta_std = new_std - self.stds[pos]
+            self.stds[pos] = new_std
+            return delta_std
+
+        def compute_denergy_swap(seq_index, pos1, pos2):
+            aa2 , aa1 = seq_index[pos1],seq_index[pos2]
+
+            for counter, models in enumerate(zip(models_h, models_J)):
+                model_h = models[0]
+                model_J = models[1]
+                #Compute fields
+                energy_difference = 0
+                energy_difference -= (model_h[pos1, aa1] - model_h[pos1, seq_index[pos1]])  # h correction aa1
+                energy_difference -= (model_h[pos2, aa2] - model_h[pos2, seq_index[pos2]])  # h correction aa2
+                
+                #Compute couplings
+                j_correction = 0.0
+                for pos in range(len(seq_index)):
+                    aa = seq_index[pos]
+                    # Corrections for interactions with pos1 and pos2
+                    j_correction += model_J[pos, pos1, aa, seq_index[pos1]] * mask[pos, pos1]
+                    j_correction -= model_J[pos, pos1, aa, aa1] * mask[pos, pos1]
+                    j_correction += model_J[pos, pos2, aa, seq_index[pos2]] * mask[pos, pos2]
+                    j_correction -= model_J[pos, pos2, aa, aa2] * mask[pos, pos2]
+    
+                # J correction, interaction with self aminoacids
+                j_correction -= model_J[pos1, pos2, seq_index[pos1], seq_index[pos2]] * mask[pos1, pos2]  # Taken two times
+                j_correction += model_J[pos1, pos2, aa1, seq_index[pos2]] * mask[pos1, pos2]  # Correction for incorrect addition in the for loop
+                j_correction += model_J[pos1, pos2, seq_index[pos1], aa2] * mask[pos1, pos2]  # Correction for incorrect addition in the for loop
+                j_correction -= model_J[pos1, pos2, aa1, aa2] * mask[pos1, pos2]  # Correct combination
+                energy_difference += j_correction
+                #import pdb; pdb.set_trace()
+                #self.total_energies[counter] += energy_difference
+                self.total_energies[pos][counter] += energy_difference
+
+            new_std = self.total_energies[pos].std()
+            delta_std = new_std - self.stds[pos]
+            self.stds[pos] = new_std
+            return delta_std
+        
+        self.compute_energy=compute_energy
+        self.compute_denergy_mutation=compute_denergy_mutation
+        self.compute_denergy_swap=compute_denergy_swap
+
+class FourBodyPottsModel(EnergyTerm):
+    """ Potts model with 3-body and 4-body terms. 
+        This is mainly the same as the AWSEMEnergy class, but 2 important differences:
+        1. We don't recognize any mask that may be associated with the "model" input
+               that's because this class is intended to evaluate changes in a covariance matrix,
+               which should not be masked
+        2. By definition, all coefficients are 1: "Energy" = h + J + K + L
+               unlike real interactions, the sum over the entire covariance matrix
+               isn't double counting, so we don't need to multiply by 1/2
+        """
+    def __init__(self, model:Frustratometer, alphabet=_AA, use_numba=True):
+        self._use_numba=use_numba
+        self.model=model
+        self.alphabet=alphabet
+        self.model_h = model.potts_model['h']
+        self.model_J = model.potts_model['J']
+
+
 class AwsemEnergyAverage(EnergyTerm):   
     def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA):
         self._use_numba=use_numba
@@ -511,7 +657,6 @@ class AwsemEnergyAverage(EnergyTerm):
         expected_energy=self.compute_energy_permutation(seq_index)
         energy=self.compute_energy(seq_index)
         assert np.isclose(energy,expected_energy), f"Expected energy {expected_energy} but got {energy}"
-
 
 class AwsemEnergyVariance(EnergyTerm):   
     def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA):
