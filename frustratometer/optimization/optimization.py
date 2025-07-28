@@ -418,10 +418,17 @@ class AwsemStdSlow(EnergyTerm):
                 decoy_energy = energy_h + energy_J / 2
                 to_append[counter] = decoy_energy
             
-            self.total_energies.append(to_append)
+            if len(self.total_energies) == 0:
+                self.total_energies.append(to_append) # this may result in the total_energies list being repeated a few times because compute_energy is called a few times
+            else:
+                self.total_energies[0] = to_append
+            #breakpoint()
         
             std = to_append.std()
-            self.stds.append(std)
+            if len(self.stds) == 0:
+                self.stds.append(std) # this may result in the list being too long because compute_energy is called a few times
+            else:
+                self.stds[0] = std
             #std = np.array([1,2]).var()#total_energies.var() # doing variance for now because variances are additive
             #self.stds.append(std)
             return std
@@ -446,11 +453,14 @@ class AwsemStdSlow(EnergyTerm):
                 j_correction -= model_J[pos, pos, aa_old, aa_old] * mask[pos, pos]
                 j_correction += model_J[pos, pos, aa_new, aa_new] * mask[pos, pos]
                 energy_difference += j_correction
-                self.total_energies[pos][counter] += energy_difference
+                try:
+                    self.total_energies[0][counter] += energy_difference
+                except IndexError:
+                    import pdb; pdb.set_trace()
             #import pdb; pdb.set_trace()
-            new_std = self.total_energies[pos].std()
-            delta_std = new_std - self.stds[pos]
-            self.stds[pos] = new_std
+            new_std = self.total_energies[0].std()
+            delta_std = new_std - self.stds[0]
+            self.stds[0] = new_std
             return delta_std
 
         def compute_denergy_swap(seq_index, pos1, pos2):
@@ -482,11 +492,11 @@ class AwsemStdSlow(EnergyTerm):
                 energy_difference += j_correction
                 #import pdb; pdb.set_trace()
                 #self.total_energies[counter] += energy_difference
-                self.total_energies[pos][counter] += energy_difference
+                self.total_energies[0][counter] += energy_difference
 
-            new_std = self.total_energies[pos].std()
-            delta_std = new_std - self.stds[pos]
-            self.stds[pos] = new_std
+            new_std = self.total_energies[0].std()
+            delta_std = new_std - self.stds[0]
+            self.stds[0] = new_std
             return delta_std
         
         self.compute_energy=compute_energy
@@ -1054,9 +1064,13 @@ class MonteCarlo:
             for _ in range(n_steps):
                 new_sequence, energy_difference = sequence_swap(seq_index) if np.random.random() > 0.5 else sequence_mutation(seq_index)
                 exponent= (-energy_difference) / (kb * temperature + 1E-10)
+                #breakpoint()
                 acceptance_probability = np.exp(min(0, exponent))
+                assert ((acceptance_probability == 0) or (acceptance_probability ==1)), acceptance_probability
+                #print(acceptance_probability)
                 if np.random.random() < acceptance_probability:
                     seq_index = new_sequence
+                    print(f"energy_difference: {energy_difference}")
             return seq_index
         
         montecarlo_steps=self.numbify(montecarlo_steps)
@@ -1146,7 +1160,7 @@ class MonteCarlo:
             seq_index = self.generate_random_sequences(1)[0]
         
         done_steps=0
-        total_energy = self.energy.energy(seq_index)
+        total_energy = self.energy.energy(seq_index, )
 
         #Write data to file
         step_data={'Step': done_steps, 'Temperature': temperatures[0], 'Sequence': index_to_sequence(seq_index,alphabet=self.alphabet), 'TotalEnergy': total_energy}
@@ -1155,6 +1169,7 @@ class MonteCarlo:
 
         for t,temp in enumerate(temperatures):
             steps=(n_steps-done_steps)//(len(temperatures)-t)
+            assert steps >= 1, f"steps: {steps}"
             seq_index= self.montecarlo_steps(temp, seq_index, n_steps=steps)
             total_energy = self.energy.energy(seq_index)
             done_steps+=steps
