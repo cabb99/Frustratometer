@@ -1078,7 +1078,7 @@ class MonteCarlo:
                 exponent= (-energy_difference) / (kb * temperature + 1E-10)
                 #breakpoint()
                 acceptance_probability = np.exp(min(0, exponent))
-                assert ((acceptance_probability == 0) or (acceptance_probability ==1)), acceptance_probability
+                #assert ((acceptance_probability == 0) or (acceptance_probability ==1)), acceptance_probability
                 #print(acceptance_probability)
                 if np.random.random() < acceptance_probability:
                     seq_index = new_sequence

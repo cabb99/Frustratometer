@@ -6,6 +6,7 @@ from .Gamma import Gamma
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic.types import Path
 from typing import List,Optional,Union,Generator
+import os
 
 __all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble', 'AWSEMVariancePotts']
 
@@ -737,31 +738,31 @@ class DecoyEnsemble():
         #     However, we do need to pass through parameters used to generate the indicator functions
         awsem_obj = AWSEM(next(pdb_structures), expose_indicator_functions=True, repair_pdb=True, **parameters)
         self.N = awsem_obj.N # number of residues
-        with open('burial_indicators.npy','ab') as f:
+        with open('burial_indicators/burial_indicator_0.npy','ab') as f:
             np.save(f,awsem_obj.burial_indicator)
-        with open('direct_indicators.npy','ab') as f:
+        with open('direct_indicators/direct_indicator_0.npy','ab') as f:
             np.save(f,awsem_obj.direct_indicator)
-        with open('protein_indicators.npy','ab') as f:
+        with open('protein_indicators/protein_indicator_0.npy','ab') as f:
             np.save(f,awsem_obj.protein_indicator)
-        with open('water_indicators.npy','ab') as f:
+        with open('water_indicators/water_indicator_0.npy','ab') as f:
             np.save(f,awsem_obj.water_indicator)
-        with open('electrostatics_indicators.npy','ab') as f:
+        with open('electrostatics_indicators/electrostatics_indicator_0.npy','ab') as f:
             if hasattr(awsem_obj, 'electrostatics_indicator'):
                 np.save(f,awsem_obj.electrostatics_indicator)
             else:
                 np.save(f,None)
-        for pdb_structure in pdb_structures: # iterate over the rest of the structures without re-initializing the entire AWSEM class
+        for counter, pdb_structure in enumerate(pdb_structures): # iterate over the rest of the structures without re-initializing the entire AWSEM class
             awsem_obj.pdb_structure = pdb_structure # we can use the pdb_structure setter to update structural 
                                                     # stuff without fully re-initializing the object
-            with open('burial_indicators.npy','ab') as f:
+            with open(f'burial_indicators/burial_indicator_{counter+1}.npy','ab') as f:
                 np.save(f,awsem_obj.burial_indicator)
-            with open('direct_indicators.npy','ab') as f:
+            with open(f'direct_indicators/direct_indicator_{counter+1}.npy','ab') as f:
                 np.save(f,awsem_obj.direct_indicator)
-            with open('protein_indicators.npy','ab') as f:
+            with open(f'protein_indicators/protein_indicator_{counter+1}.npy','ab') as f:
                 np.save(f,awsem_obj.protein_indicator)
-            with open('water_indicators.npy','ab') as f:
+            with open(f'water_indicators/water_indicator_{counter+1}.npy','ab') as f:
                 np.save(f,awsem_obj.water_indicator)
-            with open('electrostatics_indicators.npy','ab') as f:
+            with open(f'electrostatics_indicators/electrostatics_indicator_{counter+1}.npy','ab') as f:
                 if hasattr(awsem_obj, 'electrostatics_indicator'):
                     np.save(f,awsem_obj.electrostatics_indicator)
                 else:
@@ -798,30 +799,32 @@ class DecoyEnsemble():
     #     be able to reinitialize the generators. We accomplish this with properties
     @property
     def burial_indicators(self):
-        return self.get_indicators("burial_indicators.npy")
+        return self.get_indicators("burial_indicators")
     @property
     def direct_indicators(self):
-        return self.get_indicators("direct_indicators.npy")
+        return self.get_indicators("direct_indicators")
     @property
     def protein_indicators(self):
-        return self.get_indicators("protein_indicators.npy")
+        return self.get_indicators("protein_indicators")
     @property
     def water_indicators(self):
-        return self.get_indicators("water_indicators.npy")
+        return self.get_indicators("water_indicators")
     @property
     def electrostatics_indicators(self):
-        return self.get_indicators("electrostatics_indicators.npy")
+        return self.get_indicators("electrostatics_indicators")
 
     # allows us to process indicators without holding them all in memory
     #    this requires that every method that acts on the indicators iterates over them
-    def get_indicators(self, filename):
-        # expecting a numpy file
-        with open(filename, 'rb') as f:
-            while True:
-                try:
-                    yield np.load(f, allow_pickle=True) # needed to load None if not electrostatics
-                except EOFError:
-                    break
+    def get_indicators(self, directory):
+        # expecting a directory containing numpy files
+        for filename in sorted(os.listdir(directory)):
+            yield np.load(f"{directory}/{filename}")
+        #with open(filename, 'rb') as f:
+        #    while True:
+        #        try:
+        #            yield np.load(f, allow_pickle=True) # allow_pickle=True needed to load None if not electrostatics
+        #        except EOFError:
+        #            break
 
     # average indicator functions over all decoys
     # these averages can then be averaged to get the average of all indicator functions over all decoys
