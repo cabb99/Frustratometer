@@ -4,6 +4,7 @@ import math
 import csv
 from functools import wraps
 from datetime import datetime
+import copy
 
 from frustratometer.classes import Frustratometer
 from frustratometer.classes import Structure
@@ -392,6 +393,8 @@ class AwsemStdSlow(EnergyTerm):
        
         self.stds = []
         self.total_energies = []
+        self.consider_stds = []
+        self.consider_total_energies = []
 
         self.initialize_functions()
     
@@ -420,15 +423,19 @@ class AwsemStdSlow(EnergyTerm):
             
             if len(self.total_energies) == 0:
                 self.total_energies.append(to_append) # this may result in the total_energies list being repeated a few times because compute_energy is called a few times
+                self.consider_total_energies.append(copy.deepcopy(to_append))
             else:
                 self.total_energies[0] = to_append
+                self.consider_total_energies[0] = copy.deepcopy(to_append)
             #breakpoint()
         
             std = to_append.std()
             if len(self.stds) == 0:
                 self.stds.append(std) # this may result in the list being too long because compute_energy is called a few times
+                self.consider_stds.append(std)
             else:
                 self.stds[0] = std
+                self.consider_stds[0] = std
             #std = np.array([1,2]).var()#total_energies.var() # doing variance for now because variances are additive
             #self.stds.append(std)
             return std
@@ -453,14 +460,15 @@ class AwsemStdSlow(EnergyTerm):
                 j_correction -= model_J[pos, pos, aa_old, aa_old] * mask[pos, pos]
                 j_correction += model_J[pos, pos, aa_new, aa_new] * mask[pos, pos]
                 energy_difference += j_correction
-                try:
-                    self.total_energies[0][counter] += energy_difference
-                except IndexError:
-                    import pdb; pdb.set_trace()
+                # our mutation might be rejected, so we don't want to overwrite self.total_energies
+                self.consider_total_energies[0][counter] = self.total_energies[0][counter] + energy_difference
+                #print(f"energy  difference: {energy_difference}")
+            #assert not np.all(np.array(self.total_energies[0])==np.array(self.consider_total_energies[0]))
             #import pdb; pdb.set_trace()
-            new_std = self.total_energies[0].std()
+            new_std = self.consider_total_energies[0].std()
+            self.consider_stds[0] = new_std  # our mutation might be rejected, so we don't want to overwrite self.stds
             delta_std = new_std - self.stds[0]
-            self.stds[0] = new_std
+            #print(f"mutation: {delta_std}")
             return delta_std
 
         def compute_denergy_swap(seq_index, pos1, pos2):
@@ -492,11 +500,15 @@ class AwsemStdSlow(EnergyTerm):
                 energy_difference += j_correction
                 #import pdb; pdb.set_trace()
                 #self.total_energies[counter] += energy_difference
-                self.total_energies[0][counter] += energy_difference
-
-            new_std = self.total_energies[0].std()
+                self.consider_total_energies[0][counter] = self.total_energies[0][counter] + energy_difference
+                #print(f"energy  difference: {energy_difference}")
+            #breakpoint()
+            #import pdb; pdb.set_trace()
+            #assert not np.all(np.array(self.total_energies[0])==np.array(self.consider_total_energies[0]))
+            new_std = self.consider_total_energies[0].std()
+            self.consider_stds[0] = new_std
             delta_std = new_std - self.stds[0]
-            self.stds[0] = new_std
+            #print(f"swap: {delta_std}")
             return delta_std
         
         self.compute_energy=compute_energy
@@ -1070,7 +1082,11 @@ class MonteCarlo:
                 #print(acceptance_probability)
                 if np.random.random() < acceptance_probability:
                     seq_index = new_sequence
-                    print(f"energy_difference: {energy_difference}")
+                    #print(f"before reassignment: {self.energy.stds}")
+                    self.energy.stds = copy.deepcopy(self.energy.consider_stds)
+                    #print(f"after reassignment: {self.energy.stds}")
+                    self.energy.total_energies = copy.deepcopy(self.energy.consider_total_energies)
+                    #print(f"energy_difference: {energy_difference}")
             return seq_index
         
         montecarlo_steps=self.numbify(montecarlo_steps)
