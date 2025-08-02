@@ -532,7 +532,6 @@ class FourBodyPottsModel(EnergyTerm):
         self.model_h = model.potts_model['h']
         self.model_J = model.potts_model['J']
 
-
 class AwsemEnergyAverage(EnergyTerm):   
     def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA):
         self._use_numba=use_numba
@@ -942,11 +941,29 @@ class AwsemEnergyStd(EnergyTerm):
                 for i in range(len_indicators2D):
                     for j in range(len_alphabet):
                         for k in range(len_alphabet):
-                            t=1 if j==k else 0
-                            phi_mean[c] = indicator_means[i+ len_indicators1D] * counts[j] * (counts[k] - t)
+                            t=1 if j==k else 0 # I don't know why we do this
+                            phi_mean[c] = indicator_means[i+ len_indicators1D] * counts[j] * (counts[k] - t) 
                             c += 1
 
                 B = build_mean_inner_product_matrix(counts,indicators1D,indicators2D,region_means)
+                # B[i,j] - phi_mean[i]*phi_mean[j] is the covariance of some avg-indicator/gamma
+                # product i with some other avg-indicator/gamma product j
+                #
+                # we can think of computing the total variance (summing this matrix)
+                # as evaluating a potts model (covariances playing the role of "energies") that has
+                # 3 fields (the burial indicator function for each density bin) and
+                # 4 couplings (direct, prot, wat, and elec pairwise indicators)
+                #
+                # because we averaged over all indicators and they're playing the role of 
+                # couplings and fields in our model, this is a "mean field" approach
+                #
+                # more precisely, the above-described strategy is mean-field
+                # with respect to the indicators, representing sequence shuffling;
+                # to represent structure shuffling, we want to do the mean-field calculation
+                # with respect to the gammas, meaning that we average the gammas to get the 
+                # couplings and fields, then multiply by the indicators
+                # 
+                
                 energy=0
                 for i in range(phi_len):
                     for j in range(phi_len):
@@ -980,6 +997,196 @@ class AwsemEnergyStd(EnergyTerm):
         energy=self.compute_energy(seq_index)
         assert np.isclose(energy,expected_energy), f"Expected energy {expected_energy} but got {energy}"
 
+class AwsemEnergyStdFromCovMatrix(EnergyTerm):
+    def __init__(self, covariance_matrix: np.ndarray, 
+                       burial_gamma: np.ndarray,
+                       direct_gamma: np.ndarray,
+                       protein_gamma: np.ndarray,
+                       water_gamma: np.ndarray,
+                       electrostatics_gamma: np.ndarray,
+                       use_numba = True, alphabet = _AA):  
+        """
+        covariance_matrix: np.ndarray
+        Covariance matrix of all __indicator functions___ (not residues) over a decoy set.
+        Should have the following structure:
+        ___________________________________________________________________________________________
+                                                             burial                 pairwise
+                                                      _____________________________________________
+                                     position 1 low  |                      .                      |
+                                     ...             |                      .                      |
+                                     position N low  |                      .                      |
+                                     position 1 med  |    burial-burial     .     burial-pairwise  |
+        burial                       ...             |                      .                      |
+                                     position N med  |                      .                      |
+                                     position 1 high |     covariances      .       covariances    |
+                                     ...             |                      .                      |
+                                     position N high |                      .                      |
+        -------------------------------------------------------------------------------------------
+                       direct interaction 1          |                      .                      |
+                       ...                           |                      .                      |
+                       direct interaction (N**2-N)/2 |                      .                      |                
+                       prot interaction 1            |                      .                      |
+                       ...                           |                      .                      |
+        pairwise       prot interaction (N**2-N)/2   |   burial-pairwise    .    pairwise-pairwise |
+                       wat interaction 1             |     covariances      .       covariances    |
+                       ...                           |                      .                      |
+                       wat interaction (N**2-N)/2    |                      .                      |
+                       elec interaction 1            |                      .                      |
+                       ...                           |                      .                      |
+                       elec interaction (N**2-N)/2   |                      .                      |
+        ___________________________________________________________________________________________|
+    
+        This matrix should have the same form as the covariance matrix that would be passed into
+        AwsemVariancePotts, if we were doing things that way.
+    
+        gamma arrays: INPUTS MUST BE REINDEXED according to the alphabet used!
+    
+        """ 
+        # check input
+        if not len(covariance_matrix.shape) == 2:
+            raise ValueError(f"covariance_matrix must have dimension 2 but was {len(covariance_matrix.shape)}")
+        if not covariance_matrix.shape[0] == covariance_matrix.shape[1]:
+            raise ValueError(f"covariance_matrix dimensions were not equal. covariance_matrix.shape: {covariance_matrix.shape}")
+        if not burial_gamma.shape[1] == 3:
+            raise ValueError(f"burial_gamma.shape[1] should be 3 but was {burial_gamma.shape[1]}")
+        if not direct_gamma.shape[0]==direct_gamma.shape[1]\
+             or not protein_gamma.shape[0]==protein_gamma.shape[1]\
+               or not water_gamma.shape[0]==water_gamma.shape[1]\
+                 or not electrostatics_gamma.shape[0]==electrostatics_gamma.shape[1]:
+            raise ValueError("check gamma shapes")
+        if not burial_gamma.shape[0] == len(alphabet):
+            raise ValueError(f"alphabet {alphabet} and burial_gamma shape {burial_gamma.shape} are inconsistent")
+        if not direct_gamma.shape[0] == len(alphabet):
+            raise ValueError(f"alphabet {alphabet} and direct_gamma shape {direct_gamma.shape} are inconsistent")
+        if not protein_gamma.shape[0] == len(alphabet):
+            raise ValueError(f"alphabet {alphabet} and protein_gamma shape {protein_gamma.shape} are inconsistent")
+        if not water_gamma.shape[0] == len(alphabet):
+            raise ValueError(f"alphabet {alphabet} and water_gamma shape {water_gamma.shape} are inconsistent")
+        if not electrostatics_gamma.shape[0] == len(alphabet):
+            raise ValueError(f"alphabet {alphabet} and electrostatics_gamma shape {electrostatics_gamma.shape} are inconsistent")
+        # set attributes
+        self.covariance_matrix = covariance_matrix           
+        self._use_numba = use_numba
+        self.alphabet = alphabet
+        self.alphabet_size = len(alphabet)
+        N = 0
+        while 3*N + 4*((N**2-N)/2) < self.covariance_matrix.shape[0]:
+            N += 1
+        if not 3*N + 4*((N**2-N)/2) == self.covariance_matrix.shape[0]:
+            raise ValueError(f"the covariance matrix seems to have been constructed incorrectly. covariance_matrix.shape: {covariance_matrix.shape}")
+        self.N = N # number of amino acids
+        # compute products of gamma parameters for each indicator class 
+        #     (burial low density, burial med, burial high, direct, prot, wat, elec)
+        #     for each combination of amino acids (in general, 4 total because we have
+        #     to evaluate the covariance of two pairwise indicators each depending on 
+        #     the amino acid identity at 2 different positions in the sequence)
+        gamma = np.zeros((7,7,len(alphabet),len(alphabet),len(alphabet),len(alphabet)))
+        # we don't need the third and fourth axes for burial-burial covariances, so we copy the
+        #    2D outer product along both new axes so that the gamma array is not ragged
+        #    (the third and fourth axes are needed for other terms)
+        #gamma[0,0] = np.repeat(np.outer(burial_gamma[:,0],burial_gamma[:,0])[:,None,:,None], len(alphabet), axis=1)# low burial- low burial
+        gamma[0,0] = np.outer(burial_gamma[:,0],burial_gamma[:,0])[:,None,:,None]# low burial- low burial
+        gamma[0,1] = np.outer(burial_gamma[:,0],burial_gamma[:,1])[:,None,:,None]# low burial- med burial
+        gamma[0,2] = np.outer(burial_gamma[:,0],burial_gamma[:,2])[:,None,:,None]# low burial- high burial
+        gamma[0,3] = np.einsum('i,jk->ijk', burial_gamma[:,0], direct_gamma)[:,None,:,:]  # low burial- direct
+        gamma[0,4] = np.einsum('i,jk->ijk', burial_gamma[:,0], protein_gamma)[:,None,:,:]  # low burial- prot
+        gamma[0,5] = np.einsum('i,jk->ijk', burial_gamma[:,0], water_gamma)[:,None,:,:]  # low burial- wat
+        gamma[0,6] = np.einsum('i,jk->ijk', burial_gamma[:,0], electrostatics_gamma)[:,None,:,:]  # low burial- elec
+        gamma[1,1] = np.outer(burial_gamma[:,1],burial_gamma[:,1])[:,None,:,None]# med burial- med burial
+        gamma[1,2] = np.outer(burial_gamma[:,1],burial_gamma[:,2])[:,None,:,None]# med burial- high burial
+        gamma[1,3] = np.einsum('i,jk->ijk', burial_gamma[:,1], direct_gamma)[:,None,:,:]  # med burial- direct
+        gamma[1,4] = np.einsum('i,jk->ijk', burial_gamma[:,1], protein_gamma)[:,None,:,:]  # med burial- prot
+        gamma[1,5] = np.einsum('i,jk->ijk', burial_gamma[:,1], water_gamma)[:,None,:,:]  # med burial- wat
+        gamma[1,6] = np.einsum('i,jk->ijk', burial_gamma[:,1], electrostatics_gamma)[:,None,:,:]  # med burial- elec
+        gamma[2,2] = np.outer(burial_gamma[:,2],burial_gamma[:,2])[:,None,:,None]# high burial- high burial
+        gamma[2,3] = np.einsum('i,jk->ijk', burial_gamma[:,2], direct_gamma)[:,None,:,:]  # high burial- direct
+        gamma[2,4] = np.einsum('i,jk->ijk', burial_gamma[:,2], protein_gamma)[:,None,:,:]  # high burial- prot
+        gamma[2,5] = np.einsum('i,jk->ijk', burial_gamma[:,2], water_gamma)[:,None,:,:]  # high burial- wat
+        gamma[2,6] = np.einsum('i,jk->ijk', burial_gamma[:,2], electrostatics_gamma)[:,None,:,:]  # high burial- elec
+        gamma[3,3] = np.einsum('ij,kl->ijkl', direct_gamma, direct_gamma) # direct- direct
+        gamma[3,4] = np.einsum('ij,kl->ijkl', direct_gamma, protein_gamma) # direct- prot
+        gamma[3,5] = np.einsum('ij,kl->ijkl', direct_gamma, water_gamma) # direct- wat
+        gamma[3,6] = np.einsum('ij,kl->ijkl', direct_gamma, electrostatics_gamma) # direct- elec
+        gamma[4,4] = np.einsum('ij,kl->ijkl', protein_gamma, protein_gamma) # prot- prot
+        gamma[4,5] = np.einsum('ij,kl->ijkl', protein_gamma, water_gamma) # prot- wat
+        gamma[4,6] = np.einsum('ij,kl->ijkl', protein_gamma, electrostatics_gamma) # prot- elec
+        gamma[5,5] = np.einsum('ij,kl->ijkl', water_gamma, water_gamma) # wat- wat
+        gamma[5,6] = np.einsum('ij,kl->ijkl', water_gamma, electrostatics_gamma) # wat- elec
+        gamma[6,6] = np.einsum('ij,kl->ijkl', electrostatics_gamma, electrostatics_gamma) # elec- elec
+        self.gamma = gamma + gamma.transpose((0,1,5,4,3,2)) # keep the indicator class axes the same
+                                                            #     but transpose the gamma values
+        
+    @staticmethod
+    def covariance_type(N, i, j):
+        # N: total number of residues
+        # i: first position in the covariance matrix
+        # j: second position in the covariance matrix
+        if i < 3*N:
+            type_i = i//N
+        else:
+            type_i = (i-3*N)//((N**2-N)/2)
+        if j < 3*N:
+            type_j = j//N
+        else:
+            type_j = (j-3*N)//((N**2-N)/2)
+        return (type_i, type_j)
+
+    @staticmethod 
+    def residue_identities(i, j, seq_index, indexing_helper_rowflatten, indexing_helper_columnflatten):
+        # indexing helper rowflatten looks like [0, ..., 0, 1, ..., 1, ..., N]
+        #                                            ^ repeated N times
+        #                                                       ^ repeated N-1 times
+        #                                                               ^ repeated once
+        # indexing helper columnflatten looks like [0, ..., N, 1, ..., N, ..., N]
+        if i < 3*N:
+            i_pos = i%3
+            i_aa = (seq_index[i_pos], seq_index[i_pos])
+        else:
+            i_pos1 = indexing_helper_rowflatten[(i-3*N)%((N**2-N)/2)]
+            i_pos2 = indexing_helper_columnflatten[(i-3*N)%((N**2-N)/2)]
+            i_aa = (seq_index[i_pos1, i_pos2])
+        if j < 3*N:
+            j_pos = j%3
+            j_aa = (seq_index[j_pos],seq_index[j_pos])
+        else:
+            j_pos1 = indexing_helper_rowflatten[(j-3*N)%((N**2-N)/2)]
+            j_pos2 = indexing_helper_columnflatten[(j-3*N)%((N**2-N)/2)]
+            j_aa = (seq_index[j_pos1, j_pos2])
+        return i_pos + j_pos # concatenating tuples
+        
+    def initialize_functions(self):
+        covariance_matrix = self.covariance_matrix
+        gamma = self.gamma
+        N = self.N
+        indexing_helper_rowflatten = np.repeat(np.arange(N).reshape((1,N)),N,axis=1)[np.triu_indices(N)]
+        indexing_helper_columnflatten = np.transpose(np.repeat(np.arange(N).reshape((1,N)),N,axis=1))[np.triu_indices(N)]
+        covariance_type = self.covariance_type
+        residue_identities = self.residue_identities
+
+        def compute_energy(seq_index):
+            energy = 0
+            for i in range(covariance_matrix.shape[0]):
+                for j in range(i,covariance_matrix.shape[1]):
+                    energy += covariance_matrix[i,j] * gamma[covariance_type(N,i,j)+residue_identities(i,j)]
+            return energy**0.5
+        compute_energy_numba=self.numbify(compute_energy)        
+
+        def compute_denergy_mutation(seq_index, pos, aa):
+            seq_index_new = seq_index.copy()
+            seq_index_new[pos] = aa
+            return compute_energy_numba(seq_index_new) - compute_energy_numba(seq_index) 
+
+        def compute_denergy_swap(seq_index, pos1, pos2):
+            seq_index_new = seq_index.copy()
+            aa2 , aa1 = seq_index[pos1],seq_index[pos2]
+            seq_index_new[pos1] = aa1
+            seq_index_new[pos2] = aa2
+            return compute_energy_numba(seq_index_new) - compute_energy_numba(seq_index) 
+
+        self.compute_energy = compute_energy
+        self.compute_denergy_mutation = compute_denergy_mutation
+        self.compute_denergy_swap = compute_denergy_swap
+
 class Similarity(EnergyTerm):
     """ Computes the energy of a sequence based on the similarity to a target sequence. 
         The similarity is calculated as the number of positions that are the same in the two sequences.
@@ -1010,8 +1217,6 @@ class Similarity(EnergyTerm):
         self.compute_energy = compute_energy
         self.compute_denergy_mutation = denergy_mutation
         self.compute_denergy_swap = denergy_swap
-
-
 
 class MonteCarlo:
     def __init__(self, sequence: str, energy: EnergyTerm, alphabet:str=_AA, use_numba:bool=True, evaluation_energies:dict={}):
