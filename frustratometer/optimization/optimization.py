@@ -1115,7 +1115,9 @@ class AwsemEnergyStdFromCovMatrix(EnergyTerm):
         gamma[6,6] = np.einsum('ij,kl->ijkl', electrostatics_gamma, electrostatics_gamma) # elec- elec
         self.gamma = gamma + gamma.transpose((0,1,5,4,3,2)) # keep the indicator class axes the same
                                                             #     but transpose the gamma values
-        
+        # define energy evaluation functions
+        self.initialize_functions()
+
     @staticmethod
     def covariance_type(N, i, j):
         # N: total number of residues
@@ -1124,15 +1126,15 @@ class AwsemEnergyStdFromCovMatrix(EnergyTerm):
         if i < 3*N:
             type_i = i//N
         else:
-            type_i = (i-3*N)//((N**2-N)/2)
+            type_i = (i-3*N)//((N**2-N)//2)
         if j < 3*N:
             type_j = j//N
         else:
-            type_j = (j-3*N)//((N**2-N)/2)
+            type_j = (j-3*N)//((N**2-N)//2)
         return (type_i, type_j)
 
     @staticmethod 
-    def residue_identities(i, j, seq_index, indexing_helper_rowflatten, indexing_helper_columnflatten):
+    def residue_identities(N, i, j, seq_index, indexing_helper_rowflatten, indexing_helper_columnflatten):
         # indexing helper rowflatten looks like [0, ..., 0, 1, ..., 1, ..., N]
         #                                            ^ repeated N times
         #                                                       ^ repeated N-1 times
@@ -1142,32 +1144,35 @@ class AwsemEnergyStdFromCovMatrix(EnergyTerm):
             i_pos = i%3
             i_aa = (seq_index[i_pos], seq_index[i_pos])
         else:
-            i_pos1 = indexing_helper_rowflatten[(i-3*N)%((N**2-N)/2)]
-            i_pos2 = indexing_helper_columnflatten[(i-3*N)%((N**2-N)/2)]
-            i_aa = (seq_index[i_pos1, i_pos2])
+            i_pos1 = indexing_helper_rowflatten[(i-3*N)%((N**2-N)//2)]
+            i_pos2 = indexing_helper_columnflatten[(i-3*N)%((N**2-N)//2)]
+            i_aa = (seq_index[i_pos1], seq_index[i_pos2])
         if j < 3*N:
             j_pos = j%3
-            j_aa = (seq_index[j_pos],seq_index[j_pos])
+            j_aa = (seq_index[j_pos], seq_index[j_pos])
         else:
-            j_pos1 = indexing_helper_rowflatten[(j-3*N)%((N**2-N)/2)]
-            j_pos2 = indexing_helper_columnflatten[(j-3*N)%((N**2-N)/2)]
-            j_aa = (seq_index[j_pos1, j_pos2])
-        return i_pos + j_pos # concatenating tuples
+            j_pos1 = indexing_helper_rowflatten[(j-3*N)%((N**2-N)//2)]
+            j_pos2 = indexing_helper_columnflatten[(j-3*N)%((N**2-N)//2)]
+            j_aa = (seq_index[j_pos1], seq_index[j_pos2])
+        return i_aa + j_aa # concatenating tuples
         
     def initialize_functions(self):
         covariance_matrix = self.covariance_matrix
         gamma = self.gamma
-        N = self.N
-        indexing_helper_rowflatten = np.repeat(np.arange(N).reshape((1,N)),N,axis=1)[np.triu_indices(N)]
-        indexing_helper_columnflatten = np.transpose(np.repeat(np.arange(N).reshape((1,N)),N,axis=1))[np.triu_indices(N)]
+        N = self.N # number of amino acids
+        indexing_helper_rowflatten = np.repeat(np.arange(N).reshape((N,1)),N,axis=1)[np.triu_indices(N)]
+        indexing_helper_columnflatten = np.transpose(np.repeat(np.arange(N).reshape((N,1)),N,axis=1))[np.triu_indices(N)]
         covariance_type = self.covariance_type
         residue_identities = self.residue_identities
-
+        
         def compute_energy(seq_index):
             energy = 0
             for i in range(covariance_matrix.shape[0]):
                 for j in range(i,covariance_matrix.shape[1]):
-                    energy += covariance_matrix[i,j] * gamma[covariance_type(N,i,j)+residue_identities(i,j)]
+                    try:
+                        energy += covariance_matrix[i,j] * gamma[covariance_type(N,i,j)+residue_identities(N, i,j,seq_index, indexing_helper_rowflatten, indexing_helper_columnflatten )]
+                    except:
+                        breakpoint()
             return energy**0.5
         compute_energy_numba=self.numbify(compute_energy)        
 
