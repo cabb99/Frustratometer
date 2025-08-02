@@ -1293,9 +1293,9 @@ class MonteCarlo:
                 if np.random.random() < acceptance_probability:
                     seq_index = new_sequence
                     #print(f"before reassignment: {self.energy.stds}")
-                    self.energy.stds = copy.deepcopy(self.energy.consider_stds)
+                    #self.energy.stds = copy.deepcopy(self.energy.consider_stds)
                     #print(f"after reassignment: {self.energy.stds}")
-                    self.energy.total_energies = copy.deepcopy(self.energy.consider_total_energies)
+                    #self.energy.total_energies = copy.deepcopy(self.energy.consider_total_energies)
                     #print(f"energy_difference: {energy_difference}")
             return seq_index
         

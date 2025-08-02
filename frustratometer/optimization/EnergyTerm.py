@@ -219,10 +219,10 @@ class EnergyTerm(abc.ABC):
 
         if isinstance(other, EnergyTerm):
             new_energy_term.use_numba = self.use_numba and other.use_numba
-            new_energy_term.total_energies = other.total_energies
-            new_energy_term.consider_total_energies = other.consider_total_energies
-            new_energy_term.stds = other.stds
-            new_energy_term.consider_stds = other.consider_stds
+            #new_energy_term.total_energies = other.total_energies
+            #new_energy_term.consider_total_energies = other.consider_total_energies
+            #new_energy_term.stds = other.stds
+            #new_energy_term.consider_stds = other.consider_stds
             e1=self.energy_function; e2=other.energy_function
             m1=self.denergy_mutation_function; m2=other.denergy_mutation_function
             s1=self.denergy_swap_function; s2=other.denergy_swap_function
