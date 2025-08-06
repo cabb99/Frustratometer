@@ -6,6 +6,7 @@ from functools import wraps
 from datetime import datetime
 import copy
 
+from frustratometer import frustration
 from frustratometer.classes import Frustratometer
 from frustratometer.classes import Structure
 from frustratometer.classes import AWSEM, AWSEMIndicators, DecoyEnsemble, AWSEMVariancePotts
@@ -679,6 +680,233 @@ class AwsemEnergyAverage(EnergyTerm):
         energy=self.compute_energy(seq_index)
         assert np.isclose(energy,expected_energy), f"Expected energy {expected_energy} but got {energy}"
 
+class PairEnergyAverage(EnergyTerm):   
+    """
+    Computes the average pairwise energy for a given sequence.
+    This class is designed to compute the average pairwise energy of a sequence
+    using the AWSEM model. It calculates the energy contributions from pairwise interactions
+    between amino acids in the sequence, averaged over all possible pairs.
+    """
+    def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA):
+        self._use_numba=use_numba
+        self.model=model
+        self.alphabet=alphabet
+        self.reindex_dca=[_AA.index(aa) for aa in alphabet]
+        assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
+        self.indicators = model.indicators
+        self.alphabet_size=len(alphabet)
+        self.model_h = model.potts_model['h'][:,self.reindex_dca]
+        self.model_J = model.potts_model['J'][:,:,self.reindex_dca][:,:,:,self.reindex_dca]
+        self.mask = model.mask
+        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self.initialize_functions()
+    
+    def initialize_functions(self):
+        len_alphabet=self.alphabet_size
+
+        distances = np.triu(self.model.distance_matrix)
+        ###########################################################################################
+        distances = distances[(distances<self.model.distance_cutoff_contact) & (distances>0)] # USE THIS NORMALLY
+        #distances = distances[distances>0]  # USE THIS FOR TESTING THING WHERE WE NEED ALL PAIRS
+        ###########################################################################################
+        len_distances = len(distances)
+
+        rho_b = np.expand_dims(self.model.rho_r, 1) #(n,1)
+        rho1 = np.expand_dims(self.model.rho_r, 0) #(1,n)
+        rho2 = np.expand_dims(self.model.rho_r, 1) #(n,1)
+
+        sigma_water = 0.25 * (1 - np.tanh(self.model.eta_sigma * (rho1 - self.model.rho_0))) * (1 - np.tanh(self.model.eta_sigma * (rho2 - self.model.rho_0))) #(n,n)
+        sigma_protein = 1 - sigma_water #(n,n)
+            
+        #Calculate theta and indicators
+        theta = 0.25 * (1 + np.tanh(self.model.eta * (distances - self.model.r_min))) * (1 + np.tanh(self.model.eta * (self.model.r_max - distances))) # (c,)
+        thetaII = 0.25 * (1 + np.tanh(self.model.eta * (distances - self.model.r_minII))) * (1 + np.tanh(self.model.eta * (self.model.r_maxII - distances))) #(c,)
+        burial_indicator = np.tanh(self.model.burial_kappa * (rho_b - self.model.burial_ro_min)) + np.tanh(self.model.burial_kappa * (self.model.burial_ro_max - rho_b)) #(n,3)
+                        # gap has 0 charge
+                    #     gap, A,C,D, E, F,G,H,I,K,L,M,N,P,Q,R,S,T,V,W,Y
+        charges = np.array([0, 0,0,-1,-1,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0])
+        charges = charges[self.reindex_dca]  # remove unused gap, C, and P
+        electrostatics_indicator = np.exp(-distances / self.model.electrostatics_screening_length) / distances
+
+        N = self.model.N
+        k_contact = self.model.k_contact
+        burial_gamma = self.model.burial_gamma[self.model.aa_map_awsem_list][self.reindex_dca] 
+        direct_gamma = self.model.direct_gamma[self.model.aa_map_awsem_x, self.model.aa_map_awsem_y][self.reindex_dca][:,self.reindex_dca]
+        water_gamma = self.model.water_gamma[self.model.aa_map_awsem_x, self.model.aa_map_awsem_y][self.reindex_dca][:,self.reindex_dca]
+        protein_gamma = self.model.protein_gamma[self.model.aa_map_awsem_x, self.model.aa_map_awsem_y][self.reindex_dca][:,self.reindex_dca]
+        k_contact = self.model.k_contact
+        k_electrostatics = self.model.k_electrostatics
+        mask = self.mask
+        sequence_mask_contact = self.model.sequence_mask_contact
+        assert np.all(mask==mask.T), "Mask should be symmetric"
+        assert mask.shape == (N, N), f"Mask shape {mask.shape} does not match expected shape {(N, N)}"
+
+        n_decoys=4000
+
+        def compute_energy(seq_index):
+            # adapted from AWSEM.compute_configurational_decoy_statistics,
+            #     modified to be numba-friendly
+            
+            decoy_energies=np.zeros(n_decoys)
+            for i in range(n_decoys):
+                c=np.random.randint(0,len_distances)
+                n1=np.random.randint(0,N)
+                n2=np.random.randint(0,N)
+                qi1=np.random.randint(0,N)
+                qi2=np.random.randint(0,N)
+                q1=seq_index[qi1]
+                q2=seq_index[qi2]
+    
+                burial_energy1 = (-0.5 * k_contact * burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+                burial_energy2 = (-0.5 * k_contact * burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+                burial_energy = (burial_energy1+burial_energy2)/(N-1) # normalize because double counting carlos thing
+
+                direct = theta[c] * direct_gamma[q1, q2]
+                water_mediated = sigma_water[n1,n2] * thetaII[c] * water_gamma[q1,q2]
+                protein_mediated = sigma_protein[n1,n2] * thetaII[c] * protein_gamma[q1,q2]
+                contact_energy = -k_contact * (direct+water_mediated+protein_mediated)
+                electrostatics_energy = k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
+    
+                decoy_energies[i]=(burial_energy+contact_energy+electrostatics_energy)
+            mean_decoy_energy = np.mean(decoy_energies)
+            #std_decoy_energy = np.std(decoy_energies)
+            
+            """
+            assert len(distances) == (N**2-N)/2, f"len(distances): {len(distances)} != (N**2-N)/2: {(N**2-N)/2}"
+            decoy_energies = np.zeros((len(seq_index)**2 - len(seq_index))//2)
+            index = 0
+            #breakpoint()
+            for i in range(len(seq_index)):
+                aa1 = seq_index[i]
+                for j in range(i+1, len(seq_index)):
+                    aa2 = seq_index[j]
+
+                    burial_energy1 = (-0.5 * k_contact * burial_gamma[aa1] * burial_indicator[i]).sum(axis=0)
+                    burial_energy2 = (-0.5 * k_contact * burial_gamma[aa2] * burial_indicator[j]).sum(axis=0)
+                    burial_energy = (burial_energy1 + burial_energy2) / ((N - 1)) #/ 2)
+
+                    direct = theta[index] * direct_gamma[aa1, aa2]
+                    water_mediated = sigma_water[i, j] * thetaII[index] * water_gamma[aa1, aa2]
+                    protein_mediated = sigma_protein[i, j] * thetaII[index] * protein_gamma[aa1, aa2]
+                    contact_energy = -k_contact * (direct+water_mediated+protein_mediated)*mask[i, j]*sequence_mask_contact[i, j]
+                    electrostatics_energy = k_electrostatics * electrostatics_indicator[index]*charges[aa1]*charges[aa2]*mask[i,j]
+                    decoy_energies[index] = contact_energy+burial_energy+electrostatics_energy#(contact_energy+electrostatics_energy)#(burial_energy + contact_energy + electrostatics_energy)
+                    index += 1
+            mean_decoy_energy = np.sum(decoy_energies) # for testing, we return the total energy, not the average
+            """
+
+
+            return mean_decoy_energy#, std_decoy_energy
+        
+        compute_energy_numba = self.numbify(compute_energy)
+
+        def denergy_mutation(seq_index, pos, aa):
+            seq_index_new = seq_index.copy()
+            seq_index_new[pos] = aa
+            return compute_energy_numba(seq_index_new) - compute_energy_numba(seq_index)
+        
+        self.compute_energy = compute_energy
+        self.compute_denergy_mutation = denergy_mutation
+
+    def regression_test(self, seq_index):
+        raise NotImplementedError("sorry") 
+
+class PairEnergyStd(EnergyTerm):   
+    def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA):
+        self._use_numba=use_numba
+        self.model=model
+        self.alphabet=alphabet
+        self.reindex_dca=[_AA.index(aa) for aa in alphabet]
+        assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
+        self.indicators = model.indicators
+        self.alphabet_size=len(alphabet)
+        self.model_h = model.potts_model['h'][:,self.reindex_dca]
+        self.model_J = model.potts_model['J'][:,:,self.reindex_dca][:,:,:,self.reindex_dca]
+        self.mask = model.mask
+        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self.initialize_functions()
+    
+    def initialize_functions(self):
+        len_alphabet=self.alphabet_size
+
+        distances = np.triu(self.model.distance_matrix)
+        distances = distances[(distances<self.model.distance_cutoff_contact) & (distances>0)]
+        len_distances = len(distances)
+        print(f"len_distances: {len_distances}, distances: {distances}")
+    
+        rho_b = np.expand_dims(self.model.rho_r, 1) #(n,1)
+        rho1 = np.expand_dims(self.model.rho_r, 0) #(1,n)
+        rho2 = np.expand_dims(self.model.rho_r, 1) #(n,1)
+
+        sigma_water = 0.25 * (1 - np.tanh(self.model.eta_sigma * (rho1 - self.model.rho_0))) * (1 - np.tanh(self.model.eta_sigma * (rho2 - self.model.rho_0))) #(n,n)
+        sigma_protein = 1 - sigma_water #(n,n)
+            
+        #Calculate theta and indicators
+        theta = 0.25 * (1 + np.tanh(self.model.eta * (distances - self.model.r_min))) * (1 + np.tanh(self.model.eta * (self.model.r_max - distances))) # (c,)
+        thetaII = 0.25 * (1 + np.tanh(self.model.eta * (distances - self.model.r_minII))) * (1 + np.tanh(self.model.eta * (self.model.r_maxII - distances))) #(c,)
+        burial_indicator = np.tanh(self.model.burial_kappa * (rho_b - self.model.burial_ro_min)) + np.tanh(self.model.burial_kappa * (self.model.burial_ro_max - rho_b)) #(n,3)
+           
+        charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+        electrostatics_indicator = np.exp(-distances / self.model.electrostatics_screening_length) / distances
+
+        N = self.model.N
+        k_contact = self.model.k_contact
+        burial_gamma = self.model.burial_gamma
+        direct_gamma = self.model.direct_gamma
+        water_gamma = self.model.water_gamma
+        protein_gamma = self.model.protein_gamma
+        k_contact = self.model.k_contact
+        k_electrostatics = self.model.k_electrostatics
+
+        mask = self.mask
+        sequence_mask_contact = self.model.sequence_mask_contact
+
+        n_decoys=4000
+
+        def compute_energy(seq_index):
+            # adapted from AWSEM.compute_configurational_decoy_statistics,
+            #     modified to be numba-friendly
+            
+            decoy_energies=np.zeros(n_decoys)
+            for i in range(n_decoys):
+                c=np.random.randint(0,len_distances)
+                n1=np.random.randint(0,N)
+                n2=np.random.randint(0,N)
+                qi1=np.random.randint(0,N)
+                qi2=np.random.randint(0,N)
+                q1=seq_index[qi1]
+                q2=seq_index[qi2]
+    
+                burial_energy1 = (-0.5 * k_contact * burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+                burial_energy2 = (-0.5 * k_contact * burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+                burial_energy = (burial_energy1+burial_energy2)/(N-1) # normalize because double counting carlos thing
+
+                direct = theta[c] * direct_gamma[q1, q2]
+                water_mediated = sigma_water[n1,n2] * thetaII[c] * water_gamma[q1,q2]
+                protein_mediated = sigma_protein[n1,n2] * thetaII[c] * protein_gamma[q1,q2]
+                contact_energy = -k_contact * (direct+water_mediated+protein_mediated)
+                electrostatics_energy = k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
+    
+                decoy_energies[i]=(burial_energy+contact_energy+electrostatics_energy)
+                
+            #mean_decoy_energy = np.mean(decoy_energies)
+            std_decoy_energy = np.std(decoy_energies)
+            return 1#std_decoy_energy
+        
+        compute_energy_numba = self.numbify(compute_energy)
+
+        def denergy_mutation(seq_index, pos, aa):
+            seq_index_new = seq_index.copy()
+            seq_index_new[pos] = aa
+            return compute_energy_numba(seq_index_new) - compute_energy_numba(seq_index)
+        
+        self.compute_energy = compute_energy
+        self.compute_denergy_mutation = denergy_mutation
+
+    def regression_test(self, seq_index):
+        raise NotImplementedError("sorry") 
+
+
 class AwsemEnergyVariance(EnergyTerm):   
     def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA):
         self._use_numba=use_numba
@@ -864,6 +1092,7 @@ class AwsemEnergyVariance(EnergyTerm):
         energy=self.compute_energy(seq_index)
         assert np.isclose(energy,expected_energy), f"Expected energy {expected_energy} but got {energy}"
 
+
 class AwsemEnergyStd(EnergyTerm):   
     def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA, n_decoys=None):
         self._use_numba=use_numba
@@ -893,7 +1122,7 @@ class AwsemEnergyStd(EnergyTerm):
         len_alphabet=self.alphabet_size
         phi_len= indicators1D.shape[0]*len_alphabet + indicators2D.shape[0]*len_alphabet**2
         gamma=self.gamma
-        
+        rng = np.random.default_rng()
         # Precompute the mean of the indicators
         indicator_means=np.zeros(len(indicators1D)+len(indicators2D))
         c=0
@@ -917,7 +1146,10 @@ class AwsemEnergyStd(EnergyTerm):
                 """ Function to compute the variance of the energy of permutations of a sequence using random shuffling.
                     This function is much faster than compute_energy_permutation but is an approximation"""
                 energies=np.zeros(n_decoys)
-                shuffled_index=seq_index.copy()
+                shuffled_index=seq_index.copy()               
+                for _  in numba.prange(20):
+                    to_replace = rng.integers(low=0,high=len(seq_index))
+                    shuffled_index[to_replace] = rng.integers(low=0,high=len_alphabet)
                 for i in numba.prange(n_decoys):
                     energies[i]=awsem_energy(shuffled_index[np.random.permutation(len(shuffled_index))])
                 return np.var(energies)
@@ -957,13 +1189,7 @@ class AwsemEnergyStd(EnergyTerm):
                 # because we averaged over all indicators and they're playing the role of 
                 # couplings and fields in our model, this is a "mean field" approach
                 #
-                # more precisely, the above-described strategy is mean-field
-                # with respect to the indicators, representing sequence shuffling;
-                # to represent structure shuffling, we want to do the mean-field calculation
-                # with respect to the gammas, meaning that we average the gammas to get the 
-                # couplings and fields, then multiply by the indicators
-                # 
-                
+                                
                 energy=0
                 for i in range(phi_len):
                     for j in range(phi_len):
@@ -996,6 +1222,7 @@ class AwsemEnergyStd(EnergyTerm):
         expected_energy=self.compute_energy_permutation(seq_index)
         energy=self.compute_energy(seq_index)
         assert np.isclose(energy,expected_energy), f"Expected energy {expected_energy} but got {energy}"
+
 
 class AwsemEnergyStdFromCovMatrix(EnergyTerm):
     def __init__(self, covariance_matrix: np.ndarray, 

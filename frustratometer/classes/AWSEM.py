@@ -305,6 +305,7 @@ class AWSEM(AWSEMBase):
         self.direct_indicator = direct_indicator # probably could get rid of either this or indicators list
         self.water_indicator = water_indicator   # probably could get rid of either this or indicators list
         self.protein_indicator = protein_indicator # probably could get rid of either this or indicators list
+        #breakpoint()
         if self.p.k_electrostatics != 0:
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * self.electrostatics_mask
             self.indicators.append(electrostatics_indicator)
