@@ -12,6 +12,7 @@ from . import dca
 from . import map
 from . import align
 from . import frustration
+from typing import TYPE_CHECKING
 
 # Handle versioneer
 from ._version import get_versions
