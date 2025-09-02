@@ -291,7 +291,7 @@ class Frustratometer:
         """
         return frustration.compute_auc(self.roc())
 
-    def vmd(self, sequence: str = None, single:Union[str,np.array] = 'singleresidue', pair:Union[str,np.array] = 'mutational',
+    def vmd(self, sequence: str = None, single:Union[str,np.array] = 'singleresidue', pair:Union[str,np.array] = 'mutational', launch_vmd:bool = True,
              aa_freq:np.array = None, correction:int = 0, max_connections:Union[int,None] = None, movie_name=None, still_image_name=None):
         """
         Calculates frustration indices and superimposes frustration patterns onto PDB structure using the VMD software.
@@ -322,7 +322,8 @@ class Frustratometer:
                                       -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq),
                                       -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq),
                                       max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name)
-        frustration.call_vmd(self.pdb_file, tcl_script)
+        if launch_vmd:
+            frustration.call_vmd(self.pdb_file, tcl_script)
 
     def view_pair_frustration(self, sequence:str = None, pair:str = 'mutational', aa_freq:np.array = None):
         """
