@@ -1025,9 +1025,10 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
             exit
         ''')
     elif still_image_name:
+        # file type choices other than ppm may work; see https://www.ks.uiuc.edu/Research/vmd/current/ug/node147.html
         fo.write(f'set output "{still_image_name}"' + '''
-            render snapshot $output
-            exit
+            render format TachyonInternal PPM 
+            render TachyonInternal $output
         ''')
     fo.close()
     return tcl_script
