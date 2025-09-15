@@ -408,7 +408,7 @@ class Gamma:
         
         # Plot setup
         f, axes = plt.subplots(2, 2, figsize=(18, 16))
-        titles = ['Burial Gammas', 'Direct Gammas', 'Water Gammas', 'Protein Gammas']
+        titles = ['Burial Gammas', 'Direct Gammas', 'Protein Gammas', 'Water Gammas']
 
         for i, (title, name) in enumerate(zip(titles, segments)):
             ax = axes[i // 2, i % 2]
