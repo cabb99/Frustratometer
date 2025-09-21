@@ -416,8 +416,12 @@ class Gamma:
             ax.set_title(title)
             ax.set_xticks(np.arange(len(self.alphabet)) + 0.5)
             ax.set_xticklabels(self.alphabet)
-            ax.set_yticks(np.arange(segments[name].shape[0] // 20) + 0.5)
-            ax.set_yticklabels(range(segments[name].shape[0] // 20))
+            if i==0: # burial
+                ax.set_yticks([0.5,1.5,2.5])
+                ax.set_yticklabels(['low','medium','high'], rotation=45, size=12)
+            else: # direct, prot, or wat
+                ax.set_yticks(np.arange(len(self.alphabet)) + 0.5)
+                ax.set_yticklabels(self.alphabet, rotation=0)
 
         plt.tight_layout()
         plt.show()
