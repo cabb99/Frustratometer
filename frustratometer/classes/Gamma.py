@@ -408,6 +408,7 @@ class Gamma:
         
         # Plot setup
         f, axes = plt.subplots(2, 2, figsize=(18, 16))
+        f.subplots_adjust(hspace=50) # fix overlap between axis ticks of upper subplots and titles of lower subplots
         titles = ['Burial Gammas', 'Direct Gammas', 'Protein Gammas', 'Water Gammas']
 
         for i, (title, name) in enumerate(zip(titles, segments)):
