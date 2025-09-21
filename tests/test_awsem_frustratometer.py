@@ -46,6 +46,21 @@ def test_density_residues(test_data, test_structure):
         print(f"Assertion failed: Maximum absolute tolerance found was {max_atol}, which exceeds the allowed tolerance.")
         raise AssertionError(f"Maximum absolute tolerance found was {max_atol}, which exceeds the allowed tolerance of 1E-3.")
 
+@pytest.mark.parametrize("structure_file,density_file", [(test_data_path/f"0_3nve.pdb",test_data_path/f"0_3nve_rho.npy"),\
+(test_data_path/f"24_3nve.pdb",test_data_path/f"24_3nve_rho.npy")])
+def test_multichain_density(structure_file,density_file):
+    structure = frustratometer.Structure(structure_file)
+    sequence_separation = 2
+    model = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_rho=sequence_separation, k_electrostatics=0)
+    calculated_density = model.rho # rho is the N x N matrix of pairwise contributions to the density matrix
+    expected_density = np.load(density_file)
+    try:
+        assert np.allclose(calculated_density,expected_density,atol=1E-8) # should be no worse than machine precision, but this threshold is probably good enough
+    except AssertionError:
+        max_atol = np.max(np.abs(calculated_density-expected_density))
+        print(f"Assertion failed: Maximum absolute difference found was {max_atol}, which exceeds the allowed tolerance.")
+        raise AssertionError(f"Maximum absolute difference found was {max_atol}, which exceeds the allowed tolerance of 1E-3.")
+
 @pytest.mark.parametrize("test_data", tests_config.to_dict(orient="records"))
 def test_single_residue_frustration(test_data,test_structure):
     #structure = frustratometer.Structure(test_data_path/f"{test_data['pdb']}.pdb")
@@ -105,9 +120,14 @@ def test_configurational_frustration(test_data,test_structure):
     structure = test_structure[test_data['pdb']]
     sequence_separation = 2 if test_data['seqsep'] == 3 else 13
     
+    ##########################################################################
+    # i don't know (or forget) why we do this
+    # this causes what is currently test_data8 and test_data12 to always pass,
+    # which can be confusing when testing modifications to the main frustratometer code
     if test_data['k_electrostatics'] == 1000:
         assert True
         return
+    ###########################################################################
 
     model = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, 
                                  min_sequence_separation_rho=sequence_separation, 

@@ -211,7 +211,10 @@ class Frustratometer:
         """
         return frustration.compute_scores(self.potts_model)
 
-    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0) -> np.array:
+    def frustration(self, sequence:str = None, kind:str = 'singleresidue', 
+                          mask:np.array = None, aa_freq:np.array = None, 
+                          correction:int = 0, n_decoys=4000,
+                          ) -> np.array:
         """
         Calculates frustration index values.
         
@@ -225,6 +228,8 @@ class Frustratometer:
             A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
         aa_freq: np.array
             Array of frequencies of all 21 possible amino acids within sequence
+        n_decoys: int
+            Number of decoys
 
         Returns
         -------
@@ -243,8 +248,10 @@ class Frustratometer:
             return frustration_values
         elif kind in ['mutational', 'configurational', 'contact']:
             if kind == 'configurational' and 'configurational_frustration' in dir(self):
-                #TODO: Correct this function for different aa_freq than WT
-                return self.configurational_frustration(None, correction)
+                #TODO: Correct this function for different aa_freq than WT --- think this has been done already?
+                frustration_values = self.configurational_frustration(aa_freq=aa_freq, correction=correction, n_decoys=n_decoys,)
+                assert np.all(frustration_values==frustration_values.T), f"configurational frustration matrix was not symmetric! Max difference: {np.max(frustration_values-frustration_values.T)}"
+                return frustration_values
             if aa_freq is None:
                 aa_freq = self.contact_freq
             frustration_values=frustration.compute_pair_frustration(decoy_fluctuation, aa_freq, correction)
@@ -321,7 +328,8 @@ class Frustratometer:
         tcl_script = frustration.write_tcl_script(self.pdb_file, self.chain, self.mask, self.distance_matrix, self.distance_cutoff,
                                       -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq),
                                       -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq),
-                                      max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name)
+                                      max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name,
+                                                                                                               min_contact_distance=self.min_contact_distance)
         frustration.call_vmd(self.pdb_file, tcl_script)
 
     def view_pair_frustration(self, sequence:str = None, pair:str = 'mutational', aa_freq:np.array = None):
@@ -338,6 +346,8 @@ class Frustratometer:
         aa_freq: np.array
             Array of frequencies of all 21 possible amino acids within sequence
         """
+        if type(self.chain) == list:
+            raise NotImplementedError("This function not supported for multichain systems")
         import py3Dmol
 
         if sequence is None:
