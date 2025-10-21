@@ -890,20 +890,28 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     tcl_script : Path or str
         tcl script file
     """
+
     fo = open(tcl_script, 'w+')
     single_frustration = np.nan_to_num(single_frustration,nan=0,posinf=0,neginf=0)
     pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
     
     
     structure = prody.parsePDB(str(pdb_file))
-    selection = structure.select('protein', chain=chain)
+    if chain is not None:
+        selection = structure.select('protein', chain=chain)
+    else:
+        selection = structure.select('protein', chain='_') # select all chains
     residues = np.unique(selection.getResnums())
 
     fo.write(f'[atomselect top all] set beta 0\n')
     # Single residue frustration
     for r, f in zip(residues, single_frustration):
         # print(f)
-        fo.write(f'[atomselect top "chain {chain} and residue {int(r)}"] set beta {f}\n')
+        if chain is not None:
+            fo.write(f'[atomselect top "chain {chain} and residue {int(r)}"] set beta {f}\n')
+        else:
+            fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n') # 'residue' corresponds to unique residue id in vmd, 
+                                                                            # so this is okay if there are multiple chains
 
     # Mutational frustration:
     r1, r2 = np.meshgrid(residues, residues, indexing='ij')
@@ -929,13 +937,21 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
         r2=int(r2)
         if abs(r1-r2) == 1: # don't draw interactions between residues adjacent in sequence
             continue
-        pos1 = selection.select(f'resid {r1} and chain {chain} and (name CB or (resname GLY and name CA))').getCoords()[0]
-        pos2 = selection.select(f'resid {r2} and chain {chain} and (name CB or (resname GLY and name CA))').getCoords()[0]
+        if chain is not None:
+            pos1 = selection.select(f'resid {r1} and chain {chain} and (name CB or (resname GLY and name CA))').getCoords()[0]
+            pos2 = selection.select(f'resid {r2} and chain {chain} and (name CB or (resname GLY and name CA))').getCoords()[0]
+        else:
+            pos1 = selection.select(f'resid {r1} and (name CB or (resname GLY and name CA))').getCoords()[0]
+            pos2 = selection.select(f'resid {r2} and (name CB or (resname GLY and name CA))').getCoords()[0]
         distance = np.linalg.norm(pos1 - pos2)
         if d > 9.5 or d < 3.5:
             continue
-        fo.write(f'lassign [[atomselect top "resid {r1} and name CA and chain {chain}"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "resid {r2} and name CA and chain {chain}"] get {{x y z}}] pos2\n')
+        if chain is not None:
+            fo.write(f'lassign [[atomselect top "resid {r1} and name CA and chain {chain}"] get {{x y z}}] pos1\n')
+            fo.write(f'lassign [[atomselect top "resid {r2} and name CA and chain {chain}"] get {{x y z}}] pos2\n')
+        else:
+            fo.write(f'lassign [[atomselect top "resid {r1} and name CA"] get {{x y z}}] pos1\n')
+            fo.write(f'lassign [[atomselect top "resid {r2} and name CA"] get {{x y z}}] pos2\n')
         if 3.5 <= distance <= 6.5:
             fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
         else:
@@ -953,8 +969,12 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
         r2=int(r2)
         if d > 9.5 or d < 3.5:
             continue
-        fo.write(f'lassign [[atomselect top "resid {r1} and name CA and chain {chain}"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "resid {r2} and name CA and chain {chain}"] get {{x y z}}] pos2\n')
+        if chain is not None:
+            fo.write(f'lassign [[atomselect top "resid {r1} and name CA and chain {chain}"] get {{x y z}}] pos1\n')
+            fo.write(f'lassign [[atomselect top "resid {r2} and name CA and chain {chain}"] get {{x y z}}] pos2\n')
+        else:
+            fo.write(f'lassign [[atomselect top "resid {r1} and name CA"] get {{x y z}}] pos1\n')
+            fo.write(f'lassign [[atomselect top "resid {r2} and name CA"] get {{x y z}}] pos2\n')
         if 3.5 <= d <= 6.5:
             fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
         else:
