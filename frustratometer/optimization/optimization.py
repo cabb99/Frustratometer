@@ -706,8 +706,8 @@ class PairEnergyAverage(EnergyTerm):
 
         distances = np.triu(self.model.distance_matrix)
         ###########################################################################################
-        #distances = distances[(distances<self.model.distance_cutoff_contact) & (distances>0)] # USE THIS NORMALLY
-        distances = distances[distances>0]  # USE THIS FOR TESTING THING WHERE WE NEED ALL PAIRS
+        distances = distances[(distances<self.model.distance_cutoff_contact) & (distances>0)] # USE THIS NORMALLY
+        #distances = distances[distances>0]  # USE THIS FOR TESTING THING WHERE WE NEED ALL PAIRS
         ###########################################################################################
         len_distances = len(distances)
 
@@ -743,30 +743,30 @@ class PairEnergyAverage(EnergyTerm):
 
         n_decoys=9000
         
-        #foo = np.triu(self.model.distance_matrix)
-        #sigma_water = sigma_water[(foo<self.model.distance_cutoff_contact) & (foo>0)]
-        #sigma_protein = sigma_protein[(foo<self.model.distance_cutoff_contact) & (foo>0)]
+        # these lines used for the random sampling and analytic calculation
+        foo = np.triu(self.model.distance_matrix)
+        sigma_water = sigma_water[(foo<self.model.distance_cutoff_contact) & (foo>0)]
+        sigma_protein = sigma_protein[(foo<self.model.distance_cutoff_contact) & (foo>0)]
 
         def compute_energy(seq_index):
             # adapted from AWSEM.compute_configurational_decoy_statistics,
             #     modified to be numba-friendly
             
             # analytic calculation
-            """
             aa_freq = np.array([(seq_index == i).sum() for i in range(len_alphabet)])  # frequency of each amino acid in the sequence
            
-            temp = burial_gamma * aa_freq[:, np.newaxis]
+            temp = burial_gamma * aa_freq[:, np.newaxis] # (20,3) * (20,1) -> (20,3)
             scaled_burial_gamma = np.zeros((3,))  # burial gamma is a 3D vector, one for each burial indicator (low, med, high)
             for counter in range(temp.shape[0]):
                 scaled_burial_gamma += temp[counter]
-            scaled_burial_gamma /= temp.shape[0]
+            scaled_burial_gamma /= temp.shape[0] # average burial gammas, weighted by amino acid frequencies
             #burial_energy = np.average(-1 * k_contact * scaled_burial_gamma * burial_indicator)
             avg_burial_indicator = np.zeros((3,))
             for counter in range(burial_indicator.shape[0]):
                 avg_burial_indicator += burial_indicator[counter]
-            avg_burial_indicator /= burial_indicator.shape[0]
+            avg_burial_indicator /= burial_indicator.shape[0] # average burial indicator
             burial_energy = -1* k_contact * avg_burial_indicator * scaled_burial_gamma
-            burial_energy = (burial_energy[0] + burial_energy[1] + burial_energy[2])/(N-1)  # sum over the three burial indicators
+            burial_energy = (burial_energy[0] + burial_energy[1] + burial_energy[2])/(N-1)#*N  #/(N-1)  # sum over the three burial indicators
             #breakpoint()
             #assert type(burial_energy) == float
             # direct, water-mediated, and protein-mediated contact energies
@@ -776,12 +776,14 @@ class PairEnergyAverage(EnergyTerm):
             #assert type(water_mediated) == float
             protein_mediated = np.average(thetaII*sigma_protein) * np.average(protein_gamma * np.outer(aa_freq, aa_freq))
             #assert type(protein_mediated) == float
-            contact_energy = -k_contact * (direct + water_mediated + protein_mediated)
+            #contact_energy = -k_contact * (direct*len(theta) + (water_mediated+protein_mediated)*len(thetaII)) # multiply by number of contacts
+            contact_energy = -k_contact * (direct + (water_mediated+protein_mediated)) # multiply by number of contacts
+            #electrostatics_energy = k_electrostatics * np.average(electrostatics_indicator) * np.average(np.outer(aa_freq, aa_freq)*charges[:, np.newaxis]*charges[np.newaxis, :]) * len(electrostatics_indicator) # multiply by number of contacts
             electrostatics_energy = k_electrostatics * np.average(electrostatics_indicator) * np.average(np.outer(aa_freq, aa_freq)*charges[:, np.newaxis]*charges[np.newaxis, :])
             #assert type(electrostatics_energy) == float
             mean_decoy_energy = burial_energy + contact_energy + electrostatics_energy
             #import pdb; pdb.set_trace()
-            """
+            
             """# constructing the distribution by sampling, then computing the average
             decoy_energies=np.zeros(n_decoys)
             for i in range(n_decoys):
@@ -807,7 +809,7 @@ class PairEnergyAverage(EnergyTerm):
             mean_decoy_energy = np.mean(decoy_energies)
             #std_decoy_energy = np.std(decoy_energies)
             """
-            # checking that these energy functions are able to compute the total energy of the sequence
+            """# checking that these energy functions are able to compute the total energy of the sequence
             assert len(distances) == (N**2-N)/2, f"len(distances): {len(distances)} != (N**2-N)/2: {(N**2-N)/2}"
             decoy_energies = np.zeros((len(seq_index)**2 - len(seq_index))//2)
             index = 0
@@ -829,7 +831,7 @@ class PairEnergyAverage(EnergyTerm):
                     decoy_energies[index] = contact_energy+burial_energy+electrostatics_energy#(contact_energy+electrostatics_energy)#(burial_energy + contact_energy + electrostatics_energy)
                     index += 1
             mean_decoy_energy = np.sum(decoy_energies) # for testing, we return the total energy, not the average
-            #"""
+            """
 
             #import pdb; pdb.set_trace()
             return mean_decoy_energy#, std_decoy_energy
@@ -956,7 +958,7 @@ class AwsemEnergyVariance(EnergyTerm):
         self.model=model
         self.alphabet=alphabet
         self.reindex_dca=[_AA.index(aa) for aa in alphabet]
-        
+
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
         self.indicators = model.indicators
         self.alphabet_size=len(alphabet)
@@ -1765,6 +1767,17 @@ class MonteCarlo:
 
 
 if __name__ == '__main__':
+
+    reduced_alphabet = 'ADEFGHIKLMNQRSTVWY'
+    pdb = "tests/data/1r69.pdb"    
+    s = Structure(pdb, chain=None)
+    model = AWSEM(s, expose_indicator_functions=True,
+                    distance_cutoff_contact=10, min_sequence_separation_contact=2,)
+    variance = AwsemEnergyVariance(model, alphabet=reduced_alphabet)
+    monte_carlo = MonteCarlo(sequence="SISSRVKSKRIQLGLNQAELAQKVGTTQQSIEQLENGKTKRPRFLPELASALGVSVDWLLNGT",
+                             energy=variance, alphabet=reduced_alphabet)
+    monte_carlo.annealing(n_steps=10)
+    exit()
 
     pdb_list = ["tests/data/1r69.pdb","tests/data/1r69.pdb","tests/data/1r69.pdb"]
     pdb_structures = (Structure(pdb, chain=None) for pdb in pdb_list)
