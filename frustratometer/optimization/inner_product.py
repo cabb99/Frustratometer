@@ -156,19 +156,31 @@ def compute_region_means_1_by_2(indicator_0, indicator_1):
 
 @jit(types.Array(types.float64, 1, 'C')(types.Array(types.float64, 1, 'A', readonly=True), types.Array(types.float64, 1, 'A', readonly=True)), nopython=True, cache=True)
 def compute_region_means_1_by_1(indicator_0, indicator_1):
+    # indicator_0: an element of an indicator1D
+    # indicator_1: also an element of an indicator1D (may be the same or different)
+    # in other words, these are 1D numpy arrays with axis length equal to the 
+    # number of residues in the protein
+    #
+    # the calculation of region_mean 
     n = indicator_0.shape[0]
     region_sum = np.zeros(2, dtype=np.float64) 
     region_count = np.zeros(2, dtype=np.int64) 
-    (ij, ii) = range(2)
+    (ij, ii) = range(2) # so ij=0, ii=1
+    # ii: correlation between burial indicators (varying the density well)
+    #     for a single residue
+    # ij: correlation between burial indicators (varying the density well)
+    #     for a pair of residues
     for i in range(n):
         region_sum[ii] += indicator_0[i] * indicator_1[i]
     region_count[ii]=n
     region_mean = np.zeros(2, dtype=np.float64)
     if region_count[ii] > 0:
-            region_mean[ii] = region_sum[ii] / region_count[ii]
+            region_mean[ii] = region_sum[ii] / region_count[ii] # inner product of indicators / number of residues
     if n>1:
+        # it looks like region_sum[0] is always zero, so region_sum.sum()==region_sum[1]==region_sum[ii]
         region_mean[ij]=indicator_0.mean()*indicator_1.mean()*(n/(n - 1))-region_sum.sum()/(n*(n-1))
-    return region_mean
+    return region_mean # (product of means - normalized dot product of indicators, 
+                       #  normalized dot product of indicators)
 
 @jit(types.Array(types.float64, 2, 'C')(types.Array(types.int64, 1, 'A', readonly=True), types.Array(types.float64, 1, 'A', readonly=True)),nopython=True, cache=True)
 def mean_inner_product_2_by_2(repetitions,region_mean):
@@ -295,10 +307,15 @@ def mean_inner_product_1_by_2(repetitions,region_mean):
 
 @jit(types.Array(types.float64, 2, 'C')(types.Array(types.int64, 1, 'A', readonly=True), types.Array(types.float64, 1, 'A', readonly=True)),nopython=True, cache=True)
 def mean_inner_product_1_by_1(repetitions,region_mean):
-    ij, ii = range(2)
+    # repetitions: number of amino acids of each type (so probably shape (20,))
+    #     this is a parameter of build_mean_inner_product_matrix
+    #     and is passed through without modification
+    # region_mean: see return value of compute_region_means functions
+
+    ij, ii = range(2) # so ij=0, ii=1
     
     n=repetitions
-    n_elements= len(repetitions)
+    n_elements= len(repetitions) # number of amino acid types
 
     mean_inner_product = np.zeros(n_elements**2)
     
@@ -308,33 +325,40 @@ def mean_inner_product_1_by_1(repetitions,region_mean):
             if i==j: #ii
                 mean_inner_product[id]=n[i]*region_mean[ii]+n[i]*(n[i]-1)*region_mean[ij]
             else: #ij
+                # multiply count of each amino acid type by 
                 mean_inner_product[id]=n[i]*n[j]*region_mean[ij]
  
+    # this return value has to be the outer product of the indicator function vector
+    # (weighted by number of contacts of each type), averaged element-wise
     return mean_inner_product.reshape(n_elements, n_elements)
 
-@jit(types.Array(types.float64, 2, 'C')(
-                 types.Array(types.int64, 1, 'A', readonly=True), 
-                 types.Array(types.float64, 2, 'A', readonly=True), 
-                 types.Array(types.float64, 3, 'A', readonly=True),
-                 types.Array(types.float64, 3, 'A', readonly=True)),
-      nopython=True, parallel=False, cache=True)
+#@jit(types.Array(types.float64, 2, 'C')(
+#                 types.Array(types.int64, 1, 'A', readonly=True), 
+#                 types.Array(types.float64, 2, 'A', readonly=True), 
+#                 types.Array(types.float64, 3, 'A', readonly=True),
+#                 types.Array(types.float64, 3, 'A', readonly=True)),
+#      nopython=True, parallel=False, cache=True)
 def build_mean_inner_product_matrix(repetitions, indicators1d, indicators2d, region_means):
+    # repetitions: number of amino acids of each type (so probably shape (20,))
+    # indicators1D: list of 3 elements (low density, medium density, high density)
+    # indicators2D: list of 3 or 4 elements (dir, prot, wat, possibly elec)
+
     num_matrices1d = len(indicators1d)
     num_matrices2d = len(indicators2d)
     n_elements = len(repetitions)
-    num_matrices = num_matrices1d + num_matrices2d
+    num_matrices = num_matrices1d + num_matrices2d # probably equal to 6 or 7
     
     # Compute the size of each block and the total size
-    block_sizes = np.empty(num_matrices, dtype=np.int64)
+    block_sizes = np.empty(num_matrices, dtype=np.int64) # creates an array without setting elements
     block_sizes[:num_matrices1d] = n_elements
     block_sizes[num_matrices1d:] = n_elements**2
+    # at this point, block_sizes looks something like [20,20,20,400,400,400]
     total_size = np.sum(block_sizes)
     
-    # Create the resulting matrix filled with zeros
+    # Create the resulting matrix (which is returned by this function) filled with zeros
     R = np.zeros((total_size, total_size))
         
     # Compute the starting indices for each matrix
-    #start_indices = np.cumsum([0] + block_sizes[:-1])
     start_indices=np.zeros(len(block_sizes),dtype=np.int64)
     start=0
     for i in range(1,len(block_sizes)):
@@ -365,21 +389,30 @@ def build_mean_inner_product_matrix(repetitions, indicators1d, indicators2d, reg
         
         if i != j:
             R[sj:ej, si:ei] = R[si:ei, sj:ej].T
+        # if we have i==j, then the transposed region is the original region and there's nothing to fill in
             
-    return R
+    return R # The average (over sequence shuffles) of the outer product 
+             # of the vector formed from the set of all indicator types.
+             # The shuffling average was performed by multiplying by the
+             # proportion of amino acids in the sequence by each indicator type
 
 
-@jit(types.Array(types.float64, 3, 'C')(
-     types.Array(types.float64, 2, 'A', readonly=True), 
-     types.Array(types.float64, 3, 'A', readonly=True)),
-      nopython=True, cache=True)
+#@jit(types.Array(types.float64, 3, 'C')(
+#     types.Array(types.float64, 2, 'A', readonly=True), 
+#     types.Array(types.float64, 3, 'A', readonly=True)),
+#      nopython=True, cache=True)
 def compute_all_region_means(indicators1d, indicators2d):
-    num_matrices1d = len(indicators1d)
-    num_matrices2d = len(indicators2d)
-    num_matrices = num_matrices1d + num_matrices2d
+    num_matrices1d = len(indicators1d) # 3 (low density, med density, high density)
+    num_matrices2d = len(indicators2d) # 3 or 4 (dir, prot, wat, possibly elec)
+    num_matrices = num_matrices1d + num_matrices2d 
     
     # Create the resulting matrix filled with zeros
     R = np.zeros((num_matrices,num_matrices,15),dtype=np.float64)
+    # 15 deep because we need to unpack 15 return values in the cases
+    # where i and j correspond to 2d matrices; in the cases that
+    # i and j represent 1 or 0 2d matrices, we won't need to unpack 
+    # as many return values, so we'll just fill in the first few elements
+    # of the third axis and the rest will remain as 0
         
     for ij in prange(num_matrices**2):
         i=ij//num_matrices
