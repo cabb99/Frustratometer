@@ -4,26 +4,27 @@ import logging
 import gzip
 from ..utils import create_directory
 import glob
+from typing import Union
 
 
 #Download whole database
-def download_database(path,
-             name='PFAM_current',
-             url="https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.full.uniprot.gz"):
+def download_database(path: Union[Path,str],
+             name: str ='PFAM_current',
+             url: Union[Path,str] ="https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.full.uniprot.gz")->Path:
     """
     Downloads and creates a pfam database in the Database folder
 
     Parameters
     ----------
-    url :  str
+    path :  str
         Adress of pfam database
     name: str
         Name of the new database folder
 
     Returns
     -------
-    alignment_path: Path
-        Path of the alignments
+    alignments_path: Path
+        Path of the local database of alignments
     """
 
     
@@ -69,7 +70,22 @@ def download_database(path,
     return alignments_path
 
 # Get a single alignment
-def get_alignment(pfamid, database_path):
+def get_alignment(pfamid: str, database_path: Union[Path,str])->Path:
+    """
+    Retrieves a pfam family alignment from local database
+
+    Parameters
+    ----------
+    pfamid : str
+        ID of PFAM family. ex: PF00001
+    database_path: str
+        Address of local database
+    Returns
+    -------
+    alignment_file : Path
+        location of alignment
+    
+    """
     path = Path(database_path)
     assert path.exists(), "The path doesn't exist"
     assert path.is_dir(), "The path is not a directory" 
@@ -81,25 +97,24 @@ def get_alignment(pfamid, database_path):
         raise(IOError, 'Multiple files found')
     return Path(files[0])
 
-def download_aligment(pfamid,
-              output_file,
-              alignment_type='full'):
-    """'
+def download_aligment(pfamid: str, output_file: Union[Path,str],
+              alignment_type: str ='full')->bytes:
+    """
     Retrieves a pfam family alignment from interpro
 
     Parameters
     ----------
     pfamid : str,
         ID of PFAM family. ex: PF00001
+    output_file: Path
+        location of the output file. Default: Temporary file
     alignment_type: str,
         alignment type to retrieve. Options: full, seed, uniprot
-    output_file: str
-        location of the output file. Default: Temporary file
 
     Returns
     -------
-    output : Path
-        location of alignment
+    output_file : Path
+        Output file (in stockholm format)
     
     """
     url = f'https://www.ebi.ac.uk/interpro/api/entry/pfam/{pfamid}/?annotation=alignment:{alignment_type}'
@@ -108,5 +123,6 @@ def download_aligment(pfamid,
 
     zipped_alignment = urllib.request.urlopen(url).read()
     alignment = gzip.decompress(zipped_alignment)
+    output_file=Path(output_file)
     output_file.write_bytes(alignment)
     return output_file

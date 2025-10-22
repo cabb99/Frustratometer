@@ -1,4 +1,4 @@
-from Bio.PDB import PDBParser
+from Bio.PDB import PDBParser,MMCIFParser
 import prody
 import scipy.spatial.distance as sdist
 import pandas as pd
@@ -6,6 +6,7 @@ import numpy as np
 import itertools
 import os
 from pathlib import Path
+from typing import Union
 
 three_to_one = {'ALA':'A', 'ARG':'R', 'ASN':'N', 'ASP':'D', 'CYS':'C',
                 'GLU':'E', 'GLN':'Q', 'GLY':'G', 'HIS':'H', 'ILE':'I',
@@ -13,10 +14,23 @@ three_to_one = {'ALA':'A', 'ARG':'R', 'ASN':'N', 'ASP':'D', 'CYS':'C',
                 'SER':'S', 'THR':'T', 'TRP':'W', 'TYR':'Y', 'VAL':'V'}
 
 
-def download(pdbID: str,directory: Path=Path.cwd()) -> Path:
+def download(pdbID: str,directory: Union[Path,str]=Path.cwd()) -> Path:
     """
     Downloads a single pdb file
+
+    Parameters
+    ----------
+    pdbID: str,
+        PDB ID
+    directory: Path or str,
+        Directory where PDB file will be downloaded.
+
+    Returns
+    -------
+    pdb_file : Path
+        PDB file location.
     """
+
     import urllib.request
     pdb_file=Path(directory) / f'{pdbID}.pdb'
     urllib.request.urlretrieve('http://www.rcsb.org/pdb/files/%s.pdb' % pdbID, pdb_file)
@@ -30,7 +44,7 @@ def get_sequence(pdb_file: str,
 
     Parameters
     ----------
-    pdb : str,
+    pdb_file : str,
         PDB file location.
     chain: str,
         Chain ID of the selected protein.
@@ -48,7 +62,10 @@ def get_sequence(pdb_file: str,
     :return: protein sequence
     """
 
-    parser = PDBParser()
+    if ".cif" in str(pdb_file):
+        parser = MMCIFParser()
+    else:
+        parser = PDBParser()
     structure = parser.get_structure('name', pdb_file)
     if chain==None:
         all_chains=[i.get_id() for i in structure.get_chains()]
@@ -69,22 +86,26 @@ def get_sequence(pdb_file: str,
 
 
 
-def get_distance_matrix(pdb_file: Path,
+def get_distance_matrix(pdb_file: Union[Path,str],
                         chain: str,
                         method: str = 'CB'
                         ) -> np.array:
     """
     Calculate the distance matrix of the specified atoms in a PDB file.
 
-    Parameters:
-        pdb_file (str): The path to the PDB file.
-        chain (str): The chainID or chainIDs (space separated) of the protein.
-        method (str): The method to use for calculating the distance matrix. 
-                      Defaults to 'CB', which uses the CB atom for all residues except GLY, which uses the CA atom. 
-                      Options:
-                       'CA' for using only the CA atom,
-                       'minimum' for using the minimum distance between all atoms in each residue,
-                       'CB_force' computes a new coordinate for the CB atom based on the CA, C, and N atoms and uses CB distance even for glycine.
+    Parameters
+    ----------
+    pdb_file: Path or str 
+        The path to the PDB file.
+    chain: str
+        The chainID or chainIDs (space separated) of the protein.
+    method: str
+        The method to use for calculating the distance matrix. 
+        Defaults to 'CB', which uses the CB atom for all residues except GLY, which uses the CA atom. 
+        Options:
+            'CA' for using only the CA atom,
+            'minimum' for using the minimum distance between all atoms in each residue,
+            'CB_force' computes a new coordinate for the CB atom based on the CA, C, and N atoms and uses CB distance even for glycine.
 
     Returns:
         np.array: The distance matrix of the selected atoms.
@@ -147,7 +168,24 @@ def get_distance_matrix(pdb_file: Path,
 
 
 def full_to_filtered_aligned_mapping(aligned_sequence: str,
-                                    filtered_aligned_sequence: str):
+                                    filtered_aligned_sequence: str)->dict:
+
+    """
+    Get a dictionary mapping residue positions in the full pdb sequence to the aligned pdb sequence
+
+    Parameters
+    ----------
+    aligned_sequence : str,
+        Raw aligned PDB sequence.
+    filtered_aligned_sequence: str,
+        Filtered aligned PDB sequence (columns with insertions and deletions, i.e. dashes, that are
+        typically filtered in MSA file processing are removed)
+
+    Returns
+    -------
+    full_to_aligned_index_dict : dict
+        Dictionary
+    """
     full_to_aligned_index_dict={}; counter=0
     for i,x in enumerate(aligned_sequence):
         if x != "-" and x==x.upper():

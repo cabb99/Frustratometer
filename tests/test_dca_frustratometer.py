@@ -179,7 +179,7 @@ def test_couplings_mask_with_sequence_threshold():
     potts_model_path=f"{data_path}/PF11976_PFAM_27_dca_gap_threshold_0.2.mat"
     chain_id = 'A'
     filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
-    structure=frustratometer.Structure.full_pdb(pdb_file=pdb_path,chain=chain_id,filtered_aligned_sequence=filtered_aligned_sequence)
+    structure=frustratometer.Structure(pdb_file=pdb_path,chain=chain_id,filtered_aligned_sequence=filtered_aligned_sequence)
     DCA_model=frustratometer.DCA.from_potts_model_file(structure,potts_model_file=potts_model_path,sequence_cutoff=1)
     assert all(p == False for p in np.diag(DCA_model.mask))
 
@@ -188,7 +188,7 @@ def test_couplings_mask_with_distance_threshold():
     potts_model_path=f"{data_path}/PF11976_PFAM_27_dca_gap_threshold_0.2.mat"
     chain_id = 'A'
     filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
-    structure=frustratometer.Structure.full_pdb(pdb_file=pdb_path,chain=chain_id,filtered_aligned_sequence=filtered_aligned_sequence)
+    structure=frustratometer.Structure(pdb_file=pdb_path,chain=chain_id,filtered_aligned_sequence=filtered_aligned_sequence)
     DCA_model=frustratometer.DCA.from_potts_model_file(structure,potts_model_file=potts_model_path,distance_cutoff=16)
 
     original_distance_matrix=np.loadtxt(f"{data_path}/6JXX_A_CB_CB_Distance_Map.txt")
@@ -201,7 +201,7 @@ def test_couplings_mask_with_distance_and_sequence_threshold():
     potts_model_path=f"{data_path}/PF11976_PFAM_27_dca_gap_threshold_0.2.mat"
     chain_id = 'A'
     filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
-    structure=frustratometer.Structure.full_pdb(pdb_file=pdb_path,chain=chain_id,filtered_aligned_sequence=filtered_aligned_sequence)
+    structure=frustratometer.Structure(pdb_file=pdb_path,chain=chain_id,filtered_aligned_sequence=filtered_aligned_sequence)
     DCA_model=frustratometer.DCA.from_potts_model_file(structure,potts_model_file=potts_model_path,sequence_cutoff=1,distance_cutoff=16)
 
     original_distance_matrix=np.loadtxt(f"{data_path}/6JXX_A_CB_CB_Distance_Map.txt")
@@ -234,7 +234,7 @@ def test_OOP_compute_DCA_native_energy():
     chain = 'A'
     distance_matrix_method='minimum'
     potts_model_file = 'examples/data/PottsModel1cyoA.mat'
-    structure=frustratometer.Structure.full_pdb(pdb_file,chain,distance_matrix_method=distance_matrix_method)
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method,repair_pdb=False)
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, distance_cutoff=4,
                                                                 sequence_cutoff=0)
                                                                 
@@ -250,7 +250,7 @@ def test_OOP_compute_seq_DCA_energy_with_distance_threshold_without_gap_terms():
     aligned_sequence=subprocess.check_output(["sed","-n",""'/>%s$/,/>/p'"" % "6JXX_A",f'{data_path}/PF11976_all_pseudogene_parent_sequences_aligned_PFAM_27.fasta'])
     aligned_sequence="".join(aligned_sequence.decode().split("\n")[1:-2])
 
-    structure=frustratometer.Structure.full_pdb(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence,aligned_sequence=aligned_sequence)
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence,aligned_sequence=aligned_sequence)
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, distance_cutoff=16,
                                                                 sequence_cutoff=1,reformat_potts_model=True)
 
@@ -267,7 +267,7 @@ def test_OOP_compute_seq_DCA_energy_with_distance_threshold_with_gap_terms():
     aligned_sequence=subprocess.check_output(["sed","-n",""'/>%s$/,/>/p'"" % "6JXX_A",f'{data_path}/PF11976_all_pseudogene_parent_sequences_aligned_PFAM_27.fasta'])
     aligned_sequence="".join(aligned_sequence.decode().split("\n")[1:-2])
 
-    structure=frustratometer.Structure.full_pdb(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence,aligned_sequence=aligned_sequence)
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence,aligned_sequence=aligned_sequence)
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, distance_cutoff=16,
                                                                 sequence_cutoff=1,reformat_potts_model=True)
 
@@ -282,7 +282,7 @@ def test_OOP_compute_seq_DCA_energy_without_gap_terms():
     potts_model_file = f"{data_path}/PF11976_PFAM_27_dca_gap_threshold_0.2.mat"
     filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
 
-    structure=frustratometer.Structure.full_pdb(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence)
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence)
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, sequence_cutoff=1,reformat_potts_model=True)
 
     sample_sequence="-KLKVIGQDSSEIHFKVKMTTHLKKLKESYCQRQGVPM-NSLRFVFEDQRIAATHTIKELGMEE-DVIEVY-"                                                            
@@ -296,7 +296,7 @@ def test_OOP_compute_seq_DCA_energy_with_gap_terms():
     potts_model_file = f"{data_path}/PF11976_PFAM_27_dca_gap_threshold_0.2.mat"
     filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
 
-    structure=frustratometer.Structure.full_pdb(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence)
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence)
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, sequence_cutoff=1,reformat_potts_model=True)
 
     sample_sequence="-KLKVIGQDSSEIHFKVKMTTHLKKLKESYCQRQGVPM-NSLRFVFEDQRIAATHTIKELGMEE-DVIEVY-"                                                            
@@ -308,7 +308,7 @@ def test_fields_couplings_DCA_energy():
     chain = 'A'
     distance_matrix_method='minimum'
     potts_model_file = 'examples/data/PottsModel1cyoA.mat'
-    structure=frustratometer.Structure.full_pdb(pdb_file,chain,distance_matrix_method=distance_matrix_method)
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method)
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, distance_cutoff=4,
                                                                 sequence_cutoff=0)
     assert model.fields_energy() + model.couplings_energy() - model.native_energy()  < 1E-6
@@ -318,10 +318,22 @@ def test_fields_couplings_DCA_energy():
 #####
 def test_structure_class():
     #PDB has cofactors and ions
-    structure=frustratometer.Structure.full_pdb(f'{_path}/../tests/data/1rnb.pdb',"A")
+    structure=frustratometer.Structure(f'{_path}/../tests/data/1rnb.pdb',"A")
     test_sequence="QVINTFDGVADYLQTYHKLPNDYITKSEAQALGWVASKGNLADVAPGKSIGGDIFSNREGKLPGKSGRTWREADINYTSGFRNSDRILYSSDWLIYKTTDHYQTFTKIR"
     assert structure.sequence==test_sequence
     assert structure.distance_matrix.shape==(len(test_sequence),len(test_sequence))
+
+def test_structure_cif_compatibility():
+    structure=frustratometer.Structure(f'{_path}/../tests/data/6u5e.cif',"A")
+    test_sequence="VNPTVFFDIAVDGEPLGRVSFELFADKVPKTAENFRALSTGEKGFGYKGSCFHRIIPGFMCQGGDFTRHNGTGGKSIYGEKFEDENFILKHTGPGILSMANAGPNTNGSQFFICTAKTEWLDGKHVVFGKVKEGMNIVEAMERFGSRNGKTSKKITIADCGQL"
+    assert structure.sequence==test_sequence
+    assert structure.distance_matrix.shape==(len(test_sequence),len(test_sequence))  
+
+def test_substructure_cif_compatibility():
+    structure=frustratometer.Structure(f'{_path}/../tests/data/6u5e.cif',chain="A",seq_selection="resindex `2to5`")
+    test_sequence="PTVF"
+    assert structure.sequence==test_sequence
+    assert structure.distance_matrix.shape==(len(test_sequence),len(test_sequence))  
 
 @pytest.mark.skip
 def test_structure_segment_class_original_indices():
@@ -338,7 +350,7 @@ def test_structure_segment_class_original_indices():
 
 def test_structure_segment_class_absolute_indices():
     #PDB has cofactors and ions
-    structure=frustratometer.Structure.spliced_pdb(f'{_path}/../tests/data/3ptn.pdb',"A",seq_selection="resindex `0to23`")
+    structure=frustratometer.Structure(f'{_path}/../tests/data/3ptn.pdb',"A",seq_selection="resindex `0to23`")
     test_sequence="IVGGYTCGANTVPYQVSLNSGYHF"
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
     resid = selection_CB.getResindices()
@@ -351,7 +363,7 @@ def test_structure_segment_class_absolute_indices():
 #####
 
 def test_structure_segment_class_original_indices_no_repair():
-    structure=frustratometer.Structure.spliced_pdb(f'{_path}/../tests/data/1rnb.pdb',"A",seq_selection="resnum `2to21`",repair_pdb=False)
+    structure=frustratometer.Structure(f'{_path}/../tests/data/1rnb.pdb',"A",seq_selection="resnum `2to21`",repair_pdb=False)
     test_sequence="QVINTFDGVADYLQTYHKLP"
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
     resid = selection_CB.getResindices()
@@ -360,7 +372,7 @@ def test_structure_segment_class_original_indices_no_repair():
     assert len(resid)==len(structure.sequence)
 
 def test_structure_segment_class_absolute_indices_no_repair():
-    structure=frustratometer.Structure.spliced_pdb(f'{_path}/../tests/data/1rnb.pdb',"A",seq_selection="resindex `0to19`",repair_pdb=False)
+    structure=frustratometer.Structure(f'{_path}/../tests/data/1rnb.pdb',"A",seq_selection="resindex `0to19`",repair_pdb=False)
     test_sequence="QVINTFDGVADYLQTYHKLP"
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
     resid = selection_CB.getResindices()
@@ -371,7 +383,7 @@ def test_structure_segment_class_absolute_indices_no_repair():
 def test_scores():
     pdb_file = 'examples/data/1cyo.pdb'
     chain = 'A'
-    structure=frustratometer.Structure.full_pdb(pdb_file,chain)
+    structure=frustratometer.Structure(pdb_file,chain)
     potts_model_file = 'examples/data/PottsModel1cyoA.mat'
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, distance_cutoff=4,
                                                                 sequence_cutoff=0)
@@ -420,9 +432,6 @@ def test_compute_mutational_DCA_decoy_energy():
     assert (decoy_energy[pos_x, pos_y, aa_x, aa_y] - test_energy) ** 2 < 1E-16
 
 
-
-
-
 @pytest.mark.xfail
 def test_initialize_from_pdb():
     PFAM_id='PFxxxxx'
@@ -432,15 +441,77 @@ def test_initialize_from_pdb():
     potts_model.set_structure(pdb)
     assert potts_model.compute_native_energy()==expected_energy
 
+#####
+#Test DCA Class Methods
+#####
+
 
 def test_from_potts_model_file():
-    pass
+    pdb_file = f'{data_path}/6JXX_A.pdb'
+    chain = 'A'
+    distance_matrix_method='CB'
+    potts_model_file = f"{data_path}/PF11976_PFAM_27_dca_gap_threshold_0.2.mat"
+    filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
+    aligned_sequence=subprocess.check_output(["sed","-n",""'/>%s$/,/>/p'"" % "6JXX_A",f'{data_path}/PF11976_all_pseudogene_parent_sequences_aligned_PFAM_27.fasta'])
+    aligned_sequence="".join(aligned_sequence.decode().split("\n")[1:-2])
 
-def from_pfam_alignment():
-    pass
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method,filtered_aligned_sequence=filtered_aligned_sequence,aligned_sequence=aligned_sequence)
+    model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, distance_cutoff=16,
+                                                                sequence_cutoff=1,reformat_potts_model=True)
 
-def from_hmmer_alignment():
-    pass
+    e = model.native_energy(sequence=filtered_aligned_sequence)
+    assert np.round(e, 4) == -523.2471
+    assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
+    assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
 
-def from_alignment():
-    pass
+def test_from_pfam_alignment_mfDCA_calculation():
+    pdb_file = f'{data_path}/6JXX_A.pdb'
+    chain = 'A'
+    distance_matrix_method='CB'
+    alignment_output_file_name=f"{data_path}/PF11976_test_alignment.sto"
+    filtered_alignment_output_file_name=f"{data_path}/PF11976_test_filtered_alignment.sto"
+    PFAM_ID="PF11976"
+    DCA_format="mfDCA"
+    
+    filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
+
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method)
+    model = frustratometer.DCA.from_pfam_alignment(structure, alignment_output_file_name=alignment_output_file_name,filtered_alignment_output_file_name=filtered_alignment_output_file_name,PFAM_ID=PFAM_ID,distance_cutoff=16,sequence_cutoff=1,DCA_format=DCA_format)
+
+    assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
+    assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
+
+def test_from_pfam_alignment_plmDCA_calculation():
+    pdb_file = f'{data_path}/6JXX_A.pdb'
+    chain = 'A'
+    distance_matrix_method='CB'
+    alignment_output_file_name=f"{data_path}/PF11976_test_alignment.sto"
+    filtered_alignment_output_file_name=f"{data_path}/PF11976_test_filtered_alignment.sto"
+    PFAM_ID="PF11976"
+    DCA_format="plmDCA"
+    
+    filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
+
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method)
+    model = frustratometer.DCA.from_pfam_alignment(structure, alignment_output_file_name=alignment_output_file_name,filtered_alignment_output_file_name=filtered_alignment_output_file_name,PFAM_ID=PFAM_ID,distance_cutoff=16,sequence_cutoff=1,DCA_format=DCA_format)
+
+    assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
+    assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
+
+def test_from_hmmer_alignment_plmDCA_calculation():    
+    pdb_file = f'{data_path}/6JXX_A.pdb'
+    chain = 'A'
+    distance_matrix_method='CB'
+    alignment_output_file_name=f"{data_path}/PF11976_test_alignment.sto"
+    filtered_alignment_output_file_name=f"{data_path}/PF11976_test_filtered_alignment.sto"
+    query_sequence_database_file=f"{data_path}/protein-matching-PF11976.fasta"
+    DCA_format="plmDCA"
+
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method)
+    model = frustratometer.DCA.from_hmmer_alignment(structure, alignment_output_file_name=alignment_output_file_name,filtered_alignment_output_file_name=filtered_alignment_output_file_name,query_sequence_database_file=query_sequence_database_file,distance_cutoff=16,sequence_cutoff=1,DCA_format=DCA_format)
+
+    assert model.potts_model["J"].shape==(77,77,21,21)
+    assert model.potts_model["h"].shape==(77,21)
+
+# def from_alignment():
+#     pass

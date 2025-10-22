@@ -1,23 +1,24 @@
 from Bio import AlignIO
 import numpy as np
 from pathlib import Path
+from typing import Union
 
 import logging
 logger = logging.getLogger(__name__)
 
-def filter_alignment(alignment_file, 
-                     output_file = None,
-                     alignment_format = "stockholm"):
+def filter_alignment(alignment_file: Union[Path,str], 
+                     output_file:str,
+                     alignment_format:str = "stockholm")->Path:
     """
     Filter stockholm alignment by removing unaligned sections.
     Filters by saving the alignment into memory.
 
     Parameters
     ----------
-    alignment_file : Path
-        location of file
-    output_file : Path
-        location of the output_file
+    alignment_file : Path or str
+        Alignment file name
+    output_file : str
+        Output file name
     alignment_format : str
         Biopython alignment format (Default: stockholm)
     Returns
@@ -64,24 +65,24 @@ def filter_alignment(alignment_file,
     return output_file
 
 
-def filter_alignment_lowmem(alignment_file, 
-                               output_file, 
-                               alignment_format = "stockholm"):
+def filter_alignment_lowmem(alignment_file:str, 
+                               output_file:str, 
+                               alignment_format:str = "stockholm")->Path:
     """
     Filter stockholm alignment by removing unaligned sections.
     Filters by reading the file without saving to memory.
 
     Parameters
     ----------
-    alignment_file : Path
+    alignment_file : str
         location of file
-    output_file : Path
+    output_file : str
         location of the output_file
     alignment_format : str
         Biopython alignment format (Default: stockholm)
     Returns
     -------
-    output_file : Path
+    output_file : str
         location of the output_file
     """
     #TODO: Implement filter query for jackhmmer
