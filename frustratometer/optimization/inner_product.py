@@ -156,8 +156,11 @@ def compute_region_means_1_by_2(indicator_0, indicator_1):
 
 @jit(types.Array(types.float64, 1, 'C')(types.Array(types.float64, 1, 'A', readonly=True), types.Array(types.float64, 1, 'A', readonly=True)), nopython=True, cache=True)
 def compute_region_means_1_by_1(indicator_0, indicator_1):
-    # indicator_0: an element of an indicator1D
-    # indicator_1: also an element of an indicator1D (may be the same or different)
+    # indicator_0: an element of an indicator1D list
+    #     (so either low, med, or high density burial,
+    #     with length equal to the number of residues in the protein)
+    # indicator_1: also an element of an indicator1D list
+    #     (may be identical to indicator_0)
     # in other words, these are 1D numpy arrays with axis length equal to the 
     # number of residues in the protein
     #
@@ -166,9 +169,9 @@ def compute_region_means_1_by_1(indicator_0, indicator_1):
     region_sum = np.zeros(2, dtype=np.float64) 
     region_count = np.zeros(2, dtype=np.int64) 
     (ij, ii) = range(2) # so ij=0, ii=1
-    # ii: correlation between burial indicators (varying the density well)
+    # ii: covariance between burial indicators (varying the density well)
     #     for a single residue
-    # ij: correlation between burial indicators (varying the density well)
+    # ij: covariance between burial indicators (varying the density well)
     #     for a pair of residues
     for i in range(n):
         region_sum[ii] += indicator_0[i] * indicator_1[i]
@@ -307,10 +310,37 @@ def mean_inner_product_1_by_2(repetitions,region_mean):
 
 @jit(types.Array(types.float64, 2, 'C')(types.Array(types.int64, 1, 'A', readonly=True), types.Array(types.float64, 1, 'A', readonly=True)),nopython=True, cache=True)
 def mean_inner_product_1_by_1(repetitions,region_mean):
+    # This function computes a 20x20 block of the matrix <phi@phi.T>,
+    #     which represents the covariances between different classes 
+    #     of burial indicator functions (the 1-body terms).
+    # The 20x20 block may or may not be centered on the main diagonal of the full matrix.
+    #     In the case that the 20x20 block is centered on the main diagonal, 
+    #         it represents the variances of each amino acid types within
+    #         a burial indicator class (low, medium, or high), 
+    #         AND the covariances between each combination of amino acid types 
+    #         within this same indicator class
+    #     In the case that the 20x20 block is not centered on the main diagonal,
+    #         it represents the covariances of each amino acid type across 
+    #         two burial indicator classes (low-med, low-high, or med-high),
+    #         AND the covariances between all combinations of amino acid types
+    #         between those two indicator classes.
     # repetitions: number of amino acids of each type (so probably shape (20,))
-    #     this is a parameter of build_mean_inner_product_matrix
-    #     and is passed through without modification
-    # region_mean: see return value of compute_region_means functions
+    #     This is a parameter of build_mean_inner_product_matrix,
+    #     which is the only important function that calls this function.
+    #     The repetitions argument is not modified by build_mean_inner_product_matrix
+    #     before or after this function is called; in other words, it is passed straight through
+    # region_mean: list[]
+    #     The build_mean_inner_product_matrix function has a parameter called region_means
+    #         that is indexed during the call to this function. So it must be that region_mean
+    #         is specific to this particular combination of burial indicator classes
+    #         (low-low, low-med, low-high, med-med, med-high, or high-high).
+    #     Digging deeper, we find that the region_means passed to build_mean_inner_product_matrix
+    #         comes from the output of compute_all_region_means, which repeatedly
+    #         calls compute_region_means_1_by_1, compute_region_means_1_by_2, and
+    #         compute_region_means_2_by_2 to populate a 2D array. So, to understand
+    #         the region_mean parameter of this function, we should look at
+    #         compute_region_means_1_by_1 for different burial indicator class arguments
+    #         (low-low, low-med, low-high, med-med, med-high, or high-high)
 
     ij, ii = range(2) # so ij=0, ii=1
     
@@ -325,7 +355,7 @@ def mean_inner_product_1_by_1(repetitions,region_mean):
             if i==j: #ii
                 mean_inner_product[id]=n[i]*region_mean[ii]+n[i]*(n[i]-1)*region_mean[ij]
             else: #ij
-                # multiply count of each amino acid type by 
+                # for different amino acid types, we scale the average value by the number of each type
                 mean_inner_product[id]=n[i]*n[j]*region_mean[ij]
  
     # this return value has to be the outer product of the indicator function vector
@@ -402,6 +432,9 @@ def build_mean_inner_product_matrix(repetitions, indicators1d, indicators2d, reg
 #     types.Array(types.float64, 3, 'A', readonly=True)),
 #      nopython=True, cache=True)
 def compute_all_region_means(indicators1d, indicators2d):
+    """indicators1d: burial indicators, in the order of low, medium, high
+       indicators2d: contact indicators, in the order of direct, protein, water
+       Each array has axis length(s) equal to the number of residues in the protein"""
     num_matrices1d = len(indicators1d) # 3 (low density, med density, high density)
     num_matrices2d = len(indicators2d) # 3 or 4 (dir, prot, wat, possibly elec)
     num_matrices = num_matrices1d + num_matrices2d 
