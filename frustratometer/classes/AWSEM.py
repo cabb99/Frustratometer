@@ -187,7 +187,9 @@ class AWSEM(AWSEMBase):
                  pdb_structure: object,
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
+                 alt_sigma_wat: bool=False,
                  **parameters)->object:
+        self.alt_sigma_wat = alt_sigma_wat
         # assume the user wanted the sequence from the pdb structure if not given
         if not sequence:
             sequence = pdb_structure.sequence
@@ -272,6 +274,8 @@ class AWSEM(AWSEMBase):
         rho1 = np.expand_dims(rho_r, 0)
         rho2 = np.expand_dims(rho_r, 1)
         sigma_water = 0.25 * (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) * (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0)))
+        if self.alt_sigma_wat:
+            sigma_water = -sigma_water + 0.5*( (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) + (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0))))
         sigma_protein = 1 - sigma_water
         #Calculate theta and indicators
         theta = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_min))) * (1 + np.tanh(self.p.eta * (self.p.r_max - self.distance_matrix)))
