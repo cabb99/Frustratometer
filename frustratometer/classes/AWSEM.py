@@ -59,6 +59,7 @@ class AWSEMBase(Frustratometer):
     def __init__(self, 
                  sequence: str,
                  expose_indicator_functions: bool=False,
+                 potts: bool=True,
                  **parameters)->object:
         """
         Generate AWSEM object
@@ -69,11 +70,15 @@ class AWSEMBase(Frustratometer):
             The amino acid sequence
         expose_indicator_functions: bool
             If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
+        potts: bool
+            Whether to set up the potts model (can be RAM-intensive and time-intensive),
+            which is unnecessary if all you want to get is the indicator functions.
         
         Returns
         -------
         AWSEM object
         """
+
         # set sequence based on argument
         self.N = len(sequence)
         self.sequence = sequence
@@ -81,6 +86,9 @@ class AWSEMBase(Frustratometer):
         # set indicator function exposure based on argument
         #     i guess not exposing indicator functions saves memory?
         self.expose_indicator_functions = expose_indicator_functions
+
+        # whether to compute potts model
+        self.potts = potts
 
         # parse other arguments
         p = AWSEMParameters(**parameters)
@@ -130,7 +138,7 @@ class AWSEMBase(Frustratometer):
         self._decoy_fluctuation = {} # don't know what this does
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
 
-    def subclass_setup_helper(self, potts):
+    def subclass_setup_helper(self):
         """
         This method calls methods to calculate native indicator functions, 
         masks (based on the native distance matrix), and native energy,
@@ -142,18 +150,10 @@ class AWSEMBase(Frustratometer):
         preceding the call to this method) and how they implement
         the calculate_indicators and calculate_masks methods called 
         by subclass_setup_helper
-
-        Parameters
-        ----------
-        potts: bool=True
-            Whether to build the potts model from the freshly evaluated indicators and masks.
-            For frustration calculations, this must always be done. However, if this class is
-            being used only to extract indicator functions from a structure, then building 
-            the potts model may be a waste of RAM and time.
         """
         self.calculate_masks() # subclasses should (re)define this method as needed
         self.calculate_indicators() # subclasses should (re)define this method as needed
-        if potts:
+        if self.potts:
             self.calculate_energy_and_potts()
         else:
             if 'potts_model' in dir(self) or 'burial_energy' in dir(self)\
@@ -246,6 +246,7 @@ class AWSEM(AWSEMBase):
                  pdb_structure: object,
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
+                 potts: bool=True,
                  alt_sigma_wat: bool=False,
                  **parameters)->object:
         self.alt_sigma_wat = alt_sigma_wat
@@ -253,10 +254,10 @@ class AWSEM(AWSEMBase):
         if not sequence:
             sequence = pdb_structure.sequence
         # load structure-independent parameters and methods
-        super().__init__(sequence, expose_indicator_functions, **parameters) 
+        super().__init__(sequence, expose_indicator_functions, potts, **parameters) 
         # set up strucure
         self.setup_structure(pdb_structure)
-        self.subclass_setup_helper(potts=True)
+        self.subclass_setup_helper()
 
     def setup_structure(self, pdb_structure):
         # check structure
@@ -286,7 +287,7 @@ class AWSEM(AWSEMBase):
         if self.N != len(self.sequence):
             breakpoint()
             raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
-        self.subclass_setup_helper(potts=True)
+        self.subclass_setup_helper()
     def change_conformation(alternative_pdb_structure):
         # this function is an alias for the pdb_structure setter
         self.pdb_structure = alternative_pdb_structure
@@ -523,7 +524,10 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
         AWSEMIndicators object
 
         """
-        super().__init__(sequence, expose_indicator_functions, **parameters)
+        # if we already have our indicator functions, 
+        # our goal is probably to compute the potts model,
+        # so we'll just hard code a value of True for that argument  VVVV
+        super().__init__(sequence, expose_indicator_functions, potts=True, **parameters)
         self.burial_indicator = burial_indicator
         self.direct_indicator = direct_indicator
         self.protein_indicator = protein_indicator
@@ -555,7 +559,7 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
         #np.save('protein_indicator_1.npy', protein_indicator)
         #np.save('water_indicator_1.npy', water_indicator)
         #np.save('electrostatics_indicator_1.npy', electrostatics_indicator)
-        self.subclass_setup_helper(potts=True)
+        self.subclass_setup_helper()
 
     def calculate_indicators(self):
         pass # the function was initialized with indicators, so there's nothing to do
@@ -585,10 +589,13 @@ class AWSEMVariancePotts(AWSEMBase):
         AWSEMVariancePotts object
 
         """
-        super().__init__(sequence, expose_indicator_functions, **parameters)
+        # if we already have our indicator functions, 
+        # our goal is probably to compute the potts model,
+        # so we'll just hard code a value of True for that argument  VVVV
+        super().__init__(sequence, expose_indicator_functions, potts=True, **parameters)
         self.covariance_matrix = covariance_matrix
         self.num_indicators = 3*self.N + 4*(self.N**2-self.N)/2 # low, med, high burial for each N, 4 classes of pair interactions
-        self.subclass_setup_helper(potts=True)
+        self.subclass_setup_helper()
 
     @staticmethod # trying to avoid loading down memory with too many permanent attributes
     def pairwise_mask(l): # l for length
