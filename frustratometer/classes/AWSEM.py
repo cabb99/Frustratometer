@@ -326,7 +326,7 @@ class AWSEM(AWSEMBase):
             breakpoint()
             raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
         self.subclass_setup_helper()
-    def change_conformation(alt_conf):
+    def change_conformation(self,alt_conf):
         # this method is an alias for the setter
         self.pdb_structure = alt_conf
 
