@@ -243,38 +243,76 @@ class AWSEMBase(Frustratometer):
 class AWSEM(AWSEMBase):
 
     def __init__(self, 
-                 pdb_structure: object,
+                 pdb_structure: object | tuple, # tuple is an object, but this clarifies what we expect
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
                  potts: bool=True,
                  alt_sigma_wat: bool=False,
                  **parameters)->object:
-        self.alt_sigma_wat = alt_sigma_wat
         # assume the user wanted the sequence from the pdb structure if not given
         if not sequence:
-            sequence = pdb_structure.sequence
+            try:
+                sequence = pdb_structure.sequence
+            except:
+                if isinstance(pdb_structure,tuple):
+                    raise ValueError("""It seems that you are trying to use 
+                                        the tuple pdb_structure format, which
+                                        specifies a conformation but not a sequence.
+                                        In this case, you must provide the sequence
+                                        as a separate argument to this class.""")
+                else:
+                    raise
         # load structure-independent parameters and methods
         super().__init__(sequence, expose_indicator_functions, potts, **parameters) 
+        self.alt_sigma_wat = alt_sigma_wat
         # set up strucure
         self.setup_structure(pdb_structure)
         self.subclass_setup_helper()
 
     def setup_structure(self, pdb_structure):
-        # check structure
-        selection_CB = pdb_structure.structure.select('name CB or (resname GLY IGL and name CA)')
-        resid = selection_CB.getResindices()
-        N=len(resid)
-        self.resid = resid
-        self.N = N
-        # set structure-dependent properties
-        self._pdb_structure  = pdb_structure
-        self.structure=pdb_structure.structure
-        self.chain=pdb_structure.chain
-        self.pdb_file=pdb_structure.pdb_file
-        self.init_index_shift=pdb_structure.init_index_shift
-        self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
-        self.distance_matrix=pdb_structure.distance_matrix
-        self.full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
+        if not isinstance(pdb_structure, tuple): # alt_conf should our custom Structure object
+                                                 # maybe our type check here should be more restrictive,
+                                                 # but the __init__ only requires pdb_structure to be an object,
+                                                 # so I'll take my cue from that
+            # check structure
+            selection_CB = pdb_structure.structure.select('name CB or (resname GLY IGL and name CA)')
+            resid = selection_CB.getResindices()
+            N=len(resid)
+            self.resid = resid
+            self.N = N
+            # set structure-dependent properties
+            self._pdb_structure = pdb_structure
+            self.structure=pdb_structure.structure
+            self.chain=pdb_structure.chain
+            self.pdb_file=pdb_structure.pdb_file
+            self.init_index_shift=pdb_structure.init_index_shift
+            self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
+            self.distance_matrix=pdb_structure.distance_matrix
+            self.full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
+            self.midpoint_matrix = pdb_structure.midpoint_matrix 
+            #      midpoint matrix is used to map interacting pairs to a single point in space
+        elif isinstance(pdb_structure, tuple): # pdb_structure is defined by a few distance matrices
+            if len(pdb_structure)==3\
+              and isinstance(pdb_structure[0],np.ndarray)\
+              and isinstance(pdb_structure[1],np.ndarray)\
+              and isinstance(pdb_structure[2],np.ndarray) or pdb_structure[2] is None:
+                # pdb_structure is a full_pdb_distance_matrix 
+                # followed by a distance_matrix
+                # followed by a midpoint matrix (or None)
+                self._pdb_structure = None # we're getting our conformer from within python, not a pdb file
+                self.structure = None # we're getting our conformer from within python, not a pdb file
+                self.full_pdb_distance_matrix = pdb_structure[0]
+                self.distance_matrix = pdb_structure[1]
+                self.midpoint_matrix = pdb_structure[2] 
+                #      midpoint matrix is used to map interacting pairs to a single point in space;
+                #      usually not necessary, so it will usually be None
+                #
+                # the rest of the attributes that are set in the case that pdb_structure is a Structure
+                # either remain the same (if this method has been previously called with a Structure)
+                # or go undefined (if we are passing a list of arrays the first time that we are calling 
+                # this method)
+        else:
+            raise AssertionError("unexpected else block")
 
     @property
     def pdb_structure(self):
@@ -288,9 +326,9 @@ class AWSEM(AWSEMBase):
             breakpoint()
             raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
         self.subclass_setup_helper()
-    def change_conformation(alternative_pdb_structure):
-        # this function is an alias for the pdb_structure setter
-        self.pdb_structure = alternative_pdb_structure
+    def change_conformation(alt_conf):
+        # this method is an alias for the setter
+        self.pdb_structure = alt_conf
 
     def calculate_indicators(self):
         # Calculate rho
