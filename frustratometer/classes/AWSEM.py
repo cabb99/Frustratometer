@@ -59,6 +59,7 @@ class AWSEMBase(Frustratometer):
     def __init__(self, 
                  sequence: str,
                  expose_indicator_functions: bool=False,
+                 potts: bool=True,
                  **parameters)->object:
         """
         Generate AWSEM object
@@ -69,12 +70,15 @@ class AWSEMBase(Frustratometer):
             The amino acid sequence
         expose_indicator_functions: bool
             If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
+        potts: bool
+            Whether to set up the potts model (can be RAM-intensive and time-intensive),
+            which is unnecessary if all you want to get is the indicator functions.
         
         Returns
         -------
         AWSEM object
         """
-        
+
         # set sequence based on argument
         self.N = len(sequence)
         self.sequence = sequence
@@ -82,6 +86,9 @@ class AWSEMBase(Frustratometer):
         # set indicator function exposure based on argument
         #     i guess not exposing indicator functions saves memory?
         self.expose_indicator_functions = expose_indicator_functions
+
+        # whether to compute potts model
+        self.potts = potts
 
         # parse other arguments
         p = AWSEMParameters(**parameters)
@@ -131,14 +138,66 @@ class AWSEMBase(Frustratometer):
         self._decoy_fluctuation = {} # don't know what this does
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
 
-    def setup_model(self):
-        # some methods that should be called to complete the initialization of subclass instances
-        # subclasses should (re)define these methods as needed
-        self.calculate_indicators()
-        self.calculate_energy_and_potts()
+    def subclass_setup_helper(self):
+        """
+        This method calls methods to calculate native indicator functions, 
+        masks (based on the native distance matrix), and native energy,
+        then optionally sets up the potts model.
 
+        This method is intended to be called as the last step of __init__
+        in each subclass of AWSEMBase. The subclasses may differ in how
+        they load in the structural information (the part of __init__ 
+        preceding the call to this method) and how they implement
+        the calculate_indicators and calculate_masks methods called 
+        by subclass_setup_helper
+        """
+        self.calculate_masks() # subclasses should (re)define this method as needed
+        self.calculate_indicators() # subclasses should (re)define this method as needed
+        if self.potts:
+            self.calculate_energy_and_potts()
+        else:
+            if 'potts_model' in dir(self) or 'burial_energy' in dir(self)\
+              or 'contact_energy' in dir(self) or '_native_energy' in dir(self):
+                # if one has been defined, they should all have been defined
+                assert 'potts_model' in dir(self), dir(self)
+                assert 'burial_energy' in dir(self), dir(self)
+                assert 'contact_energy' in dir(self), dir(self)
+                assert '_native_energy' in dir(self), dir(self)
+                # potts model and energies will be inaccurate once indicators are modified;
+                # if we don't care about the potts model, then we should delete the old
+                # data so it can't be accidentally misused in the future
+                del self.potts_model
+                del self.burial_energy
+                del self.contact_energy
+                del self._native_energy
+             
     def calculate_indicators(self):
-        raise NotImplementedError("Subclasses must this method")
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def calculate_masks(self):
+        # calculate masks
+        if self.burial_in_context==True:
+            selected_matrix=self.full_pdb_distance_matrix
+        else:
+            selected_matrix=self.distance_matrix
+        self.sequence_mask_rho = frustration.compute_mask(selected_matrix, 
+                                                     maximum_contact_distance=None, 
+                                                     minimum_sequence_separation = self.p.min_sequence_separation_rho)
+        self.sequence_mask_contact = frustration.compute_mask(self.distance_matrix, 
+                                                     maximum_contact_distance=self.p.distance_cutoff_contact, 
+                                                     minimum_sequence_separation = self.p.min_sequence_separation_contact)
+        self.electrostatics_mask = frustration.compute_mask(self.distance_matrix, 
+                                                     maximum_contact_distance=None, 
+                                                     minimum_sequence_separation=self.p.min_sequence_separation_electrostatics)
+        #with open('my_data.txt','w') as f:
+        #    f.write(f"self.distance_cutoff: {self.distance_cutoff}\n")
+        #    f.write(f"self.sequence_cutoff: {self.sequence_cutoff}\n")
+        #np.save('my_distance_matrix.npy',self.distance_matrix)
+        self.mask = frustration.compute_mask(self.distance_matrix, 
+                                             maximum_contact_distance=self.distance_cutoff, 
+                                             minimum_sequence_separation = self.sequence_cutoff)
+        #np.save('my_mask_new.npy',self.mask)
+        self.selected_matrix = selected_matrix # we'll need this in the calculate_indicators function 
 
     def calculate_energy_and_potts(self):
 
@@ -184,58 +243,76 @@ class AWSEMBase(Frustratometer):
 class AWSEM(AWSEMBase):
 
     def __init__(self, 
-                 pdb_structure: object,
+                 pdb_structure: object | tuple, # tuple is an object, but this clarifies what we expect
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
+                 potts: bool=True,
+                 alt_sigma_wat: bool=False,
                  **parameters)->object:
         # assume the user wanted the sequence from the pdb structure if not given
         if not sequence:
-            sequence = pdb_structure.sequence
+            try:
+                sequence = pdb_structure.sequence
+            except:
+                if isinstance(pdb_structure,tuple):
+                    raise ValueError("""It seems that you are trying to use 
+                                        the tuple pdb_structure format, which
+                                        specifies a conformation but not a sequence.
+                                        In this case, you must provide the sequence
+                                        as a separate argument to this class.""")
+                else:
+                    raise
         # load structure-independent parameters and methods
-        super().__init__(sequence, expose_indicator_functions, **parameters) 
+        super().__init__(sequence, expose_indicator_functions, potts, **parameters) 
+        self.alt_sigma_wat = alt_sigma_wat
         # set up strucure
         self.setup_structure(pdb_structure)
-        # calculate masks
-        if self.burial_in_context==True:
-            selected_matrix=self.full_pdb_distance_matrix
-        else:
-            selected_matrix=self.distance_matrix
-        self.sequence_mask_rho = frustration.compute_mask(selected_matrix, 
-                                                     maximum_contact_distance=None, 
-                                                     minimum_sequence_separation = self.p.min_sequence_separation_rho)
-        self.sequence_mask_contact = frustration.compute_mask(self.distance_matrix, 
-                                                     maximum_contact_distance=self.p.distance_cutoff_contact, 
-                                                     minimum_sequence_separation = self.p.min_sequence_separation_contact)
-        self.electrostatics_mask = frustration.compute_mask(self.distance_matrix, 
-                                                     maximum_contact_distance=None, 
-                                                     minimum_sequence_separation=self.p.min_sequence_separation_electrostatics)
-        with open('my_data.txt','w') as f:
-            f.write(f"self.distance_cutoff: {self.distance_cutoff}\n")
-            f.write(f"self.sequence_cutoff: {self.sequence_cutoff}\n")
-        #np.save('my_distance_matrix.npy',self.distance_matrix)
-        self.mask = frustration.compute_mask(self.distance_matrix, 
-                                             maximum_contact_distance=self.distance_cutoff, 
-                                             minimum_sequence_separation = self.sequence_cutoff)
-        #np.save('my_mask_new.npy',self.mask)
-        self.selected_matrix = selected_matrix # we'll need this in the calculate_indicators function 
-        self.setup_model()
+        self.subclass_setup_helper()
 
     def setup_structure(self, pdb_structure):
-        # check structure
-        selection_CB = pdb_structure.structure.select('name CB or (resname GLY IGL and name CA)')
-        resid = selection_CB.getResindices()
-        N=len(resid)
-        self.resid = resid
-        self.N = N
-        # set structure-dependent proterties
-        self._pdb_structure  = pdb_structure
-        self.structure=pdb_structure.structure
-        self.chain=pdb_structure.chain
-        self.pdb_file=pdb_structure.pdb_file
-        self.init_index_shift=pdb_structure.init_index_shift
-        self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
-        self.distance_matrix=pdb_structure.distance_matrix
-        self.full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
+        if not isinstance(pdb_structure, tuple): # alt_conf should our custom Structure object
+                                                 # maybe our type check here should be more restrictive,
+                                                 # but the __init__ only requires pdb_structure to be an object,
+                                                 # so I'll take my cue from that
+            # check structure
+            selection_CB = pdb_structure.structure.select('name CB or (resname GLY IGL and name CA)')
+            resid = selection_CB.getResindices()
+            N=len(resid)
+            self.resid = resid
+            self.N = N
+            # set structure-dependent properties
+            self._pdb_structure = pdb_structure
+            self.structure=pdb_structure.structure
+            self.chain=pdb_structure.chain
+            self.pdb_file=pdb_structure.pdb_file
+            self.init_index_shift=pdb_structure.init_index_shift
+            self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
+            self.distance_matrix=pdb_structure.distance_matrix
+            self.full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
+            self.midpoint_matrix = pdb_structure.midpoint_matrix 
+            #      midpoint matrix is used to map interacting pairs to a single point in space
+        elif isinstance(pdb_structure, tuple): # pdb_structure is defined by a few distance matrices
+            if len(pdb_structure)==3\
+              and isinstance(pdb_structure[0],np.ndarray)\
+              and isinstance(pdb_structure[1],np.ndarray)\
+              and isinstance(pdb_structure[2],np.ndarray) or pdb_structure[2] is None:
+                # pdb_structure is a full_pdb_distance_matrix 
+                # followed by a distance_matrix
+                # followed by a midpoint matrix (or None)
+                self._pdb_structure = None # we're getting our conformer from within python, not a pdb file
+                self.structure = None # we're getting our conformer from within python, not a pdb file
+                self.full_pdb_distance_matrix = pdb_structure[0]
+                self.distance_matrix = pdb_structure[1]
+                self.midpoint_matrix = pdb_structure[2] 
+                #      midpoint matrix is used to map interacting pairs to a single point in space;
+                #      usually not necessary, so it will usually be None
+                #
+                # the rest of the attributes that are set in the case that pdb_structure is a Structure
+                # either remain the same (if this method has been previously called with a Structure)
+                # or go undefined (if we are passing a list of arrays the first time that we are calling 
+                # this method)
+        else:
+            raise AssertionError("unexpected else block")
 
     @property
     def pdb_structure(self):
@@ -246,12 +323,12 @@ class AWSEM(AWSEMBase):
         self.setup_structure(pdb_structure)
         # check that our new structure is compatible with our old one
         if self.N != len(self.sequence):
-            import pdb; pdb.set_trace()
+            breakpoint()
             raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
-        self.calculate_indicators()
-    def change_conformation(alternative_pdb_structure):
-        # this function is an alias for the pdb_structure setter
-        self.pdb_structure = alternative_pdb_structure
+        self.subclass_setup_helper()
+    def change_conformation(self,alt_conf):
+        # this method is an alias for the setter
+        self.pdb_structure = alt_conf
 
     def calculate_indicators(self):
         # Calculate rho
@@ -272,6 +349,8 @@ class AWSEM(AWSEMBase):
         rho1 = np.expand_dims(rho_r, 0)
         rho2 = np.expand_dims(rho_r, 1)
         sigma_water = 0.25 * (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) * (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0)))
+        if self.alt_sigma_wat:
+            sigma_water = -sigma_water + 0.5*( (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) + (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0))))
         sigma_protein = 1 - sigma_water
         #Calculate theta and indicators
         theta = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_min))) * (1 + np.tanh(self.p.eta * (self.p.r_max - self.distance_matrix)))
@@ -305,6 +384,7 @@ class AWSEM(AWSEMBase):
         self.direct_indicator = direct_indicator # probably could get rid of either this or indicators list
         self.water_indicator = water_indicator   # probably could get rid of either this or indicators list
         self.protein_indicator = protein_indicator # probably could get rid of either this or indicators list
+        #breakpoint()
         if self.p.k_electrostatics != 0:
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * self.electrostatics_mask
             self.indicators.append(electrostatics_indicator)
@@ -482,7 +562,10 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
         AWSEMIndicators object
 
         """
-        super().__init__(sequence, expose_indicator_functions, **parameters)
+        # if we already have our indicator functions, 
+        # our goal is probably to compute the potts model,
+        # so we'll just hard code a value of True for that argument  VVVV
+        super().__init__(sequence, expose_indicator_functions, potts=True, **parameters)
         self.burial_indicator = burial_indicator
         self.direct_indicator = direct_indicator
         self.protein_indicator = protein_indicator
@@ -514,7 +597,7 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
         #np.save('protein_indicator_1.npy', protein_indicator)
         #np.save('water_indicator_1.npy', water_indicator)
         #np.save('electrostatics_indicator_1.npy', electrostatics_indicator)
-        self.setup_model()
+        self.subclass_setup_helper()
 
     def calculate_indicators(self):
         pass # the function was initialized with indicators, so there's nothing to do
@@ -544,10 +627,13 @@ class AWSEMVariancePotts(AWSEMBase):
         AWSEMVariancePotts object
 
         """
-        super().__init__(sequence, expose_indicator_functions, **parameters)
+        # if we already have our indicator functions, 
+        # our goal is probably to compute the potts model,
+        # so we'll just hard code a value of True for that argument  VVVV
+        super().__init__(sequence, expose_indicator_functions, potts=True, **parameters)
         self.covariance_matrix = covariance_matrix
         self.num_indicators = 3*self.N + 4*(self.N**2-self.N)/2 # low, med, high burial for each N, 4 classes of pair interactions
-        self.setup_model()
+        self.subclass_setup_helper()
 
     @staticmethod # trying to avoid loading down memory with too many permanent attributes
     def pairwise_mask(l): # l for length

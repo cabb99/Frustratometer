@@ -93,7 +93,10 @@ def get_sequence(pdb_file: str,
             #atom_names = [atom.getName() for atom in residue] # PRODY
             #is_regular_res = ("CA" in atom_names and "O" in atom_names) # PRODY
             res_id = residue.get_id()[0] #BIOPYTHON
-            if (res_id==' ' or res_id=='H_MSE' or res_id=='H_M3L' or res_id=='H_CAS') and is_regular_res: # BIOPYTHON
+            okay_resids = [' ', 'H_MSE', 'H_M3L', 'H_CAS', 'H_ALA', 'H_CYS', 'H_ASP',
+                'H_GLU', 'H_PHE', 'H_GLY', 'H_HIS', 'H_ILE', 'H_LYS', 'H_LEU', 'H_MET',
+                'H_ASN', 'H_PRO', 'H_GLN', 'H_ARG', 'H_SER', 'H_THR', 'H_VAL', 'H_TRP', 'H_TYR']
+            if res_id in okay_resids and is_regular_res: # BIOPYTHON
             # i don't know what H_HSE, H_M3L, and H_CAS are doing 
             # because they aren't in three_to_one, so those should throw an error
             # long story short, I don't think we have to worry about them when switching from biopython to prody
