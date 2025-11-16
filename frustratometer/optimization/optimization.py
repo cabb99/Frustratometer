@@ -1170,10 +1170,7 @@ class AwsemEnergyStd(EnergyTerm):
         phi_len= indicators1D.shape[0]*len_alphabet + indicators2D.shape[0]*len_alphabet**2
         gamma=self.gamma
         rng = np.random.default_rng()
-<<<<<<< HEAD
-        
-=======
->>>>>>> origin/temp_decoy
+
         # Precompute the mean of the indicators
         indicator_means=np.zeros(len(indicators1D)+len(indicators2D))
         c=0
