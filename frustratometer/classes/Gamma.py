@@ -399,7 +399,7 @@ class Gamma:
         return correlations
 
     # Plotting
-    def plot_gamma(self, new_order=None):
+    def plot_gamma(self, new_order=None, scale=[-5,5]):
         import matplotlib.pyplot as plt
         import seaborn as sns
         if new_order:
@@ -410,19 +410,19 @@ class Gamma:
         f, axes = plt.subplots(2, 2, figsize=(18, 16))
         f.subplots_adjust(hspace=50) # fix overlap between axis ticks of upper subplots and titles of lower subplots
         titles = ['Burial Gammas', 'Direct Gammas', 'Protein Gammas', 'Water Gammas']
-
         for i, (title, name) in enumerate(zip(titles, segments)):
             ax = axes[i // 2, i % 2]
-            sns.heatmap(segments[name].reshape(-1, 20), ax=ax, cmap='RdBu_r', center=0)
+            foo = sns.heatmap(segments[name].reshape(-1, 20), ax=ax, cmap='RdBu_r', center=0, vmin=scale[0], vmax=scale[1])
+            foo.collections[0].colorbar.ax.tick_params(labelsize=16)
             ax.set_title(title)
             ax.set_xticks(np.arange(len(self.alphabet)) + 0.5)
-            ax.set_xticklabels(self.alphabet)
+            ax.set_xticklabels(self.alphabet, size=16)
             if i==0: # burial
                 ax.set_yticks([0.5,1.5,2.5])
-                ax.set_yticklabels(['low','medium','high'], rotation=45, size=12)
+                ax.set_yticklabels(['low','medium','high'], rotation=45, size=16)
             else: # direct, prot, or wat
                 ax.set_yticks(np.arange(len(self.alphabet)) + 0.5)
-                ax.set_yticklabels(self.alphabet, rotation=0)
+                ax.set_yticklabels(self.alphabet, rotation=0, fontsize=16)
 
         plt.tight_layout()
         plt.show()
