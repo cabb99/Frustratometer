@@ -305,6 +305,8 @@ class AwsemEnergy(EnergyTerm):
                     energy_J -= model_J[i, j, aa_i, aa_j] * mask[i, j]
             
             total_energy = energy_h + energy_J / 2
+            #with open('energies.txt','a') as f:
+            #    f.write(f"{total_energy}\n")
             return total_energy
 
         def compute_denergy_mutation(seq_index: np.ndarray, pos: int, aa_new: int) -> float:
@@ -1158,7 +1160,7 @@ class AwsemEnergyStd(EnergyTerm):
         self.indicators2D=np.array([ind for ind in self.indicators if len(ind.shape)==2])
         #TODO: Fix the gamma matrix to account for elecrostatics
         self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
-        
+                
         self.initialize_functions()
     
     def initialize_functions(self):
@@ -1168,6 +1170,7 @@ class AwsemEnergyStd(EnergyTerm):
         phi_len= indicators1D.shape[0]*len_alphabet + indicators2D.shape[0]*len_alphabet**2
         gamma=self.gamma
         rng = np.random.default_rng()
+
         # Precompute the mean of the indicators
         indicator_means=np.zeros(len(indicators1D)+len(indicators2D))
         c=0
@@ -1197,7 +1200,7 @@ class AwsemEnergyStd(EnergyTerm):
                     shuffled_index[to_replace] = rng.integers(low=0,high=len_alphabet)
                 for i in numba.prange(n_decoys):
                     energies[i]=awsem_energy(shuffled_index[np.random.permutation(len(shuffled_index))])
-                return np.var(energies)
+                return np.std(energies)
         else:
             def compute_energy(seq_index):
                 counts = np.zeros(len_alphabet, dtype=np.int64)
@@ -1247,6 +1250,9 @@ class AwsemEnergyStd(EnergyTerm):
             seq_index_new = seq_index.copy()
             seq_index_new[pos] = aa
             return compute_energy_numba(seq_index_new) - compute_energy_numba(seq_index)
+
+        def denergy_swap(seq_index, pos1, pos2):
+            return 0
         
         self.compute_energy = compute_energy
         self.compute_denergy_mutation = denergy_mutation
