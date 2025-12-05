@@ -10,7 +10,7 @@ import os
 
 __all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble', 'AWSEMVariancePotts']
 
-class AWSEMParameters(BaseModel):
+class Parameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
     """Default parameters for AWSEM energy calculations."""
     k_contact: float = Field(4.184, description="Coefficient for contact potential. (kJ/mol)")
@@ -91,7 +91,7 @@ class AWSEMBase(Frustratometer):
         self.potts = potts
 
         # parse other arguments
-        p = AWSEMParameters(**parameters)
+        p = Parameters(**parameters)
         if p.min_sequence_separation_contact is None:
             p.min_sequence_separation_contact = 1
         if p.min_sequence_separation_rho is None:
