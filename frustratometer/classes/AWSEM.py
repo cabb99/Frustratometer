@@ -238,7 +238,7 @@ class AWSEMBase(Frustratometer):
         h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
         
         # compute burial and contact energies
-        self.burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :]
+        self.burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :] 
         direct = self.direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
         water_mediated = self.water_indicator * self.water_gamma[J_index[2], J_index[3]]
         protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
@@ -403,7 +403,7 @@ class AWSEM(AWSEMBase):
         self.indicators.append(protein_indicator[:,:,0,0]*self.sequence_mask_contact)
         self.indicators.append(water_indicator[:,:,0,0]*self.sequence_mask_contact)
         self.gamma_array=[]
-        temp_burial_gamma=self.burial_gamma[:]#self.aa_map_awsem_list]
+        temp_burial_gamma=self.burial_gamma[:].copy()#self.aa_map_awsem_list]
         #temp_burial_gamma[0]=0
         temp_burial_gamma *= -0.5 * self.p.k_contact
         self.gamma_array.append(temp_burial_gamma[:,0])
