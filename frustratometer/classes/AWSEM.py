@@ -55,25 +55,11 @@ class Parameters(BaseModel):
     charges: np.array = Field(np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]), description="Charge on each residue type")
     # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
 
+    #charges: np.array = Field(np.array([0, 0, -1, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]), description="Charge on each residue type")
+    #['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
+
 class AWSEMBase(Frustratometer):
 
-    #Mapping to DCA
-    q = 20
-    ref_alphabet = ['A','R','N','D','C','Q','E','G','H','I','L','K','M','F','P','S','T','W','Y','V']
-    # ref_alphabet orders the amino acids alphabetically based on the 3-letter code;
-    #     it was used historically, e.g. Tables 3-6 of "Water in protein structure prediction"
-    #     (https://www.pnas.org/doi/10.1073/pnas.0307851100)
-    aa_map_awsem_list = [0, 0, 4, 3, 6, 13, 7, 8, 9, 11, 10, 12, 2, 14, 5, 1, 15, 16, 19, 17, 18] 
-    # when used to index ref_alphabet, aa_map_awsem_list gives a list of all amino acids alphabetized
-    #     by one-letter code, with an extra A at the beginning
-    new_alphabet = []
-    for aa in aa_map_awsem_list:
-        new_alphabet.append(ref_alphabet[aa])
-    assert new_alphabet == ['A','A','C','D','E','F','G','H','I','K','L',
-                            'M','N','P','Q','R','S','T','V','W','Y'], new_alphabet
-    # we are trying to phase out aa_map_awsem_list
-    aa_map_awsem_x, aa_map_awsem_y = np.meshgrid(aa_map_awsem_list, aa_map_awsem_list, indexing='ij')
-    
     def __init__(self, 
                  sequence: str,
                  expose_indicator_functions: bool=False,
@@ -125,14 +111,45 @@ class AWSEMBase(Frustratometer):
             gamma = self.p.gamma
         elif isinstance(self.p.gamma, Path):
             gamma = Gamma(self.p.gamma)
+            self.p.gamma = gamma
         else:
             raise ValueError("Gamma parameter must be a path or a Gamma object.")
-        #gamma = gamma.reorder(alphabet=)
-        self.gamma=gamma
-        self.burial_gamma = gamma['Burial'].T  # (3,20) -> (20,3)
-        self.direct_gamma = gamma['Direct'][0] # (1,20,20) -> (20,20)
-        self.protein_gamma = gamma['Protein'][0] # (1,20,20) -> (20,20)
-        self.water_gamma = gamma['Water'][0] # (1,20,20) -> (20,20)
+        """
+        # CARLOS: if you really want to reorder, we can do something like this,
+                  but it shouldn't be necessary--we always have access to the
+                  order in self.gamma.alphabet
+        ordered_alphabet = ['A','C','D','E','F','G','H','I','K','L',
+                            'M','N','P','Q','R','S','T','V','W','Y']
+        for aa in ordered_alphabet:
+            assert aa in gamma.alphabet, f'{aa} missing from gamma.alphabet!'
+        if len(gamma.alphabet) == 20: # alphabet is exactly the canonical AAs
+            gamma = gamma.reorder(ordered_alphabet)
+        elif len(gamma.alphabet) > 20: # includes noncanonical AA(s) (or a "gap")
+            ncAA = []
+            for aa in gamma.alphabet:
+                if aa not in ordered_alphabet:
+                    ncAA.append(AA)
+            ordered_alphabet = ncAA + ordered_alphabet # insert at the beginning
+            gamma = gamma.reorder(ordered_alphabet)
+        else:
+            raise ValueError(f"gamma file alphabet {gamma.alphabet} was too short")
+        """
+        #    burial gamma
+        self.q = len(gamma.alphabet) # most likely 20, but could be different
+        gb = gamma['Burial']
+        if gb.shape == (3,self.q):
+            self.burial_gamma = gb.T
+        elif gb.shape == (self.q,3):
+            self.burial_gamma = gb
+        else:
+            raise ValueError(f"""Don't know how to parse burial gamma with shape {gb.shape}.
+            Expected ({self.q},3) or (3,{self.q}).""")
+        #     pairwise gamma: squeeze to remove extra axis that is commonly present
+        self.direct_gamma = np.squeeze(gamma['Direct']) 
+        self.protein_gamma = np.squeeze(gamma['Protein'])
+        self.water_gamma = np.squeeze(gamma['Water'])
+        assert self.direct_gamma.shape == self.protein_gamma.shape == self.water_gamma.shape == (self.q,self.q)
+        self.gamma = self.p.gamma
 
         # set other attributes
         self.burial_in_context = self.p.burial_in_context
@@ -153,9 +170,6 @@ class AWSEMBase(Frustratometer):
                                                                 # it's just like any other parameter, such as sequence_cutoff,
                                                                 # that only matters if we need to compute a mask from a distance matrix
         self.charges2 = charges2 
-        # ??????
-        self._decoy_fluctuation = {} # don't know what this does
-        self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
 
     def subclass_setup_helper(self):
         """
@@ -239,12 +253,14 @@ class AWSEMBase(Frustratometer):
 
         # Compute potts model
         self.potts_model = {}
-        self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
+        self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, :]#self.aa_map_awsem_list]
+        assert self.potts_model['h'].shape == (self.N, self.q), self.potts_model['h'].shape
+        self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, :, :]#self.aa_map_awsem_x, self.aa_map_awsem_y]
+        assert self.potts_model['J'].shape == (self.N, self.N, self.q, self.q), self.potts_model['J'].shape 
         # Set the gap energy to zero
-        self.potts_model['h'][:, 0] = 0
-        self.potts_model['J'][:, :, 0, :] = 0
-        self.potts_model['J'][:, :, :, 0] = 0
+        #self.potts_model['h'][:, 0] = 0
+        #self.potts_model['J'][:, :, 0, :] = 0
+        #self.potts_model['J'][:, :, :, 0] = 0
         self._native_energy=None # don't know what this does
 
 
@@ -289,7 +305,7 @@ class AWSEM(AWSEMBase):
         self.subclass_setup_helper()
 
     def setup_structure(self, pdb_structure):
-        if not isinstance(pdb_structure, tuple): # alt_conf should our custom Structure object
+        if not isinstance(pdb_structure, tuple): # alt_conf should be our custom Structure object
                                                  # maybe our type check here should be more restrictive,
                                                  # but the __init__ only requires pdb_structure to be an object,
                                                  # so I'll take my cue from that
@@ -387,16 +403,16 @@ class AWSEM(AWSEMBase):
         self.indicators.append(protein_indicator[:,:,0,0]*self.sequence_mask_contact)
         self.indicators.append(water_indicator[:,:,0,0]*self.sequence_mask_contact)
         self.gamma_array=[]
-        temp_burial_gamma=self.burial_gamma[self.aa_map_awsem_list]
-        temp_burial_gamma[0]=0
+        temp_burial_gamma=self.burial_gamma[:]#self.aa_map_awsem_list]
+        #temp_burial_gamma[0]=0
         temp_burial_gamma *= -0.5 * self.p.k_contact
         self.gamma_array.append(temp_burial_gamma[:,0])
         self.gamma_array.append(temp_burial_gamma[:,1])
         self.gamma_array.append(temp_burial_gamma[:,2])
         for contact_gamma in [self.direct_gamma, self.protein_gamma, self.water_gamma]:
-            temp_gamma = contact_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y].copy()
-            temp_gamma[0, :] = 0
-            temp_gamma[:, 0] = 0
+            temp_gamma = contact_gamma[:,:].copy()#self.aa_map_awsem_x, self.aa_map_awsem_y].copy()
+            #temp_gamma[0, :] = 0
+            #temp_gamma[:, 0] = 0
             temp_gamma *= -0.5 * self.k_contact
             self.gamma_array.append(temp_gamma)
         self.burial_indicator = burial_indicator # probably could get rid of either this or indicators list
@@ -408,9 +424,9 @@ class AWSEM(AWSEMBase):
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * self.electrostatics_mask
             self.indicators.append(electrostatics_indicator)
             self.electrostatics_indicator = electrostatics_indicator # probably could get rid of either this or indicators list
-            temp_gamma = 0.5 * self.p.k_electrostatics * self.charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
-            temp_gamma[0,:]=0
-            temp_gamma[:,0]=0
+            temp_gamma = 0.5 * self.p.k_electrostatics * self.charges2[:,:]#self.aa_map_awsem_x, self.aa_map_awsem_y]
+            #temp_gamma[0,:]=0
+            #temp_gamma[:,0]=0
             self.gamma_array.append(temp_gamma)
 
     def calculate_energy_and_potts(self):
@@ -427,9 +443,9 @@ class AWSEM(AWSEMBase):
 
     def compute_configurational_decoy_statistics(self, n_decoys=4000,aa_freq=None):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
-        _AA='ARNDCQEGHILKMFPSTWYV'
+        _AA = self.gamma.alphabet #'ARNDCQEGHILKMFPSTWYV'
         if aa_freq is None:
-            seq_index = np.array([_AA.find(aa) for aa in self.sequence])
+            seq_index = np.array([_AA.index(aa) for aa in self.sequence])
             N=self.N
         else:
             N=self.N*10
@@ -485,8 +501,8 @@ class AWSEM(AWSEMBase):
         return mean_decoy_energy, std_decoy_energy
     
     def compute_configurational_energies(self):
-        _AA='ARNDCQEGHILKMFPSTWYV'
-        seq_index = np.array([_AA.find(aa) for aa in self.sequence])
+        _AA= self.gamma.alphabet #'ARNDCQEGHILKMFPSTWYV'
+        seq_index = np.array([_AA.index(aa) for aa in self.sequence])
         distances = np.triu(self.distance_matrix)
         distances = distances[(distances<self.distance_cutoff_contact) & (distances>0)]
         n_contacts=len(distances)
@@ -810,12 +826,12 @@ class AWSEMVariancePotts(AWSEMBase):
 
         # Compute potts model
         self.potts_model = {}
-        self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
+        self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, :]#self.aa_map_awsem_list]
+        self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, :, :]#self.aa_map_awsem_x, self.aa_map_awsem_y]
         # Set the gap energy to zero
-        self.potts_model['h'][:, 0] = 0
-        self.potts_model['J'][:, :, 0, :] = 0
-        self.potts_model['J'][:, :, :, 0] = 0
+        #self.potts_model['h'][:, 0] = 0
+        #self.potts_model['J'][:, :, 0, :] = 0
+        #self.potts_model['J'][:, :, :, 0] = 0
         self._native_energy=None # don't know what this does
 
 class DecoyEnsemble():

@@ -172,7 +172,7 @@ def test_fields_couplings_AWSEM_energy():
     assert model.fields_energy() + model.couplings_energy() - model.native_energy()  < 1E-6
 
 def test_single_residue_AWSEM_energy():
-    _AA = '-ACDEFGHIKLMNPQRSTVWY'
+    _AA = 'ARNDCQEGHILKMFPSTWYV'#'-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer single residue frustration values
     lammps_single_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
     ###
@@ -197,7 +197,7 @@ def test_single_residue_AWSEM_energy():
     assert (abs(np.array(lammps_single_frustration_dataframe["native_energy"])-test_residue_total_energy) < 1E-1).all()
 
 def test_contact_pair_AWSEM_energy():
-    _AA = '-ACDEFGHIKLMNPQRSTVWY'
+    _AA = 'ARNDCQEGHILKMFPSTWYV'#'-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer mutational frustration values
     lammps_mutational_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_mutational_1E6decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
@@ -295,7 +295,7 @@ def test_selected_subsequence_AWSEM_contact_energy_without_protein_context():
     assert np.round(selected_region_contact, 2) == -148.92
 
 def test_single_residue_decoy_AWSEM_energy_statistics():
-    _AA = '-ACDEFGHIKLMNPQRSTVWY'
+    _AA = 'ARNDCQEGHILKMFPSTWYV'#'-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer single residue frustration values
     lammps_single_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
     ###
@@ -324,7 +324,7 @@ def test_single_residue_decoy_AWSEM_energy_statistics():
     assert (abs(np.array(lammps_single_frustration_dataframe["std(decoy_energies)"])-(expected_std_decoy_energy)) < 1.2E-1).all()
 
 def test_contact_pair_decoy_AWSEM_energy_statistics():
-    _AA = '-ACDEFGHIKLMNPQRSTVWY'
+    _AA = 'ARNDCQEGHILKMFPSTWYV'#'-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer mutational frustration values
     lammps_mutational_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_mutational_1E6decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
@@ -372,7 +372,7 @@ def structure():
 @pytest.mark.parametrize("distance_cutoff_contact", [None, 10])
 def test_expose_indicators(structure, k_electrostatics, min_sequence_separation_contact, distance_cutoff_contact):
     """ Check that the AWSEM indicators exposed can reproduce the native energy, where E_native = -sum_{i} h_i - sum_{i,j} J_ij = sum_{i} gamma_i * I_i """
-    _AA = '-ACDEFGHIKLMNPQRSTVWY'
+    _AA = 'ARNDCQEGHILKMFPSTWYV'#'-ACDEFGHIKLMNPQRSTVWY'
     model=frustratometer.AWSEM(structure,k_electrostatics=k_electrostatics, min_sequence_separation_contact = min_sequence_separation_contact, distance_cutoff_contact = distance_cutoff_contact, expose_indicator_functions=True)
     model_seq_index=np.array([_AA.find(aa) for aa in model.sequence])
     indicators1D=np.array(model.indicators[0:3])

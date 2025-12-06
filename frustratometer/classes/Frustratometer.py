@@ -61,9 +61,9 @@ class Frustratometer:
         if sequence is None:
             sequence=self.sequence
         else:
-            return frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
+            return frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps,self.gamma.alphabet)
         if not self._native_energy:
-            self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
+            self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps,self.gamma.alphabet)
         energy_value=self._native_energy
         return energy_value
 
@@ -89,7 +89,7 @@ class Frustratometer:
         output (if split_couplings_and_fields==True): np.array
             Array containing computed fields and couplings energies of the protein sequences. 
         """
-        output=frustration.compute_sequences_energy(sequences, self.potts_model, self.mask, split_couplings_and_fields)
+        output=frustration.compute_sequences_energy(sequences, self.potts_model, self.mask, split_couplings_and_fields,self.gamma.alphabet)
         return output
 
     def fields_energy(self, sequence:str = None, ignore_fields_of_gaps:bool = False) -> float:
@@ -114,7 +114,7 @@ class Frustratometer:
         """
         if sequence is None:
             sequence=self.sequence
-        fields_energy=frustration.compute_fields_energy(sequence, self.potts_model,ignore_fields_of_gaps)
+        fields_energy=frustration.compute_fields_energy(sequence, self.potts_model,ignore_fields_of_gaps,self.gamma.alphabet)
         return fields_energy
 
     def couplings_energy(self, sequence:str = None,ignore_couplings_of_gaps:bool = False) -> float:
@@ -139,7 +139,7 @@ class Frustratometer:
         """
         if sequence is None:
             sequence=self.sequence
-        couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps)
+        couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,self.gamma.alphabet)
         return couplings_energy
         
     def decoy_fluctuation(self, sequence:str = None,kind:str = 'singleresidue',mask:np.array = None) -> np.array:
@@ -167,13 +167,13 @@ class Frustratometer:
         if not isinstance(mask, np.ndarray):
             mask=self.mask
         if kind == 'singleresidue':
-            fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation(sequence, self.potts_model, mask,self.gamma.alphabet)
         elif kind == 'mutational':
-            fluctuation = frustration.compute_mutational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            fluctuation = frustration.compute_mutational_decoy_energy_fluctuation(sequence, self.potts_model, mask,self.gamma.alphabet)
         elif kind == 'configurational':
-            fluctuation = frustration.compute_configurational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            fluctuation = frustration.compute_configurational_decoy_energy_fluctuation(sequence, self.potts_model, mask,self.gamma.alphabet)
         elif kind == 'contact':
-            fluctuation = frustration.compute_contact_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            fluctuation = frustration.compute_contact_decoy_energy_fluctuation(sequence, self.potts_model, mask,self.gamma.alphabet)
         else:
             raise Exception("Wrong kind of decoy generation selected")
         self._decoy_fluctuation[kind] = fluctuation
@@ -268,7 +268,7 @@ class Frustratometer:
         native_energy = self.native_energy(sequence=sequence)
         decoy_energy = self.decoy_energy(kind=kind,sequence=sequence)
         if kind == 'singleresidue':
-            g = frustration.plot_singleresidue_decoy_energy(decoy_energy, native_energy, method)
+            g = frustration.plot_singleresidue_decoy_energy(decoy_energy, native_energy, method,self.gamma.alphabet)
             return g
 
     def roc(self):
