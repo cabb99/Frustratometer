@@ -13,7 +13,13 @@ __all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble', 'AWSEMVariancePotts']
 class Parameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
     """Default parameters for AWSEM energy calculations."""
-    k_contact: float = Field(4.184, description="Coefficient for contact potential. (kJ/mol)")
+    k_contact: float = Field(4.184, description="""
+        Scale factor for contact potential.
+        Many parameters used to be given in kcal/mol,
+        but we want our results in kJ/mol, so this is
+        set to the appropriate conversion factor by default.
+        Note that the electrostatic parameter is not scaled
+        by k_contact.""")
     
     #Density
     eta: float = Field(5.0, description="Sharpness of the distance-based switching function (Angstrom^-1).")
@@ -53,7 +59,19 @@ class AWSEMBase(Frustratometer):
 
     #Mapping to DCA
     q = 20
-    aa_map_awsem_list = [0, 0, 4, 3, 6, 13, 7, 8, 9, 11, 10, 12, 2, 14, 5, 1, 15, 16, 19, 17, 18] #A gap has no energy
+    ref_alphabet = ['A','R','N','D','C','Q','E','G','H','I','L','K','M','F','P','S','T','W','Y','V']
+    # ref_alphabet orders the amino acids alphabetically based on the 3-letter code;
+    #     it was used historically, e.g. Tables 3-6 of "Water in protein structure prediction"
+    #     (https://www.pnas.org/doi/10.1073/pnas.0307851100)
+    aa_map_awsem_list = [0, 0, 4, 3, 6, 13, 7, 8, 9, 11, 10, 12, 2, 14, 5, 1, 15, 16, 19, 17, 18] 
+    # when used to index ref_alphabet, aa_map_awsem_list gives a list of all amino acids alphabetized
+    #     by one-letter code, with an extra A at the beginning
+    new_alphabet = []
+    for aa in aa_map_awsem_list:
+        new_alphabet.append(ref_alphabet[aa])
+    assert new_alphabet == ['A','A','C','D','E','F','G','H','I','K','L',
+                            'M','N','P','Q','R','S','T','V','W','Y'], new_alphabet
+    # we are trying to phase out aa_map_awsem_list
     aa_map_awsem_x, aa_map_awsem_y = np.meshgrid(aa_map_awsem_list, aa_map_awsem_list, indexing='ij')
     
     def __init__(self, 
@@ -109,11 +127,12 @@ class AWSEMBase(Frustratometer):
             gamma = Gamma(self.p.gamma)
         else:
             raise ValueError("Gamma parameter must be a path or a Gamma object.")
+        #gamma = gamma.reorder(alphabet=)
         self.gamma=gamma
-        self.burial_gamma = gamma['Burial'].T
-        self.direct_gamma = gamma['Direct'][0]
-        self.protein_gamma = gamma['Protein'][0]
-        self.water_gamma = gamma['Water'][0]
+        self.burial_gamma = gamma['Burial'].T  # (3,20) -> (20,3)
+        self.direct_gamma = gamma['Direct'][0] # (1,20,20) -> (20,20)
+        self.protein_gamma = gamma['Protein'][0] # (1,20,20) -> (20,20)
+        self.water_gamma = gamma['Water'][0] # (1,20,20) -> (20,20)
 
         # set other attributes
         self.burial_in_context = self.p.burial_in_context
