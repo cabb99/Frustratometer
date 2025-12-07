@@ -4,8 +4,6 @@ import numpy as np
 from typing import Union
 from pathlib import Path
 
-_AA = '-ACDEFGHIKLMNPQRSTVWY'
-
 def compute_mask(distance_matrix: np.array,
                  maximum_contact_distance: Union[float, None] = None,
                  minimum_sequence_separation: Union[int, None] = None) -> np.array:
@@ -58,9 +56,9 @@ def compute_mask(distance_matrix: np.array,
 def compute_native_energy(seq: str,
                           potts_model: dict,
                           mask: np.array,
+                          AA : str,
                           ignore_gap_couplings: bool = False,
-                          ignore_gap_fields: bool = False,
-                          AA : str = _AA) -> float:
+                          ignore_gap_fields: bool = False) -> float:
     
     """
     Computes the native energy of a protein sequence based on a given Potts model and an interaction mask.
@@ -134,8 +132,8 @@ def compute_native_energy(seq: str,
 
 def compute_fields_energy(seq: str,
                           potts_model: dict,
-                          ignore_fields_of_gaps: bool = False,
-                          AA : str = _AA) -> float:
+                          AA : str,
+                          ignore_fields_of_gaps: bool = False) -> float:
     """
     Computes the fields energy of a protein sequence based on a given Potts model.
     
@@ -182,8 +180,8 @@ def compute_fields_energy(seq: str,
 def compute_couplings_energy(seq: str,
                       potts_model: dict,
                       mask: np.array,
-                      ignore_couplings_of_gaps: bool = False,
-                      AA : str = _AA) -> float:
+                      AA : str,
+                      ignore_couplings_of_gaps: bool = False) -> float:
     """
     Computes the couplings energy of a protein sequence based on a given Potts model and an interaction mask.
     
@@ -244,8 +242,8 @@ def compute_couplings_energy(seq: str,
 def compute_sequences_energy(seqs: list,
                              potts_model: dict,
                              mask: np.array,
-                             split_couplings_and_fields = False,
-                             AA : str = _AA) -> np.array:
+                             AA : str,
+                             split_couplings_and_fields = False) -> np.array:
     """
     Computes the energy of multiple protein sequences based on a given Potts model and an interaction mask.
     
@@ -317,7 +315,7 @@ def compute_sequences_energy(seqs: list,
 def compute_singleresidue_decoy_energy_fluctuation(seq: str,
                                                    potts_model: dict,
                                                    mask: np.array,
-                                                   AA : str = _AA) -> np.array:
+                                                   AA : str) -> np.array:
 
     """
     Computes a (Lx21) matrix for a sequence of length L. Row i contains all possible changes in energy upon mutating residue i.
@@ -384,7 +382,7 @@ def compute_singleresidue_decoy_energy_fluctuation(seq: str,
 def compute_mutational_decoy_energy_fluctuation(seq: str,
                                                 potts_model: dict,
                                                 mask: np.array, 
-                                                AA : str = _AA) -> np.array:
+                                                AA : str) -> np.array:
     """
     Computes a (LxLxqxq) matrix for a sequence of length L and AA of length q.
     Matrix[i,j] describes all possible changes in energy upon mutating residue i and j simultaneously.
@@ -465,7 +463,7 @@ def compute_mutational_decoy_energy_fluctuation(seq: str,
 def compute_configurational_decoy_energy_fluctuation(seq: str,
                                                      potts_model: dict,
                                                      mask: np.array, 
-                                                     AA : str = _AA) -> np.array:
+                                                     AA : str) -> np.array:
     """
     Computes a (LxLx21x21) matrix for a sequence of length L. Matrix[i,j] describes all possible changes in energy upon mutating and altering the 
     local densities of residue i and j simultaneously.
@@ -546,7 +544,7 @@ def compute_configurational_decoy_energy_fluctuation(seq: str,
 def compute_contact_decoy_energy_fluctuation(seq: str,
                                              potts_model: dict,
                                              mask: np.array,
-                                             AA : str = _AA) -> np.array:
+                                             AA : str) -> np.array:
     r"""
     $$ \Delta DCA_{ij} = \Delta j_{ij} $$
     :param seq:
@@ -569,7 +567,7 @@ def compute_contact_decoy_energy_fluctuation(seq: str,
     return decoy_energy
 
 
-def compute_decoy_energy(seq: str, potts_model: dict, mask: np.array, kind='singleresidue') -> np.array:
+def compute_decoy_energy(seq: str, potts_model: dict, mask: np.array, AA : str, kind='singleresidue') -> np.array:
     """
     Computes all possible decoy energies.
     
@@ -610,18 +608,18 @@ def compute_decoy_energy(seq: str, potts_model: dict, mask: np.array, kind='sing
     .. todo:: Optimize the computation.
     """
 
-    native_energy = compute_native_energy(seq, potts_model, mask)
+    native_energy = compute_native_energy(seq, potts_model, mask, AA)
     if kind == 'singleresidue':
-        decoy_energy=native_energy + compute_singleresidue_decoy_energy_fluctuation(seq, potts_model, mask)
+        decoy_energy=native_energy + compute_singleresidue_decoy_energy_fluctuation(seq, potts_model, mask, AA)
     elif kind == 'mutational':
-        decoy_energy=native_energy + compute_mutational_decoy_energy_fluctuation(seq, potts_model, mask)
+        decoy_energy=native_energy + compute_mutational_decoy_energy_fluctuation(seq, potts_model, mask, AA)
     elif kind == 'configurational':
-        decoy_energy=native_energy + compute_configurational_decoy_energy_fluctuation(seq, potts_model, mask)
+        decoy_energy=native_energy + compute_configurational_decoy_energy_fluctuation(seq, potts_model, mask, AA)
     elif kind == 'contact':
-        decoy_energy=native_energy + compute_contact_decoy_energy_fluctuation(seq, potts_model, mask)
+        decoy_energy=native_energy + compute_contact_decoy_energy_fluctuation(seq, potts_model, mask, AA)
     return decoy_energy
 
-def compute_aa_freq(seq, include_gaps=True, AA = _AA):
+def compute_aa_freq(seq, AA, include_gaps=True,):
     """
     Calculates amino acid frequencies in given sequence
 
@@ -629,6 +627,8 @@ def compute_aa_freq(seq, include_gaps=True, AA = _AA):
     ----------
     seq :  str
         The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'.
+    AA : str
+        The alphabet of allowed residues
     include_gaps: bool
         If True, frequencies of gaps ('-') in the sequence are set to 0.
         Default is True.
@@ -647,7 +647,7 @@ def compute_aa_freq(seq, include_gaps=True, AA = _AA):
     return aa_freq
 
 
-def compute_contact_freq(seq, AA = _AA):
+def compute_contact_freq(seq, AA):
     """
     Calculates contact frequencies in given sequence
 
@@ -655,7 +655,9 @@ def compute_contact_freq(seq, AA = _AA):
     ----------
     seq :  str
         The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'.
-        
+    AA : str
+        The alphabet of allowed residues
+
     Returns
     -------
     contact_freq: np.array
@@ -838,7 +840,7 @@ def plot_roc(roc_score):
     plt.plot([0, 1], [0, 1], '--')
 
 
-def plot_singleresidue_decoy_energy(decoy_energy, native_energy, method='clustermap', AA = _AA):
+def plot_singleresidue_decoy_energy(decoy_energy, native_energy, AA, method='clustermap'):
     """
     Plot comparison of single residue decoy energies, relative to the native energy
 

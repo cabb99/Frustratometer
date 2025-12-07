@@ -153,8 +153,8 @@ class AWSEMBase(Frustratometer):
 
         # set other attributes
         self.burial_in_context = self.p.burial_in_context
-        self.aa_freq = frustration.compute_aa_freq(self.sequence, AA=self.gamma.alphabet)
-        self.contact_freq = frustration.compute_contact_freq(self.sequence, AA=self.gamma.alphabet)
+        self.aa_freq = frustration.compute_aa_freq(self.sequence, self.gamma.alphabet)
+        self.contact_freq = frustration.compute_contact_freq(self.sequence, self.gamma.alphabet)
         charges2 = self.p.charges[:,np.newaxis] * self.p.charges[np.newaxis,:]
         if self.p.k_electrostatics != 0:
             self.sequence_cutoff=min(self.p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
@@ -172,6 +172,13 @@ class AWSEMBase(Frustratometer):
         self.charges2 = charges2 
         self._decoy_fluctuation = {} # used for mutational calculation, possibly others
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
+
+    @property
+    def alphabet(self):
+        return self.gamma.alphabet # this allows us to access the alphabet in the same way as for DCA instances
+    @alphabet.setter
+    def alphabet(self):
+        raise AttributeError("Changing the underlying alphabet is prohibited. Instead, create a new AWSEM instance from a different Gamma.")
 
     # carlos wanted to have gamma_array with gammas multiplied by lambda and coefficients
     @property

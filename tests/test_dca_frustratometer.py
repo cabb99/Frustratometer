@@ -225,7 +225,7 @@ def test_functional_compute_DCA_native_energy():
     distance_matrix = frustratometer.pdb.get_distance_matrix(pdb_path, chain_id, method='minimum')
     potts_model = frustratometer.dca.matlab.load_potts_model(potts_model_path)
     mask = frustratometer.frustration.compute_mask(distance_matrix, maximum_contact_distance=4, minimum_sequence_separation=0)
-    energy = frustratometer.frustration.compute_native_energy(sequence, potts_model, mask)
+    energy = frustratometer.frustration.compute_native_energy(sequence, potts_model, mask, '-ACDEFGHIKLMNPQRSTVWY')
 
     assert np.round(energy, 4) == expected_energy
 
@@ -406,8 +406,8 @@ def test_compute_singleresidue_DCA_decoy_energy():
     seq = [aa for aa in seq]
     seq[pos_x] = AA[aa_x]
     seq = ''.join(seq)
-    test_energy = frustratometer.frustration.compute_native_energy(seq, potts_model, mask)
-    decoy_energy = frustratometer.frustration.compute_decoy_energy(seq, potts_model, mask, 'singleresidue')
+    test_energy = frustratometer.frustration.compute_native_energy(seq, potts_model, mask, AA)
+    decoy_energy = frustratometer.frustration.compute_decoy_energy(seq, potts_model, mask, '-ACDEFGHIKLMNPQRSTVWY', 'singleresidue')
     assert (decoy_energy[pos_x, aa_x] - test_energy) ** 2 < 1E-16
 
 
@@ -427,8 +427,8 @@ def test_compute_mutational_DCA_decoy_energy():
     seq[pos_x] = AA[aa_x]
     seq[pos_y] = AA[aa_y]
     seq = ''.join(seq)
-    test_energy = frustratometer.frustration.compute_native_energy(seq, potts_model, mask)
-    decoy_energy = frustratometer.frustration.compute_decoy_energy(seq, potts_model, mask, 'mutational')
+    test_energy = frustratometer.frustration.compute_native_energy(seq, potts_model, mask, AA)
+    decoy_energy = frustratometer.frustration.compute_decoy_energy(seq, potts_model, mask, '-ACDEFGHIKLMNPQRSTVWY', 'mutational')
     assert (decoy_energy[pos_x, pos_y, aa_x, aa_y] - test_energy) ** 2 < 1E-16
 
 

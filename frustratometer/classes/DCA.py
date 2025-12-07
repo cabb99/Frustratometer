@@ -78,6 +78,8 @@ class DCA(Frustratometer):
     #     self._decoy_fluctuation = {}
     #     return self
 
+    alphabet = '-ACDEFGHIKLMNPQRSTVWY'
+
     @classmethod
     def from_potts_model_file(cls,pdb_structure: object,
                               potts_model_file: Union[Path,str] = None,
@@ -146,8 +148,8 @@ class DCA(Frustratometer):
             self.potts_model["J"]= self.potts_model["familycouplings"].reshape(int(len(self.filtered_aligned_sequence)),21,int(len(self.filtered_aligned_sequence)),21).transpose(0,2,1,3)
 
         if self.filtered_aligned_sequence is not None:
-            self.aa_freq = frustration.compute_aa_freq(self.sequence)
-            self.contact_freq = frustration.compute_contact_freq(self.sequence)
+            self.aa_freq = frustration.compute_aa_freq(self.sequence, self.alphabet)
+            self.contact_freq = frustration.compute_contact_freq(self.sequence, self.alphabet)
         else:
             self.aa_freq = None
             self.contact_freq = None   
@@ -222,8 +224,8 @@ class DCA(Frustratometer):
             self.potts_model["J"]= self.potts_model["familycouplings"].reshape(int(len(self.filtered_aligned_sequence)),21,int(len(self.filtered_aligned_sequence)),21).transpose(0,2,1,3)
 
         if self.filtered_aligned_sequence is not None:
-            self.aa_freq = frustration.compute_aa_freq(self.sequence)
-            self.contact_freq = frustration.compute_contact_freq(self.sequence)
+            self.aa_freq = frustration.compute_aa_freq(self.sequence, self.alphabet)
+            self.contact_freq = frustration.compute_contact_freq(self.sequence, self.alphabet)
         else:
             self.aa_freq = None
             self.contact_freq = None   
