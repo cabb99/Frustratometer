@@ -173,6 +173,27 @@ class AWSEMBase(Frustratometer):
         self._decoy_fluctuation = {} # used for mutational calculation, possibly others
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
 
+    # carlos wanted to have gamma_array with gammas multiplied by lambda and coefficients
+    @property
+    def coefficient_lambda_gamma_array(self):
+        _coefficient_lambda_gamma_array = []
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.burial_gamma[:,0])
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.burial_gamma[:,1])
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.burial_gamma[:,2])
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.direct_gamma)
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.protein_gamma)
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.water_gamma)
+        _coefficient_lambda_gamma_array.append(0.5 * self.p.k_electrostatics * self.charges2)
+        #  not a typo, supposed to be positive ^^^
+        # charges2 is our electrostatic "gamma"
+        return _coefficient_lambda_gamma_array
+    @coefficient_lambda_gamma_array.setter
+    def coefficient_lambda_gamma_array(self):
+        raise AttributeError("""Setting AWSEM.coefficient_lambda_gamma_array 
+                                directly is not allowed. Modify AWSEM.k_contact, 
+                                AWSEM.burial_gamma, AWSEM.direct_gamma, 
+                                AWSEM.protein_gamma, or AWSEM.water_gamma instead.""")
+
     def subclass_setup_helper(self):
         """
         This method calls methods to calculate native indicator functions, 
@@ -404,32 +425,15 @@ class AWSEM(AWSEMBase):
         self.indicators.append(direct_indicator[:,:,0,0]*self.sequence_mask_contact)
         self.indicators.append(protein_indicator[:,:,0,0]*self.sequence_mask_contact)
         self.indicators.append(water_indicator[:,:,0,0]*self.sequence_mask_contact)
-        self.gamma_array=[]
-        temp_burial_gamma=self.burial_gamma[:].copy()#self.aa_map_awsem_list]
-        #temp_burial_gamma[0]=0
-        temp_burial_gamma *= -0.5 * self.p.k_contact
-        self.gamma_array.append(temp_burial_gamma[:,0])
-        self.gamma_array.append(temp_burial_gamma[:,1])
-        self.gamma_array.append(temp_burial_gamma[:,2])
-        for contact_gamma in [self.direct_gamma, self.protein_gamma, self.water_gamma]:
-            temp_gamma = contact_gamma[:,:].copy()#self.aa_map_awsem_x, self.aa_map_awsem_y].copy()
-            #temp_gamma[0, :] = 0
-            #temp_gamma[:, 0] = 0
-            temp_gamma *= -0.5 * self.k_contact
-            self.gamma_array.append(temp_gamma)
-        self.burial_indicator = burial_indicator # probably could get rid of either this or indicators list
-        self.direct_indicator = direct_indicator # probably could get rid of either this or indicators list
-        self.water_indicator = water_indicator   # probably could get rid of either this or indicators list
-        self.protein_indicator = protein_indicator # probably could get rid of either this or indicators list
+        self.burial_indicator = burial_indicator 
+        self.direct_indicator = direct_indicator 
+        self.water_indicator = water_indicator   
+        self.protein_indicator = protein_indicator
         #breakpoint()
         if self.p.k_electrostatics != 0:
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * self.electrostatics_mask
             self.indicators.append(electrostatics_indicator)
             self.electrostatics_indicator = electrostatics_indicator # probably could get rid of either this or indicators list
-            temp_gamma = 0.5 * self.p.k_electrostatics * self.charges2[:,:]#self.aa_map_awsem_x, self.aa_map_awsem_y]
-            #temp_gamma[0,:]=0
-            #temp_gamma[:,0]=0
-            self.gamma_array.append(temp_gamma)
 
     def calculate_energy_and_potts(self):
         super().calculate_energy_and_potts()
