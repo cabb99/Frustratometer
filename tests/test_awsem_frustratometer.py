@@ -376,17 +376,21 @@ def structure():
 def test_expose_indicators(structure, k_electrostatics, min_sequence_separation_contact, distance_cutoff_contact):
     """ Check that the AWSEM indicators exposed can reproduce the native energy, where E_native = -sum_{i} h_i - sum_{i,j} J_ij = sum_{i} gamma_i * I_i """
     _AA = 'ARNDCQEGHILKMFPSTWYV'#'-ACDEFGHIKLMNPQRSTVWY'
+    q = len(_AA)
     model=frustratometer.AWSEM(structure,k_electrostatics=k_electrostatics, min_sequence_separation_contact = min_sequence_separation_contact, distance_cutoff_contact = distance_cutoff_contact, expose_indicator_functions=True)
     model_seq_index=np.array([_AA.find(aa) for aa in model.sequence])
     indicators1D=np.array(model.indicators[0:3])
     indicators2D=np.array(model.indicators[3:])
-    true_indicator1D=np.array([indicators1D[:,model_seq_index==i].sum(axis=1) for i in range(21)]).T
-    true_indicator2D=np.array([indicators2D[:,model_seq_index==i][:,:, model_seq_index==j].sum(axis=(1,2)) for i in range(21) for j in range(21)]).reshape(21,21,-1).T
-    burial_gamma=np.concatenate(model.gamma_array[:3])
+    true_indicator1D=np.array([indicators1D[:,model_seq_index==i].sum(axis=1) for i in range(q)]).T
+    true_indicator2D=np.array([indicators2D[:,model_seq_index==i][:,:, model_seq_index==j].sum(axis=(1,2)) for i in range(q) for j in range(q)]).reshape(q,q,-1).T
+    burial_gamma=np.concatenate(model.coefficient_lambda_gamma_array[:3])
     burial_energy_predicted = (burial_gamma * np.concatenate(true_indicator1D)).sum()
     burial_energy_expected = -model.potts_model['h'][range(len(model_seq_index)), model_seq_index].sum()
     assert np.isclose(burial_energy_predicted,burial_energy_expected), f"Expected energy {burial_energy_expected} but got {burial_energy_predicted}"
-    contact_gamma=np.concatenate([a.ravel() for a in model.gamma_array[3:]])
+    contact_gamma=np.concatenate([a.ravel() for a in model.coefficient_lambda_gamma_array[3:]])
+    #assert indicators2D.shape == "foo", indicators2D.shape
+    #assert true_indicators2D.shape == "foo", true_indicators2D.shape
+    #assert contact_gamma.shape == "foo", contact_gamma.shape
     contact_energy_predicted = (contact_gamma * np.concatenate([a.ravel() for a in true_indicator2D])).sum()
     contact_energy_expected = model.couplings_energy()
     assert np.isclose(contact_energy_predicted,contact_energy_expected), f"Expected energy {contact_energy_expected} but got {contact_energy_predicted}"

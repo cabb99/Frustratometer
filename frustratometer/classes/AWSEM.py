@@ -430,10 +430,10 @@ class AWSEM(AWSEMBase):
         self.water_indicator = water_indicator   
         self.protein_indicator = protein_indicator
         #breakpoint()
-        if self.p.k_electrostatics != 0:
+        if True:#self.p.k_electrostatics != 0:
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * self.electrostatics_mask
             self.indicators.append(electrostatics_indicator)
-            self.electrostatics_indicator = electrostatics_indicator # probably could get rid of either this or indicators list
+            self.electrostatics_indicator = electrostatics_indicator 
 
     def calculate_energy_and_potts(self):
         super().calculate_energy_and_potts()
