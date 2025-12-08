@@ -162,13 +162,13 @@ class AWSEMBase(Frustratometer):
                                       # but it doesn't hurt to define the distance_cutoff attribute--
                                       # it's just like any other parameter, such as sequence_cutoff,
                                       # that only matters if we need to compute a mask from a distance matrix 
-            self.electrostatics_gamma = -self.p.k_electrostatics * charges2[np.newaxis, np.newaxis, :, :]
         else:
             self.sequence_cutoff=self.p.min_sequence_separation_contact
             self.distance_cutoff=self.p.distance_cutoff_contact # the distance matrix isn't guaranteed to exist in all subclasses,
                                                                 # but it doesn't hurt to define the distance_cutoff attribute--
                                                                 # it's just like any other parameter, such as sequence_cutoff,
                                                                 # that only matters if we need to compute a mask from a distance matrix
+        self.electrostatics_gamma = -self.p.k_electrostatics * charges2[np.newaxis, np.newaxis, :, :]
         self.charges2 = charges2 
         self._decoy_fluctuation = {} # used for mutational calculation, possibly others
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
@@ -274,10 +274,9 @@ class AWSEMBase(Frustratometer):
         protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
         contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * self.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
         
-        # Compute electrostatics and add to contact energy
-        if self.p.k_electrostatics!=0:
-            electrostatics_energy = self.electrostatics_gamma * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]
-            contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
+        electrostatics_energy = self.electrostatics_gamma * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+            * self.electrostatics_mask[:,:,np.newaxis,np.newaxis]
+        contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
 
         self.contact_energy = contact_energy
 
@@ -429,7 +428,7 @@ class AWSEM(AWSEMBase):
             self.direct_indicator = direct_indicator 
             self.water_indicator = water_indicator   
             self.protein_indicator = protein_indicator
-            electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length)*self.electrostatics_mask
+            electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length)
             self.electrostatics_indicator = electrostatics_indicator 
         else:
             print("""self.expose_indicator_functions was False; will not calculate and store indicator functions.
