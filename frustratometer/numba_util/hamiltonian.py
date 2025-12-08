@@ -318,13 +318,8 @@ def compute_rho_i(i, min_seq_sep_rho, chain_starts, chain_ends, dist_mat):
             # only let the residue contribute if it isn't caught by the mask
             rho_i += compute_thetaI(dist_mat[i,j])   
     return rho_i
-compute_rho_i_parallel = njit(parallel=True)(compute_rho_i)
-compute_rho_i_parallel.compile(signature)
-compute_rho_i = njit()(compute_rho_i)
-compute_rho_i.compile(signature)
-#compute_rho_i_parallel = njit(compute_rho_i,
-#     signature_or_function=signature, parallel=True)
-#compute_rho_i = njit(compute_rho_i, signature_or_function=signature)
+compute_rho_i_parallel = njit(signature_or_function=signature, parallel=True)(compute_rho_i)
+compute_rho_i = njit(signature_or_function=signature)(compute_rho_i)
 #
 @njit(signature_or_function=float64[:](float64))
 def compute_burial_indicator_i(rho_i):
@@ -901,12 +896,8 @@ def compute_burial_potential_total(min_seq_sep_rho,
         energy = compute_burial_potential_i(i, min_seq_sep_rho, chain_starts, chain_ends, dist_mat, lambda_burial, burial_gamma, seq_index)
         total_burial_energy += energy 
     return total_burial_energy
-compute_burial_potential_total_parallel = njit(parallel=True)(compute_burial_potential_total).compile(signature)
-compute_burial_potential_total = njit()(compute_burial_potential_total).compile(signature)
-#compute_burial_potential_total_parallel = njit(compute_burial_potential_total, 
-#    signature_or_function=signature, parallel=True)
-#compute_burial_potential_total = njit(compute_burial_potential_total,
-#    signature_or_function=signature)
+compute_burial_potential_total_parallel = njit(signature_or_function=signature, parallel=True)(compute_burial_potential_total)
+compute_burial_potential_total = njit(signature_or_function=signature)(compute_burial_potential_total)
 #
 signature = float64(int64,
                     int64[:], int64[:],
@@ -947,12 +938,8 @@ def compute_direct_potential_total(min_seq_sep_contact,
             energy = compute_direct_potential_ij(i, j, dist_mat, lambda_direct, direct_gamma, seq_index)
             total_direct_energy += energy
     return total_direct_energy
-compute_direct_potential_total_parallel = njit(parallel=True)(compute_direct_potential_total).compile(signature)
-compute_direct_potential_total = njit()(compute_direct_potential_total).compile(signature)
-#compute_direct_potential_total_parallel = njit(compute_direct_potential_total, 
-#    signature_or_function=signature, parallel=True)
-#compute_direct_potential_total = njit(compute_direct_potential_total,
-#    signature_or_function=signature)
+compute_direct_potential_total_parallel = njit(signature_or_function=signature, parallel=True)(compute_direct_potential_total)
+compute_direct_potential_total = njit(signature_or_function=signature)(compute_direct_potential_total)
 #
 signature = numba.types.UniTuple(float64,2)(int64, int64,
                     int64[:], int64[:],
@@ -1013,12 +1000,8 @@ def compute_long_potentials_total(min_seq_sep_rho, min_seq_sep_contact,
             total_protein_energy += protein_energy
             total_water_energy += water_energy
     return total_protein_energy, total_water_energy
-compute_long_potentials_total_parallel = njit(parallel=True)(compute_long_potentials_total).compile(signature)
-compute_long_potential_total = njit()(compute_long_potentials_total).compile(signature)
-#compute_long_potentials_total_parallel = njit(compute_long_potentials_total, 
-#    signature_or_function=signature, parallel=True)
-#compute_long_potentials_total = njit(compute_long_potentials_total,
-#    signature_or_function=signature)
+compute_long_potentials_total_parallel = njit(signature_or_function=signature, parallel=True)(compute_long_potentials_total)
+compute_long_potential_total = njit(signature_or_function=signature)(compute_long_potentials_total)
 #
 signature = float64(float64, int64,
                     int64[:], int64[:],
@@ -1066,12 +1049,8 @@ def compute_electrostatic_potential_total(l_D, min_seq_sep_electrostatic,
             energy = compute_electrostatic_potential_ij(i, j, l_D, dist_mat, lambda_electrostatic, electrostatic_gamma, seq_index)
             total_electrostatic_energy += energy    
     return total_electrostatic_energy
-compute_electrostatic_potential_total_parallel = njit(parallel=True)(compute_electrostatic_potential_total).compile(signature)
-compute_electrostatic_potential_total = njit()(compute_electrostatic_potential_total).compile(signature)
-#compute_electrostatic_potential_total_parallel = njit(compute_electrostatic_potential_total,
-#    signature_or_function=signature, parallel=True)
-#compute_electrostatic_potential_total = njit(compute_electrostatic_potential_total,
-#    signature_or_function=signature)
+compute_electrostatic_potential_total_parallel = njit(signature_or_function=signature, parallel=True)(compute_electrostatic_potential_total)
+compute_electrostatic_potential_total = njit(signature_or_function=signature)(compute_electrostatic_potential_total)
 #
 # no numba for this function, since it doesn't have any loops or do any intensive computation
 def compute_potential_total(l_D, min_seq_sep_rho, min_seq_sep_contact, min_seq_sep_electrostatic,
@@ -1436,9 +1415,5 @@ def compute_pair_energy_matrix(l_D,
                 pair_energy_matrix[i,j] = np.nan
             pair_energy_matrix[j,i] = pair_energy_matrix[i,j]            
     return pair_energy_matrix
-compute_pair_energy_matrix_parallel = njit(parallel=True)(compute_pair_energy_matrix).compile(signature)
-compute_pair_energy_matrix = njit()(compute_pair_energy_matrix).compile(signature)
-#pair_energy_matrix_parallel = njit(compute_pair_energy_matrix, 
-#    signature_or_function=signature, parallel=True)
-#pair_energy_matrix = njit(compute_pair_energy_matrix, 
-#    signature_or_function=signature)
+compute_pair_energy_matrix_parallel = njit(signature_or_function=signature, parallel=True)(compute_pair_energy_matrix)
+compute_pair_energy_matrix = njit(signature_or_function=signature)(compute_pair_energy_matrix)

@@ -197,11 +197,6 @@ def pair_decoy_stats(
     return mean, stdev
 pair_decoy_stats_parallel = njit(signature_or_function=signature, parallel=True)(pair_decoy_stats)
 pair_decoy_stats = njit(signature_or_function=signature)(pair_decoy_stats)
-#pair_decoy_stats_parallel = njit(parallel=True)(pair_decoy_stats).compile(signature)
-#pair_decoy_stats = njit()(pair_decoy_stats).compile(signature)
-#pair_decoy_stats_parallel = njit(pair_decoy_stats, 
-#    signature_or_function=signature, parallel=True)
-#pair_decoy_stats = njit(pair_decoy_stats, signature_or_function=signature)
 #
 @njit(signature_or_function=numba.types.UniTuple(float64,2)(
       float64, int64, int64[:], int64[:], float64[:,:],
