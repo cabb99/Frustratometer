@@ -52,11 +52,17 @@ class Parameters(BaseModel):
     min_sequence_separation_electrostatics: Optional[int] = Field(1, description="Minimum sequence separation for electrostatics calculation.")
     k_electrostatics: float = Field(17.3636, description="Coefficient for electrostatic interactions. (kJ/mol)")
     electrostatics_screening_length: float = Field(10, description="Screening length for electrostatic interactions. (Angstrom)")
-    charges: np.array = Field(np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]), description="Charge on each residue type")
-    # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
 
-    #charges: np.array = Field(np.array([0, 0, -1, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]), description="Charge on each residue type")
-    #['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
+    # We might not know the order of amino acids in our alphabet at the time of instantiating this class
+    # (this happens the above gammas are Paths), so we'll have to build the electrostatic "gamma" when 
+    # initializing AWSEMBase. Fortunately, we can still specify everything we need to know in this dict.
+    charge_dict : dict = Field({'A':0.0,'C':0.0,'D':-1.0,'E':-1.0,
+                                'F':0.0,'G':0.0,'H':0.0,'I':0.0,
+                                'K':1.0,'L':0.0,'M':0.0,'N':0.0,'P':0.0,
+                                'Q':0.0,'R':1.0,'S':0.0,'T':0.0,
+                                'V':0.0,'W':0.0,'Y':0.0}, 
+                                description='charge of each amino acid type that may be used')
+
 
 class AWSEMBase(Frustratometer):
 
@@ -149,13 +155,17 @@ class AWSEMBase(Frustratometer):
         self.protein_gamma = np.squeeze(gamma['Protein'])
         self.water_gamma = np.squeeze(gamma['Water'])
         assert self.direct_gamma.shape == self.protein_gamma.shape == self.water_gamma.shape == (self.q,self.q)
-        self.gamma = self.p.gamma
-
-        # set other attributes
-        self.burial_in_context = self.p.burial_in_context
-        self.aa_freq = frustration.compute_aa_freq(self.sequence, self.gamma.alphabet)
-        self.contact_freq = frustration.compute_contact_freq(self.sequence, self.gamma.alphabet)
-        charges2 = self.p.charges[:,np.newaxis] * self.p.charges[np.newaxis,:]
+        #     electrostatic gamma
+        ordered_charges = np.zeros(self.q)
+        for counter in range(self.q):
+            try:
+                ordered_charges[counter] = self.charge_dict[gamma.alphabet[counter]]
+            except KeyError as e:
+                raise Exception(f"""One-letter code {order[counter]} from alphabet {gamma.alphabet}
+                                    with unknown charge. If use of this noncanonical AA in intentional,
+                                    you must supply a custom charge_dict 
+                                    so that we know how to calculate the electrostatic potential.""")
+        charges2 = ordered_charges[:,np.newaxis] * ordered_charges[np.newaxis,:]
         if self.p.k_electrostatics != 0:
             self.sequence_cutoff=min(self.p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
             self.distance_cutoff=None # the distance matrix isn't guaranteed to exist in all subclasses,
@@ -170,13 +180,20 @@ class AWSEMBase(Frustratometer):
                                                                 # that only matters if we need to compute a mask from a distance matrix
         self.electrostatics_gamma = -self.p.k_electrostatics * charges2[np.newaxis, np.newaxis, :, :]
         self.charges2 = charges2 
+        #     helpful ? 
+        self.gamma = self.p.gamma
+
+        # set other attributes
+        self.burial_in_context = self.p.burial_in_context
+        self.aa_freq = frustration.compute_aa_freq(self.sequence, self.gamma.alphabet)
+        self.contact_freq = frustration.compute_contact_freq(self.sequence, self.gamma.alphabet)
         self._decoy_fluctuation = {} # used for mutational calculation, possibly others
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
 
     @property
     def alphabet(self):
         return self.gamma.alphabet # this allows us to access the alphabet in the same way as for DCA instances
-    @alphabet.setter
+    @alphabet.setter # the user might think they can change the alphabet like the conformation (as in AWSEM), but that's not supported
     def alphabet(self):
         raise AttributeError("Changing the underlying alphabet is prohibited. Instead, create a new AWSEM instance from a different Gamma.")
 
@@ -194,7 +211,7 @@ class AWSEMBase(Frustratometer):
         #  not a typo, supposed to be positive ^^^
         # charges2 is our electrostatic "gamma"
         return _coefficient_lambda_gamma_array
-    @coefficient_lambda_gamma_array.setter
+    @coefficient_lambda_gamma_array.setter # clarifies that this is derived from more fundamental quantities
     def coefficient_lambda_gamma_array(self):
         raise AttributeError(f"""Setting {self.__class__}.coefficient_lambda_gamma_array 
                                 directly is not allowed. Modify {self.__class__}.k_contact, 
