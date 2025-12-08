@@ -69,7 +69,7 @@ class AWSEMBase(Frustratometer):
     def __init__(self, 
                  sequence: str,
                  expose_indicator_functions: bool=False,
-                 potts: bool=True,
+                 potts: bool=False,
                  **parameters)->object:
         """
         Generate AWSEM object
@@ -94,11 +94,23 @@ class AWSEMBase(Frustratometer):
         self.sequence = sequence
 
         # set indicator function exposure based on argument
-        #     i guess not exposing indicator functions saves memory?
+        # (not exposing them saves a tiny bit of RAM but it's useful to Ezequiel)
         self.expose_indicator_functions = expose_indicator_functions
 
-        # whether to compute potts model
+        # whether to store the potts model as an object attribute, 
+        # which requires a lot of ram
         self.potts = potts
+
+        if self.potts and not self.expose_indicator_functions:
+            print(f"""
+                     You requested storing the potts model as an object attribute by using potts=True
+                     but requested NOT storing the indicator functions as object attributes by using 
+                     expose_indicator_functions=False. Since the potts model requires far more RAM than
+                     the indicator functions, we will override your indicator function request
+                     and store them anyway. This has no effect on the accuracy of any calculations.
+                     
+                     Setting {self.__class__}.expose_indicator_functions = True""")
+            self.expose_indicator_functions = True
 
         # parse other arguments
         p = Parameters(**parameters)
@@ -189,6 +201,7 @@ class AWSEMBase(Frustratometer):
         self.contact_freq = frustration.compute_contact_freq(self.sequence, self.gamma.alphabet)
         self._decoy_fluctuation = {} # used for mutational calculation, possibly others
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
+        self._native_energy = None
 
     @property
     def alphabet(self):
@@ -218,6 +231,16 @@ class AWSEMBase(Frustratometer):
                                 {self.__class__}.burial_gamma, {self.__class__}.direct_gamma, 
                                 {self.__class__}.protein_gamma, or {self.__class__}.water_gamma instead.""")
 
+    def native_energy(self):
+        if self.potts: 
+            if not hasattr(self, 'potts_model'): # create potts model if it doesn't already exist
+                self.calculate_energy_and_potts()
+            energy = super().native_energy() # method to compute native energy given potts model
+        else:
+            energy = 0 # fill in numba function here
+        #self._native_energy = energy # maybe _native_energy is needed for compatibility with certain things?
+        return energy
+
     def subclass_setup_helper(self):
         """
         This method calls methods to calculate native indicator functions, 
@@ -233,23 +256,7 @@ class AWSEMBase(Frustratometer):
         """
         self.calculate_masks() # subclasses should (re)define this method as needed
         self.calculate_indicators() # subclasses should (re)define this method as needed
-        if self.potts:
-            self.calculate_energy_and_potts()
-        else:
-            if 'potts_model' in dir(self) or 'burial_energy' in dir(self)\
-              or 'contact_energy' in dir(self) or '_native_energy' in dir(self):
-                # if one has been defined, they should all have been defined
-                assert 'potts_model' in dir(self), dir(self)
-                assert 'burial_energy' in dir(self), dir(self)
-                assert 'contact_energy' in dir(self), dir(self)
-                assert '_native_energy' in dir(self), dir(self)
-                # potts model and energies will be inaccurate once indicators are modified;
-                # if we don't care about the potts model, then we should delete the old
-                # data so it can't be accidentally misused in the future
-                del self.potts_model
-                del self.burial_energy
-                del self.contact_energy
-                del self._native_energy
+        self.calculate_energy_and_potts()
              
     def calculate_indicators(self):
         raise NotImplementedError("Subclasses must implement this method")
@@ -280,34 +287,38 @@ class AWSEMBase(Frustratometer):
         self.selected_matrix = selected_matrix # we'll need this in the calculate_indicators function 
 
     def calculate_energy_and_potts(self):
-
-        J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
-        h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
-        
-        # compute burial and contact energies
-        self.burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :] 
-        direct = self.direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
-        water_mediated = self.water_indicator * self.water_gamma[J_index[2], J_index[3]]
-        protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
-        contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * self.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
-        
-        electrostatics_energy = self.electrostatics_gamma * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
-            * self.electrostatics_mask[:,:,np.newaxis,np.newaxis]
-        contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
-
-        self.contact_energy = contact_energy
-
-        # Compute potts model
-        self.potts_model = {}
-        self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, :]#self.aa_map_awsem_list]
-        assert self.potts_model['h'].shape == (self.N, self.q), self.potts_model['h'].shape
-        self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, :, :]#self.aa_map_awsem_x, self.aa_map_awsem_y]
-        assert self.potts_model['J'].shape == (self.N, self.N, self.q, self.q), self.potts_model['J'].shape 
-        # Set the gap energy to zero
-        #self.potts_model['h'][:, 0] = 0
-        #self.potts_model['J'][:, :, 0, :] = 0
-        #self.potts_model['J'][:, :, :, 0] = 0
-        self._native_energy=None # don't know what this does
+        if self.potts:
+            J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
+            h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
+            
+            # compute burial and contact energies
+            self.burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :] 
+            direct = self.direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
+            water_mediated = self.water_indicator * self.water_gamma[J_index[2], J_index[3]]
+            protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
+            contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * self.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+            
+            electrostatics_energy = self.electrostatics_gamma * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+                * self.electrostatics_mask[:,:,np.newaxis,np.newaxis]
+            contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
+    
+            self.contact_energy = contact_energy
+    
+            # Compute potts model
+            self.potts_model = {}
+            self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, :]#self.aa_map_awsem_list]
+            assert self.potts_model['h'].shape == (self.N, self.q), self.potts_model['h'].shape
+            self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, :, :]#self.aa_map_awsem_x, self.aa_map_awsem_y]
+            assert self.potts_model['J'].shape == (self.N, self.N, self.q, self.q), self.potts_model['J'].shape 
+            # Set the gap energy to zero
+            #self.potts_model['h'][:, 0] = 0
+            #self.potts_model['J'][:, :, 0, :] = 0
+            #self.potts_model['J'][:, :, :, 0] = 0
+        else:
+            print("""self.potts was False; will not calculate and store potts model.
+                     Energies will be computed on the fly as needed for frustration calculations and then discarded.
+                     If you want to get the energies for your own purposes, set self.potts
+                     to True and then call this method again.""")
 
 
     def compute_configurational_decoy_statistics(self):
@@ -327,7 +338,7 @@ class AWSEM(AWSEMBase):
                  pdb_structure: object | tuple, # tuple is an object, but this clarifies what we expect
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
-                 potts: bool=True,
+                 potts: bool=False,
                  alt_sigma_wat: bool=False,
                  **parameters)->object:
         # assume the user wanted the sequence from the pdb structure if not given
@@ -450,7 +461,7 @@ class AWSEM(AWSEMBase):
         else:
             print("""self.expose_indicator_functions was False; will not calculate and store indicator functions.
                      Indicator functions will be computed on the fly as needed for energy calculations and then discarded.
-                     If you want to get the indicator functions directly, set self.expose_indicator_functions
+                     If you want to get the indicator functions for your own purposes, set self.expose_indicator_functions
                      to True and then call this method again.""")
 
     @property
