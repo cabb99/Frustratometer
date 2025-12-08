@@ -1,6 +1,8 @@
 import numpy as np
 from ..utils import _path
 from .. import frustration
+from .. import numba_util
+from ..numba_util import ham, algos
 from .Frustratometer import Frustratometer
 from .Gamma import Gamma
 from pydantic import BaseModel, Field, ConfigDict

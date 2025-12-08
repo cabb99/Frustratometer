@@ -13,6 +13,7 @@ from . import map
 from . import align
 from . import frustration
 from . import optimization
+from . import numba_util
 
 # Handle versioneer
 from ._version import get_versions
