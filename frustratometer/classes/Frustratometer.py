@@ -233,7 +233,8 @@ class Frustratometer:
         """
         return frustration.compute_scores(self.potts_model)
 
-    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0) -> np.array:
+    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, 
+                          correction:int = 0, n_decoys:int = 4000) -> np.array:
         """
         Calculates frustration index values.
         
@@ -264,9 +265,11 @@ class Frustratometer:
             frustration_values=frustration.compute_single_frustration(decoy_fluctuation, aa_freq, correction)
             return frustration_values
         elif kind in ['mutational', 'configurational', 'contact']:
-            if kind == 'configurational' and 'configurational_frustration' in dir(self):
-                #TODO: Correct this function for different aa_freq than WT
-                return self.configurational_frustration(None, correction)
+            if kind == 'configurational':
+                if 'configurational_frustration' in dir(self):
+                    return self.configurational_frustration(aa_freq=aa_freq, correction=correction, n_decoys=n_decoys)
+                else:
+                    raise ValueError("kind='configurational' may only be used on objects implementing self.configurational_frustration")
             if aa_freq is None:
                 aa_freq = self.contact_freq
             frustration_values=frustration.compute_pair_frustration(decoy_fluctuation, aa_freq, correction)

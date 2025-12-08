@@ -227,8 +227,8 @@ class AWSEMBase(Frustratometer):
     @coefficient_lambda_gamma_array.setter # clarifies that this is derived from more fundamental quantities
     def coefficient_lambda_gamma_array(self):
         raise AttributeError(f"""Setting {self.__class__}.coefficient_lambda_gamma_array 
-                                directly is not allowed. Modify {self.__class__}.k_contact, 
-                                {self.__class__}.burial_gamma, {self.__class__}.direct_gamma, 
+                                directly is not allowed. Initialize a new instance with a different
+                                {self.__class__}.k_contact, {self.__class__}.burial_gamma, {self.__class__}.direct_gamma, 
                                 {self.__class__}.protein_gamma, or {self.__class__}.water_gamma instead.""")
 
     def native_energy(self):
@@ -243,9 +243,9 @@ class AWSEMBase(Frustratometer):
 
     def subclass_setup_helper(self):
         """
-        This method calls methods to calculate native indicator functions, 
-        masks (based on the native distance matrix), and native energy,
-        then optionally sets up the potts model.
+        This method calls methods to calculate native indicator functions (optional), 
+        masks (based on the native distance matrix), native energy (optional),
+        and potts model (optional).
 
         This method is intended to be called as the last step of __init__
         in each subclass of AWSEMBase. The subclasses may differ in how
@@ -320,7 +320,6 @@ class AWSEMBase(Frustratometer):
                      If you want to get the energies for your own purposes, set self.potts
                      to True and then call this method again.""")
 
-
     def compute_configurational_decoy_statistics(self):
         raise NotImplementedError("Subclasses must define this method")
 
@@ -330,6 +329,21 @@ class AWSEMBase(Frustratometer):
     def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000):
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
+
+    def mutational_frustration(self):
+        # This algorithm is defined in the Frustratometer class
+        # because it applies to both AWSEM and DCA frustratometry,
+        # and both the AWSEMBase and DCA classes inherit from Frustratometer.
+        # Our goal here is just to provide an interface that matches that used
+        # for configurational frustration, which has no DCA analog and therefore
+        # is not defined in Frustratometer (although Frustratometer.frustration
+        # calls the configurational_frustration method of this class if passed
+        # the kind='configurational' argument)
+        return super().frustration(kind='mutational')
+
+    def singleresidue_frustration(self):
+        # see note for mutational_frustration method
+        return super().frustration(kind='singleresidue')
 
 
 class AWSEM(AWSEMBase):
