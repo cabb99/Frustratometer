@@ -196,10 +196,10 @@ class AWSEMBase(Frustratometer):
         return _coefficient_lambda_gamma_array
     @coefficient_lambda_gamma_array.setter
     def coefficient_lambda_gamma_array(self):
-        raise AttributeError("""Setting AWSEM.coefficient_lambda_gamma_array 
-                                directly is not allowed. Modify AWSEM.k_contact, 
-                                AWSEM.burial_gamma, AWSEM.direct_gamma, 
-                                AWSEM.protein_gamma, or AWSEM.water_gamma instead.""")
+        raise AttributeError(f"""Setting {self.__class__}.coefficient_lambda_gamma_array 
+                                directly is not allowed. Modify {self.__class__}.k_contact, 
+                                {self.__class__}.burial_gamma, {self.__class__}.direct_gamma, 
+                                {self.__class__}.protein_gamma, or {self.__class__}.water_gamma instead.""")
 
     def subclass_setup_helper(self):
         """
@@ -396,63 +396,80 @@ class AWSEM(AWSEMBase):
         self.pdb_structure = alt_conf
 
     def calculate_indicators(self):
-        # Calculate rho
-        rho = 0.25 
-        rho *= (1 + np.tanh(self.p.eta * (self.selected_matrix - self.p.r_min)))
-        rho *= (1 + np.tanh(self.p.eta * (self.p.r_max - self.selected_matrix)))
-        rho *= self.sequence_mask_rho
-        self.rho=rho
-        #Calculate sigma water
-        rho_r = (rho).sum(axis=1)
-        if self.full_pdb_distance_matrix.shape!=self.distance_matrix.shape:
-            if self.burial_in_context==True:
-                self.init_index_shift=self.pdb_structure.init_index_shift
-                self.fin_index_shift=self.pdb_structure.fin_index_shift
-                rho_r=rho_r[self.init_index_shift:self.fin_index_shift]
-        self.rho_r=rho_r
-        rho_b = np.expand_dims(rho_r, 1)
-        rho1 = np.expand_dims(rho_r, 0)
-        rho2 = np.expand_dims(rho_r, 1)
-        sigma_water = 0.25 * (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) * (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0)))
-        if self.alt_sigma_wat:
-            sigma_water = -sigma_water + 0.5*( (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) + (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0))))
-        sigma_protein = 1 - sigma_water
-        #Calculate theta and indicators
-        theta = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_min))) * (1 + np.tanh(self.p.eta * (self.p.r_max - self.distance_matrix)))
-        thetaII = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_minII))) * (1 + np.tanh(self.p.eta * (self.p.r_maxII - self.distance_matrix)))
-        burial_indicator = np.tanh(self.p.burial_kappa * (rho_b - self.p.burial_ro_min)) + np.tanh(self.p.burial_kappa * (self.p.burial_ro_max - rho_b))
-        direct_indicator = theta[:, :, np.newaxis, np.newaxis]
-        water_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_water[:, :, np.newaxis, np.newaxis]
-        protein_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_protein[:, :, np.newaxis, np.newaxis]
-        # store indicators and gammas for our particular sequence as attributes
-        self.indicators=[]
-        self.indicators.append(burial_indicator[:,0])
-        self.indicators.append(burial_indicator[:,1])
-        self.indicators.append(burial_indicator[:,2])
-        self.indicators.append(direct_indicator[:,:,0,0]*self.sequence_mask_contact)
-        self.indicators.append(protein_indicator[:,:,0,0]*self.sequence_mask_contact)
-        self.indicators.append(water_indicator[:,:,0,0]*self.sequence_mask_contact)
-        self.burial_indicator = burial_indicator 
-        self.direct_indicator = direct_indicator 
-        self.water_indicator = water_indicator   
-        self.protein_indicator = protein_indicator
-        #breakpoint()
-        if True:#self.p.k_electrostatics != 0:
-            electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length) * self.electrostatics_mask
-            self.indicators.append(electrostatics_indicator)
+        if self.expose_indicator_functions:
+            # Calculate rho
+            rho = 0.25 
+            rho *= (1 + np.tanh(self.p.eta * (self.selected_matrix - self.p.r_min)))
+            rho *= (1 + np.tanh(self.p.eta * (self.p.r_max - self.selected_matrix)))
+            rho *= self.sequence_mask_rho
+            self.rho=rho
+            #Calculate sigma water
+            rho_r = (rho).sum(axis=1)
+            if self.full_pdb_distance_matrix.shape!=self.distance_matrix.shape:
+                if self.burial_in_context==True:
+                    self.init_index_shift=self.pdb_structure.init_index_shift
+                    self.fin_index_shift=self.pdb_structure.fin_index_shift
+                    rho_r=rho_r[self.init_index_shift:self.fin_index_shift]
+            self.rho_r=rho_r
+            rho_b = np.expand_dims(rho_r, 1)
+            rho1 = np.expand_dims(rho_r, 0)
+            rho2 = np.expand_dims(rho_r, 1)
+            sigma_water = 0.25 * (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) * (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0)))
+            if self.alt_sigma_wat:
+                sigma_water = -sigma_water + 0.5*( (1 - np.tanh(self.p.eta_sigma * (rho1 - self.p.rho_0))) + (1 - np.tanh(self.p.eta_sigma * (rho2 - self.p.rho_0))))
+            sigma_protein = 1 - sigma_water
+            #Calculate theta and indicators
+            theta = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_min))) * (1 + np.tanh(self.p.eta * (self.p.r_max - self.distance_matrix)))
+            thetaII = 0.25 * (1 + np.tanh(self.p.eta * (self.distance_matrix - self.p.r_minII))) * (1 + np.tanh(self.p.eta * (self.p.r_maxII - self.distance_matrix)))
+            burial_indicator = np.tanh(self.p.burial_kappa * (rho_b - self.p.burial_ro_min)) + np.tanh(self.p.burial_kappa * (self.p.burial_ro_max - rho_b))
+            direct_indicator = theta[:, :, np.newaxis, np.newaxis]
+            water_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_water[:, :, np.newaxis, np.newaxis]
+            protein_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_protein[:, :, np.newaxis, np.newaxis]
+            self.burial_indicator = burial_indicator 
+            self.direct_indicator = direct_indicator 
+            self.water_indicator = water_indicator   
+            self.protein_indicator = protein_indicator
+            electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length)*self.electrostatics_mask
             self.electrostatics_indicator = electrostatics_indicator 
+        else:
+            print("""self.expose_indicator_functions was False; will not calculate and store indicator functions.
+                     Indicator functions will be computed on the fly as needed for energy calculations and then discarded.
+                     If you want to get the indicator functions directly, set self.expose_indicator_functions
+                     to True and then call this method again.""")
+
+    @property
+    def masked_indicators(self):
+        # store indicators and gammas for our particular sequence as attributes
+        _masked_indicators=[]
+        _masked_indicators.append(self.burial_indicator[:,0])
+        _masked_indicators.append(self.burial_indicator[:,1])
+        _masked_indicators.append(self.burial_indicator[:,2])
+        _masked_indicators.append(self.direct_indicator[:,:,0,0]*self.sequence_mask_contact)
+        _masked_indicators.append(self.protein_indicator[:,:,0,0]*self.sequence_mask_contact)
+        _masked_indicators.append(self.water_indicator[:,:,0,0]*self.sequence_mask_contact)
+        _masked_indicators.append(self.electrostatics_indicator*self.electrostatics_mask)
+        return _masked_indicators
+    @masked_indicators.setter
+    def masked_indicators(self):
+        raise AttributeError(f"""Setting {self.__class__}.indicators directly is not allowed. 
+                                 Modify {self.__class__}.burial_indicator, {self.__class__}.direct_indicator, 
+                                 {self.__class__}.protein_indicator, {self.__class__}.water_indicator,
+                                 {self.__class__}.electrostatic_indicator, 
+                                 {self.__class__}.sequence_mask_contact,
+                                 or {self.__class__}.electrostatics_mask instead.""")
 
     def calculate_energy_and_potts(self):
         super().calculate_energy_and_potts()
-        if not self.expose_indicator_functions:
-            del self.burial_indicator
-            del self.direct_indicator
-            del self.water_indicator
-            del self.protein_indicator
-            if "electrostatics_indicator" in dir(self):
-                # won't exist if electrostatics are turned off
-                del self.electrostatics_indicator
-            del self.indicators
+        # if expose_indicator_functions is off, we should never set the attributes in the first place
+        #if not self.expose_indicator_functions:
+        #    del self.burial_indicator
+        #    del self.direct_indicator
+        #    del self.water_indicator
+        #    del self.protein_indicator
+        #    if "electrostatics_indicator" in dir(self):
+        #        # won't exist if electrostatics are turned off
+        #        del self.electrostatics_indicator
+        #    del self.indicators
 
     def compute_configurational_decoy_statistics(self, n_decoys=4000,aa_freq=None):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']

@@ -428,8 +428,8 @@ def test_awsem_energy_variance(model, reduced_alphabet, use_numba):
 
 #     from itertools import permutations
 #     decoy_sequences = np.array(list(permutations(seq_index)))
-#     indicators1D=np.array(model.indicators[:3])
-#     indicators2D=np.array(model.indicators[3:])
+#     indicators1D=np.array(model.masked_indicators[:3])
+#     indicators2D=np.array(model.masked_indicators[3:])
 #     indicator_arrays=[]
 #     energies=[]
 #     for decoy_index in decoy_sequences:
@@ -443,36 +443,36 @@ def test_awsem_energy_variance(model, reduced_alphabet, use_numba):
 #             ind2D[i] =np.bincount(decoy_index2D.ravel(), weights=indicators2D[i].ravel(), minlength=21*21)
 
 #         indicator_array = np.concatenate([ind1D.ravel(),ind2D.ravel()])
-#         gamma_array = np.concatenate([a.ravel() for a in model.gamma_array])
+#         gamma_array = np.concatenate([a.ravel() for a in model.coefficient_lambda_gamma_array])
 
-#         energy_i = gamma_array @ indicator_array
+#         energy_i = coefficient_lambda_gamma_array @ indicator_array
 #         assert np.isclose(model.native_energy(index_to_sequence(decoy_index,alphabet=_AA)),energy_i), f"Expected energy {model.native_energy(index_to_sequence(decoy_index,alphabet=_AA))} but got {energy_i}"
 #         energies.append(energy_i)
 #         indicator_arrays.append(indicator_array)
 
 #     indicator_arrays = np.array(indicator_arrays)
 #     energies = np.array(energies)
-#     assert np.isclose(gamma_array@indicator_arrays.mean(axis=0),energies.mean()), f"Expected mean energy {gamma_array@indicator_arrays.mean(axis=0)} but got {np.mean(energies)}"
+#     assert np.isclose(coefficient_lambda_gamma_array@indicator_arrays.mean(axis=0),energies.mean()), f"Expected mean energy {coefficient_lambda_gamma_array@indicator_arrays.mean(axis=0)} but got {np.mean(energies)}"
 
 #     # I will code something like this using numpy einsums:
 #     # np.array([[np.outer(indicator_arrays[:,i],indicator_arrays[:,j]).mean() - indicator_arrays[:,i].mean()*indicator_arrays[:,i].mean() for i in range(indicator_arrays.shape[1])] for j in range(indicator_arrays.shape[1])])
 #     outer_product = np.einsum('ij,ik->ijk', indicator_arrays, indicator_arrays)
 #     mean_outer_product = outer_product.mean(axis=0)
 #     mean_outer_product -= np.outer(indicator_arrays.mean(axis=0), indicator_arrays.mean(axis=0))
-#     assert np.allclose(gamma_array @ mean_outer_product @ gamma_array, energies.var()), "Covariance matrix is not correct"
+#     assert np.allclose(coefficient_lambda_gamma_array @ mean_outer_product @ coefficient_lambda_gamma_array, energies.var()), "Covariance matrix is not correct"
 
 #     # Indicator tests    
-#     indicators1D=np.array(model.indicators[0:3])
-#     indicators2D=np.array(model.indicators[3:])
-#     gamma=model.gamma_array
+#     indicators1D=np.array(model.masked_indicators[0:3])
+#     indicators2D=np.array(model.masked_indicators[3:])
+#     gamma=model.coefficient_lambda_gamma_array
 #     true_indicator1D=np.array([indicators1D[:,model_seq_index==i].sum(axis=1) for i in range(21)]).T
 #     true_indicator2D=np.array([indicators2D[:,model_seq_index==i][:,:, model_seq_index==j].sum(axis=(1,2)) for i in range(21) for j in range(21)]).reshape(21,21,3).T
 #     true_indicator=np.concatenate([true_indicator1D.ravel(),true_indicator2D.ravel()])
-#     burial_gamma=np.concatenate(model.gamma_array[:3])
+#     burial_gamma=np.concatenate(model.coefficient_lambda_gamma_array[:3])
 #     burial_energy_predicted = (burial_gamma * np.concatenate(true_indicator1D)).sum()
 #     burial_energy_expected = -model.potts_model['h'][range(len(model_seq_index)), model_seq_index].sum()
 #     assert np.isclose(burial_energy_predicted,burial_energy_expected), f"Expected energy {burial_energy_expected} but got {burial_energy_predicted}"
-#     contact_gamma=np.concatenate([a.ravel() for a in model.gamma_array[3:]])
+#     contact_gamma=np.concatenate([a.ravel() for a in model.coefficient_lambda_gamma_array[3:]])
 #     contact_energy_predicted = (contact_gamma * np.concatenate([a.ravel() for a in true_indicator2D])).sum()
 #     contact_energy_expected = model.couplings_energy()
 #     assert np.isclose(contact_energy_predicted,contact_energy_expected), f"Expected energy {contact_energy_expected} but got {contact_energy_predicted}"

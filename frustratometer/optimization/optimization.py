@@ -543,7 +543,7 @@ class AwsemEnergyAverage(EnergyTerm):
         self.reindex_dca=[_AA.index(aa) for aa in alphabet]
         
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = model.masked_indicators
         self.alphabet_size=len(alphabet)
         self.model=model
         self.model_h = model.potts_model['h'][:,self.reindex_dca]
@@ -552,7 +552,7 @@ class AwsemEnergyAverage(EnergyTerm):
         self.indicators1D=np.array([ind for ind in self.indicators if len(ind.shape)==1])
         self.indicators2D=np.array([ind for ind in self.indicators if len(ind.shape)==2])
         #TODO: Fix the gamma matrix to account for elecrostatics
-        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.coefficient_lambda_gamma_array])
         
         self.initialize_functions()
     
@@ -695,12 +695,12 @@ class PairEnergyAverage(EnergyTerm):
         self.alphabet=alphabet
         self.reindex_dca=[_AA.index(aa) for aa in alphabet]
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = model.masked_indicators
         self.alphabet_size=len(alphabet)
         self.model_h = model.potts_model['h'][:,self.reindex_dca]
         self.model_J = model.potts_model['J'][:,:,self.reindex_dca][:,:,:,self.reindex_dca]
         self.mask = model.mask
-        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.coefficient_lambda_gamma_array])
         self.initialize_functions()
     
     def initialize_functions(self):
@@ -858,12 +858,12 @@ class PairEnergyStd(EnergyTerm):
         self.alphabet=alphabet
         self.reindex_dca=[_AA.index(aa) for aa in alphabet]
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = model.masked_indicators
         self.alphabet_size=len(alphabet)
         self.model_h = model.potts_model['h'][:,self.reindex_dca]
         self.model_J = model.potts_model['J'][:,:,self.reindex_dca][:,:,:,self.reindex_dca]
         self.mask = model.mask
-        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.coefficient_lambda_gamma_array])
         self.initialize_functions()
     
     def initialize_functions(self):
@@ -962,7 +962,7 @@ class AwsemEnergyVariance(EnergyTerm):
         self.reindex_dca=[_AA.index(aa) for aa in alphabet]
 
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = model.masked_indicators
         self.alphabet_size=len(alphabet)
         self.model=model
         self.model_h = model.potts_model['h'][:,self.reindex_dca]
@@ -971,7 +971,7 @@ class AwsemEnergyVariance(EnergyTerm):
         self.indicators1D=np.array([ind for ind in self.indicators if len(ind.shape)==1])
         self.indicators2D=np.array([ind for ind in self.indicators if len(ind.shape)==2])
         #TODO: Fix the gamma matrix to account for elecrostatics
-        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.coefficient_lambda_gamma_array])
         
         self.initialize_functions()
     
@@ -1150,7 +1150,7 @@ class AwsemEnergyStd(EnergyTerm):
         self.n_decoys=n_decoys
         
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = model.masked_indicators
         self.alphabet_size=len(alphabet)
         self.model=model
         self.model_h = model.potts_model['h'][:,self.reindex_dca]
@@ -1159,7 +1159,7 @@ class AwsemEnergyStd(EnergyTerm):
         self.indicators1D=np.array([ind for ind in self.indicators if len(ind.shape)==1])
         self.indicators2D=np.array([ind for ind in self.indicators if len(ind.shape)==2])
         #TODO: Fix the gamma matrix to account for elecrostatics
-        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.coefficient_lambda_gamma_array])
                 
         self.initialize_functions()
     
