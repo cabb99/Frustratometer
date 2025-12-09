@@ -191,8 +191,7 @@ class AWSEMBase(Frustratometer):
             self.distance_cutoff=self.p.distance_cutoff_contact # the distance matrix isn't guaranteed to exist in all subclasses,
                                                                 # but it doesn't hurt to define the distance_cutoff attribute--
                                                                 # it's just like any other parameter, such as sequence_cutoff,
-                                                                # that only matters if we need to compute a mask from a distance matrix
-        self.electrostatics_gamma = -self.p.k_electrostatics * charges2[np.newaxis, np.newaxis, :, :]
+                                                                # that only matters if we need to compute a mask from a distance matrix 
         self.charges2 = charges2 
         #     helpful ? 
         self.gamma = self.p.gamma
@@ -300,7 +299,7 @@ class AWSEMBase(Frustratometer):
             protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
             contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * self.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
             
-            electrostatics_energy = self.electrostatics_gamma * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+            electrostatics_energy = -self.k_electrostatics * self.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
                 * self.electrostatics_mask[:,:,np.newaxis,np.newaxis]
             contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
     
@@ -316,6 +315,7 @@ class AWSEMBase(Frustratometer):
             #self.potts_model['h'][:, 0] = 0
             #self.potts_model['J'][:, :, 0, :] = 0
             #self.potts_model['J'][:, :, :, 0] = 0
+            
         else:
             print("""self.potts was False; will not calculate and store potts model.
                      Energies will be computed on the fly as needed for frustration calculations and then discarded.
@@ -833,7 +833,7 @@ class AWSEMVariancePotts(AWSEMBase):
         contact_energy = self.p.k_contact * np.array([direct, protein_mediated, water_mediated])
         if self.p.k_electrostatics!=0:
             template[triu_indices] = self.pairwise_variances[3*num_upper:]
-            electrostatics_energy = self.electrostatics_gamma * (template+template.T)[:,:,np.newaxis,np.newaxis]**2
+            electrostatics_energy = -self.k_electrostatics * self.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * (template+template.T)[:,:,np.newaxis,np.newaxis]**2
             contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
         #    for the variance potts model, there is one more kind of two-body interaction:
         #    burial-pairwise covariance when the pairwise energy term involves the residue in the burial term
@@ -857,7 +857,15 @@ class AWSEMVariancePotts(AWSEMBase):
         direct = direct[direct != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.direct_gamma[J_index[3]]*self.p.k_contact
         prot = prot[prot != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.protein_gamma[J_index[3]]*self.p.k_contact
         wat = wat[wat != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.water_gamma[J_index[3]]*self.p.k_contact
-        elec = elec[elec != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.electrostatics_gamma[J_index[3]]*self.p.k_contact
+        ############################################################################################################################
+        elec = elec[elec != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.electrostatics_gamma[np.newaxis,np.newaxis,:,:][J_index[3]]*self.p.k_contact
+        # ???????????????? why are we multiplying electrostatics by k_contact? 
+        # electrostatics_gamma already had the electrostatics weight k_electrostatics multiplied in and k_electrostatics
+        # isn't necessarily equal to k_contact. Anyway, i'm now going to factor k_electrostatics out of electrostatics_gamma
+        # in the AWSEMBase class
+        # probably should be
+        # elec = elec[elec != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.electrostatics_gamma[np.newaxis,np.newaxis,:,:][J_index[3]]*(-self.k_electrostatics)
+        #############################################################################################################################
 
         contact_energy = np.append(contact_energy, direct[np.newaxis,...], axis=0)
         contact_energy = np.append(contact_energy, prot[np.newaxis,...], axis=0)
