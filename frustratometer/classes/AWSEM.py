@@ -53,7 +53,7 @@ class Parameters(BaseModel):
     #Electrostatics
     min_sequence_separation_electrostatics: Optional[int] = Field(1, description="Minimum sequence separation for electrostatics calculation.")
     k_electrostatics: float = Field(17.3636, description="Coefficient for electrostatic interactions. (kJ/mol)")
-    electrostatics_screening_length: float = Field(10, description="Screening length for electrostatic interactions. (Angstrom)")
+    electrostatics_screening_length: float = Field(10.0, description="Screening length for electrostatic interactions. (Angstrom)")
 
     # We might not know the order of amino acids in our alphabet at the time of instantiating this class
     # (this happens the above gammas are Paths), so we'll have to build the electrostatic "gamma" when 
@@ -301,8 +301,39 @@ class AWSEMBase(Frustratometer):
         #np.save('my_mask_new.npy',self.mask)
         self.selected_matrix = selected_matrix # we'll need this in the calculate_indicators function 
 
-    def calculate_energy_and_potts(self):
+    def calculate_energy_and_potts(self, chain_starts=None, chain_ends=None):
+        # chain_starts and chain_ends should be calculated based on object attributes
+        # (maybe Structure.chain?) but i don't know how to do that, so we'll do this for now
         if self.potts:
+            self.potts_model = {'h':None, 'J':None}
+            if chain_starts is None:
+                chain_starts = np.array([0])
+            if chain_ends is None:
+                chain_ends = np.array([len(self.seq_index)-1])
+            if self.distance_cutoff_contact is None:
+                contact_max_dist = 12.5
+            else:
+                contact_max_dist = self.distance_cutoff_contact
+            self.potts_model['h'] = ham.compute_potts_model_h_parallel(
+                self.min_sequence_separation_rho,
+                chain_starts, chain_ends,
+                self.distance_matrix,  
+                self.k_contact, self.burial_gamma)
+            self.potts_model['J'] = ham.compute_potts_model_J_parallel(
+                self.electrostatics_screening_length, self.min_sequence_separation_rho, 
+                self.min_sequence_separation_contact, self.min_sequence_separation_electrostatics,
+                chain_starts, chain_ends, 
+                contact_max_dist, 10*self.electrostatics_screening_length, # maximum distance for contact potential, maximum for electrostatics
+                self.distance_matrix,  
+                self.k_contact, self.direct_gamma, 
+                self.k_contact, self.protein_gamma,
+                self.k_contact, self.water_gamma, 
+                self.k_electrostatics, self.electrostatics_gamma)
+            #breakpoint()
+            #self.potts_model['J'] = ham.compute_potts_model_J(
+           #     self.distance_matrix, )
+
+            """
             J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
             h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
             
@@ -329,7 +360,7 @@ class AWSEMBase(Frustratometer):
             #self.potts_model['h'][:, 0] = 0
             #self.potts_model['J'][:, :, 0, :] = 0
             #self.potts_model['J'][:, :, :, 0] = 0
-            
+            """
         else:
             print("""self.potts was False; will not calculate and store potts model.
                      Energies will be computed on the fly as needed for frustration calculations and then discarded.
