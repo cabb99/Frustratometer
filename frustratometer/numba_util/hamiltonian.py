@@ -806,7 +806,11 @@ def compute_electrostatic_potential_ij_from_indicator_gamma(electrostatic_indica
     electrostatic_energy : float
         Energy of the electrostatic interaction between residues i and j
     """
-    return -lambda_electrostatic * electrostatic_indicator * gamma
+    # gamma is negative if interaction is favorable and positive if
+    # unfavorable, and our lambdas and indicators are all positive by convention,
+    # so we don't precede this equation with a negative sign
+    #return -lambda_electrostatic * electrostatic_indicator * gamma
+    return lambda_electrostatic * electrostatic_indicator * gamma
 @njit(signature_or_function=float64(float64, float64, float64, float64))
 def compute_electrostatic_potential_ij_from_distij_gamma(l_D, dist_ij, lambda_electrostatic, gamma):
     """
@@ -1434,8 +1438,8 @@ def compute_potts_model_J(
                     contact_energy = contact_mask_ij * (direct_energy + protein_energy + water_energy)
                     electrostatic_energy = electrostatic_mask_ij * compute_electrostatic_potential_ij_from_distij_gamma(
                                                                         l_D, dist_ij, lambda_electrostatic, gamma_eij)
-                    #                         vvv I DON'T KNOW WHERE THIS -1 COMES FROM!
-                    energy = contact_energy + -1*electrostatic_energy
+                    #                         
+                    energy = contact_energy + electrostatic_energy
                     J[i,j,qi,qj] = energy
                     J[i,j,qj,qi] = energy
     J = -J # i guess we define it as the negative of the actual potential?
