@@ -203,13 +203,27 @@ class AWSEMBase(Frustratometer):
         self._decoy_fluctuation = {} # used for mutational calculation, possibly others
         self.minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
         self._native_energy = None
+        self._seq_index = None
+
+    @property
+    def electrostatics_gamma(self): # used to be distinct from charges2 but eliminating the distinction
+        return self.charges2        # makes these gammas more analogous to the other gammas
+    @property 
+    def electrostatic_gamma(self):
+        return self.electrostatics_gamma
 
     @property
     def alphabet(self):
         return self.gamma.alphabet # this allows us to access the alphabet in the same way as for DCA instances
-    @alphabet.setter # the user might think they can change the alphabet like the conformation (as in AWSEM), but that's not supported
+    @alphabet.setter # the user might think they can change the alphabet like the conformation (see AWSEM), but that's not supported
     def alphabet(self):
         raise AttributeError("Changing the underlying alphabet is prohibited. Instead, create a new AWSEM instance from a different Gamma.")
+
+    @property # emphasizes that seq_index is computed from the alphabet
+    def seq_index(self):
+        if self._seq_index is None: # so we only have to compute it once
+            self._seq_index = np.array([self.alphabet.index(aa) for aa in self.sequence])
+        return self._seq_index
 
     # carlos wanted to have gamma_array with gammas multiplied by lambda and coefficients
     @property
@@ -518,7 +532,7 @@ class AWSEM(AWSEMBase):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
         _AA = self.gamma.alphabet #'ARNDCQEGHILKMFPSTWYV'
         if aa_freq is None:
-            seq_index = np.array([_AA.index(aa) for aa in self.sequence])
+            seq_index = self.seq_index
             N=self.N
         else:
             N=self.N*10
@@ -575,7 +589,7 @@ class AWSEM(AWSEMBase):
     
     def compute_configurational_energies(self):
         _AA= self.gamma.alphabet #'ARNDCQEGHILKMFPSTWYV'
-        seq_index = np.array([_AA.index(aa) for aa in self.sequence])
+        seq_index = self.seq_index
         distances = np.triu(self.distance_matrix)
         distances = distances[(distances<self.distance_cutoff_contact) & (distances>0)]
         n_contacts=len(distances)
