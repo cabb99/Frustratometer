@@ -71,6 +71,10 @@ Parameters for evaluating mask conditions
      Residues closer in space than this distance are masked
 - max_dist : float
      Residues further in space than this distance are masked
+- max_dist_contact : float
+     Like the plain max_dist argument (see above)
+- max_dist_electrostatic : float
+     Like the plain max_dist argument (see above)
 
 Parameters holding the values of indicator functions or
 quantities needed to compute indicator functions
@@ -1349,9 +1353,102 @@ def compute_pair_energy_ij(i, j, l_D, min_seq_sep_rho, chain_starts, chain_ends,
     """
     return pair_energy
 #
+#########################################################################################
+# POTTS MODEL:  (N,N,q,q) for (N,N) dist_mat and (q,q) gammas
+signature = float64[:,:](
+    int64,
+    int64[:], int64[:],
+    float64[:,:],
+    float64, float64[:,:])
+def compute_potts_model_h(
+    min_seq_sep_rho,
+    chain_starts, chain_ends,
+    dist_mat, 
+    lambda_burial, burial_gamma):
+    assert dist_mat.shape[0] == dist_mat.shape[1]
+    num_aa = dist_mat.shape[0]
+    num_aa_types = burial_gamma.shape[0]
+    assert burial_gamma.shape[1] == 3
+    h = np.zeros((num_aa, num_aa_types))
+    for i in prange(num_aa):
+        for q in range(num_aa_types):
+            gamma = burial_gamma[q]
+            h[i,q] = compute_burial_potential_i_from_gamma(
+                i, min_seq_sep_rho, chain_starts, chain_ends, dist_mat, lambda_burial, gamma)
+    h = -h # i guess we define it as the negative of the actual potential?
+    return h
+compute_potts_model_h_parallel = njit(signature_or_function=signature, parallel=True)(compute_potts_model_h)
+compute_potts_model_h = njit(signature_or_function=signature)(compute_potts_model_h)
+#
+signature = float64[:,:,:,:](
+    float64, int64, int64, int64,
+    int64[:], int64[:], float64, float64,
+    float64[:,:],
+    float64, float64[:,:],
+    float64, float64[:,:],
+    float64, float64[:,:],
+    float64, float64[:,:])
+def compute_potts_model_J(
+    l_D, min_seq_sep_rho, min_seq_sep_contact, min_seq_sep_electrostatic,
+    chain_starts, chain_ends, max_dist_contact, max_dist_electrostatic,
+    dist_mat,  
+    lambda_direct, direct_gamma, 
+    lambda_protein, protein_gamma,
+    lambda_water, water_gamma, 
+    lambda_electrostatic, electrostatic_gamma):
+    # check input
+    assert dist_mat.shape[0] == dist_mat.shape[1]
+    assert direct_gamma.shape[0] == direct_gamma.shape[1]
+    assert direct_gamma.shape == protein_gamma.shape == water_gamma.shape == electrostatic_gamma.shape
+    # efficiency stuff
+    #coefficient_lambda_gamma_direct = -lambda_direct*direct_gamma
+    #coefficient_lambda_gamma_protein = -lambda_protein*protein_gamma
+    num_aa = dist_mat.shape[0]
+    num_aa_types = direct_gamma.shape[0]
+    # precompute rho
+    rho_array = np.zeros(num_aa)
+    for i in prange(num_aa):
+        rho_array[i] = compute_rho_i(i, min_seq_sep_rho, chain_starts, chain_ends, dist_mat)
+    # main code
+    J = np.zeros((num_aa, num_aa, num_aa_types, num_aa_types))
+    for i in prange(num_aa):
+        for j in range(num_aa):
+            if i==j:
+                J[i,j,:,:] = 0.0
+                continue
+            dist_ij = dist_mat[i,j]
+            rho_i = rho_array[i]
+            rho_j = rho_array[j]
+            same_chain = check_same_chain(i, j, chain_starts, chain_ends)
+            contact_mask_ij = mask_of_pair(min_seq_sep_contact, abs(j-i), 0, max_dist_contact, same_chain, dist_ij)
+            electrostatic_mask_ij = mask_of_pair(min_seq_sep_electrostatic, abs(j-i), 0, max_dist_electrostatic, same_chain, dist_ij)
+            for qi in range(num_aa_types):
+                for qj in range(qi, num_aa_types):
+                    gamma_dij = direct_gamma[qi,qj]
+                    gamma_pij = protein_gamma[qi,qj]
+                    gamma_wij = water_gamma[qi,qj]
+                    gamma_eij = electrostatic_gamma[qi,qj]
+                    direct_energy = compute_direct_potential_ij_from_distij_gamma(dist_ij, lambda_direct, gamma_dij)
+                    protein_energy, water_energy = compute_long_potentials_ij_from_rho_distij_gamma(
+                        dist_ij, rho_i, rho_j, lambda_protein, gamma_pij, lambda_water, gamma_wij)
+                    contact_energy = contact_mask_ij * (direct_energy + protein_energy + water_energy)
+                    electrostatic_energy = electrostatic_mask_ij * compute_electrostatic_potential_ij_from_distij_gamma(
+                                                                        l_D, dist_ij, lambda_electrostatic, gamma_eij)
+                    #                         vvv I DON'T KNOW WHERE THIS -1 COMES FROM!
+                    energy = contact_energy + -1*electrostatic_energy
+                    J[i,j,qi,qj] = energy
+                    J[i,j,qj,qi] = energy
+    J = -J # i guess we define it as the negative of the actual potential?
+    return J
+compute_potts_model_J_parallel = njit(signature_or_function=signature, parallel=True)(compute_potts_model_J)
+compute_potts_model_J = njit(signature_or_function=signature)(compute_potts_model_J)
+#
+########################################################################################
+# PAIR ENERGY MATRIX FOR FRUSTRATION CALCULATIONS -- NOT SURE WHAT TO DO WITH THIS. MIGHT DELETE
+"""
 signature = float64[:,:](float64,
                          int64, int64,
-                         int64[:], int64[:],
+                         int64[:], int64[:], float64,
                          float64[:,:],
                          float64, float64[:,:],
                          float64, float64[:,:],
@@ -1361,7 +1458,7 @@ signature = float64[:,:](float64,
                          int64[:])
 def compute_pair_energy_matrix(l_D,
                        min_seq_sep_rho, min_seq_sep_frust_index,
-                       chain_starts, chain_ends,
+                       chain_starts, chain_ends, max_dist,
                        dist_mat,
                        lambda_direct, direct_gamma,
                        lambda_protein, protein_gamma, 
@@ -1369,7 +1466,7 @@ def compute_pair_energy_matrix(l_D,
                        lambda_burial, burial_gamma,
                        lambda_electrostatic, electrostatic_gamma,
                        seq_index):
-    """
+    """"""
     Make matrix of the same shape as the distance matrix, 
     where each element is the pair energy, or np.nan if masked.
 
@@ -1382,7 +1479,7 @@ def compute_pair_energy_matrix(l_D,
     pair_energy_matrix : np.array(dist_mat.shape)
         matrix where the element (i,j) is the pair energy of (i,j)
         (if unmasked) or np.nan (if masked)
-    """
+    """"""
     # Pre-compute rho for all residues
     num_res = dist_mat.shape[0]
     rho_array = np.zeros(num_res)
@@ -1395,10 +1492,10 @@ def compute_pair_energy_matrix(l_D,
         for j in range(i,num_res):
             # check mask
             same_chain = check_same_chain(i, j, chain_starts, chain_ends)
-            # we're computing direct, long, and electrostatics, so use 
-            # the most conservative distance cutoff
-            # (which happens to be electrostatics)
-            unmasked = mask_of_pair(min_seq_sep_frust_index, abs(i-j), 0.0, 10*l_D,
+            # the idea is that this is the matrix we'll use to calculate frustration indices,
+            # so we set the minimum distance to 0 (as it always is for frustration calculations)
+            # and let the maximum distance be a variable
+            unmasked = mask_of_pair(min_seq_sep_frust_index, abs(i-j), 0.0, max_dist,
                                  same_chain, dist_mat[i,j],)
             if unmasked:
                 pair_energy_matrix[i,j] = compute_pair_energy_ij_from_rho(
@@ -1417,3 +1514,4 @@ def compute_pair_energy_matrix(l_D,
     return pair_energy_matrix
 compute_pair_energy_matrix_parallel = njit(signature_or_function=signature, parallel=True)(compute_pair_energy_matrix)
 compute_pair_energy_matrix = njit(signature_or_function=signature)(compute_pair_energy_matrix)
+"""
