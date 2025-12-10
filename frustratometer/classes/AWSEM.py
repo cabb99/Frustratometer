@@ -12,7 +12,7 @@ import os
 
 __all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble', 'AWSEMVariancePotts']
 
-class Parameters(BaseModel):
+class AWSEMHamiltonianParameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
     """Default parameters for AWSEM energy calculations."""
     k_contact: float = Field(4.184, description="""
@@ -57,7 +57,7 @@ class Parameters(BaseModel):
 
     # We might not know the order of amino acids in our alphabet at the time of instantiating this class
     # (this happens the above gammas are Paths), so we'll have to build the electrostatic "gamma" when 
-    # initializing AWSEMBase. Fortunately, we can still specify everything we need to know in this dict.
+    # initializing _AWSEMBase. Fortunately, we can still specify everything we need to know in this dict.
     charge_dict : dict = Field({'A':0.0,'C':0.0,'D':-1.0,'E':-1.0,
                                 'F':0.0,'G':0.0,'H':0.0,'I':0.0,
                                 'K':1.0,'L':0.0,'M':0.0,'N':0.0,'P':0.0,
@@ -66,7 +66,11 @@ class Parameters(BaseModel):
                                 description='charge of each amino acid type that may be used')
 
 
-class AWSEMBase(Frustratometer):
+class _AWSEMBase(Frustratometer):
+    """
+    Base class for potts model and frustration calculations
+    with the AWSEM Hamiltonian.
+    """
 
     def __init__(self, 
                  sequence: str,
@@ -74,7 +78,8 @@ class AWSEMBase(Frustratometer):
                  potts: bool=False,
                  **parameters)->object:
         """
-        Generate AWSEM object
+        Set attributes that do not depend on the implementations of
+        the indicator function and potts model setup calculations.
 
         Parameters
         ----------
@@ -85,10 +90,13 @@ class AWSEMBase(Frustratometer):
         potts: bool
             Whether to set up the potts model (can be RAM-intensive and time-intensive),
             which is unnecessary if all you want to get is the indicator functions.
-        
+        **parameters:
+            Used to initialize an AWSEMHamiltonianParameters, which becomes an attribute
+            of this class and helps us organize the parameters of our AWSEM Hamiltonian
+
         Returns
         -------
-        AWSEM object
+        _AWSEMBase object
         """
 
         # set sequence based on argument
@@ -105,23 +113,26 @@ class AWSEMBase(Frustratometer):
 
         if self.potts and not self.expose_indicator_functions:
             print(f"""
-                     You requested storing the potts model as an object attribute by using potts=True
-                     but requested NOT storing the indicator functions as object attributes by using 
-                     expose_indicator_functions=False. Since the potts model requires far more RAM than
-                     the indicator functions, we will override your indicator function request
-                     and store them anyway. This has no effect on the accuracy of any calculations.
-                     
-                     Setting {self.__class__}.expose_indicator_functions = True""")
+                You requested storing the potts model as an object attribute by using potts=True
+                but requested NOT storing the indicator functions as object attributes by using 
+                expose_indicator_functions=False. Since the potts model requires far more RAM than
+                the indicator functions, we will override your indicator function request
+                and store them anyway. This will have no effect on the accuracy of any calculations.
+                
+                Setting {self.__class__}.expose_indicator_functions = True""")
             self.expose_indicator_functions = True
 
         # parse other arguments
-        p = Parameters(**parameters)
+        p = AWSEMHamiltonianParameters(**parameters)
         if p.min_sequence_separation_contact is None:
             p.min_sequence_separation_contact = 1
         if p.min_sequence_separation_rho is None:
             p.min_sequence_separation_rho = 1
         if p.min_sequence_separation_electrostatics is None:
             p.min_sequence_separation_electrostatics = 1
+        # doing this arguably defeats the purpose of having an 
+        # AWSEMHamilonianParams class;
+        # we should think about how we can clean up the namespace of this (_AWSEMBase) class
         for field, value in p:
             setattr(self, field, value)
         self.p = p
@@ -175,10 +186,11 @@ class AWSEMBase(Frustratometer):
             try:
                 ordered_charges[counter] = self.charge_dict[gamma.alphabet[counter]]
             except KeyError as e:
-                raise Exception(f"""One-letter code {order[counter]} from alphabet {gamma.alphabet}
-                                    with unknown charge. If use of this noncanonical AA in intentional,
-                                    you must supply a custom charge_dict 
-                                    so that we know how to calculate the electrostatic potential.""")
+                raise Exception(f"""
+                One-letter code {order[counter]} from alphabet {gamma.alphabet}
+                with unknown charge. If use of this noncanonical AA in intentional,
+                you must supply a custom charge_dict 
+                so that we know how to calculate the electrostatic potential.""")
         charges2 = ordered_charges[:,np.newaxis] * ordered_charges[np.newaxis,:]
         if self.p.k_electrostatics != 0:
             self.sequence_cutoff=min(self.p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
@@ -205,6 +217,9 @@ class AWSEMBase(Frustratometer):
         self._native_energy = None
         self._seq_index = None
 
+    ##################################################################################
+    # quantities previously defined as attributes that are calculated based on
+    # other attributes should be converted to properties
     @property
     def electrostatics_gamma(self): # used to be distinct from charges2 but eliminating the distinction
         return self.charges2        # makes these gammas more analogous to the other gammas
@@ -245,17 +260,9 @@ class AWSEMBase(Frustratometer):
                                 directly is not allowed. Initialize a new instance with a different
                                 {self.__class__}.k_contact, {self.__class__}.burial_gamma, {self.__class__}.direct_gamma, 
                                 {self.__class__}.protein_gamma, or {self.__class__}.water_gamma instead.""")
+    ##################################################################################
 
-    def native_energy(self):
-        if self.potts: 
-            if not hasattr(self, 'potts_model'): # create potts model if it doesn't already exist
-                self.calculate_energy_and_potts()
-            energy = super().native_energy() # method to compute native energy given potts model
-        else:
-            energy = 0 # fill in numba function here
-        #self._native_energy = energy # maybe _native_energy is needed for compatibility with certain things?
-        return energy
-
+    # methods for subclass initialization
     def subclass_setup_helper(self):
         """
         This method calls methods to calculate native indicator functions (optional), 
@@ -263,7 +270,7 @@ class AWSEMBase(Frustratometer):
         and potts model (optional).
 
         This method is intended to be called as the last step of __init__
-        in each subclass of AWSEMBase. The subclasses may differ in how
+        in each subclass of _AWSEMBase. The subclasses may differ in how
         they load in the structural information (the part of __init__ 
         preceding the call to this method) and how they implement
         the calculate_indicators and calculate_masks methods called 
@@ -389,6 +396,18 @@ class AWSEMBase(Frustratometer):
                      If you want to get the energies for your own purposes, set self.potts
                      to True and then call this method again.""")
 
+    # not really sure what the point of this is
+    def native_energy(self):
+        if self.potts: 
+            if not hasattr(self, 'potts_model'): # create potts model if it doesn't already exist
+                self.calculate_energy_and_potts()
+            energy = super().native_energy() # method to compute native energy given potts model
+        else:
+            energy = 0 # fill in numba function here
+        #self._native_energy = energy # maybe _native_energy is needed for compatibility with certain things?
+        return energy
+
+    # methods to calculate different kinds of frustration
     def compute_configurational_decoy_statistics(self):
         raise NotImplementedError("Subclasses must define this method")
 
@@ -402,7 +421,7 @@ class AWSEMBase(Frustratometer):
     def mutational_frustration(self):
         # This algorithm is defined in the Frustratometer class
         # because it applies to both AWSEM and DCA frustratometry,
-        # and both the AWSEMBase and DCA classes inherit from Frustratometer.
+        # and both the _AWSEMBase and DCA classes inherit from Frustratometer.
         # Our goal here is just to provide an interface that matches that used
         # for configurational frustration, which has no DCA analog and therefore
         # is not defined in Frustratometer (although Frustratometer.frustration
@@ -415,8 +434,14 @@ class AWSEMBase(Frustratometer):
         return super().frustration(kind='singleresidue')
 
 
-class AWSEM(AWSEMBase):
+class AWSEM(_AWSEMBase):
+    """
+    The main class that the user will invoke 
+    for potts model and frustration calculations
+    with the AWSEM Hamiltonian.
 
+    However, users may also be interested in AWSEMIndicators.
+    """
     def __init__(self, 
                  pdb_structure: object | tuple, # tuple is an object, but this clarifies what we expect
                  sequence: str =None,
@@ -424,6 +449,38 @@ class AWSEM(AWSEMBase):
                  potts: bool=False,
                  alt_sigma_wat: bool=False,
                  **parameters)->object:
+        """
+        Pass parameters to _AWSEMBase to 
+        set attributes that DO NOT depend on the implementations of
+        the indicator function and potts model setup calculations,
+        then set attributes that DO depend on the implementations
+        of the indicator function and potts model setup calculations.
+
+        Parameters
+        ----------
+        pdb_structure: object | tuple
+            A Structure object or tuple of distance matrices characterizing the conformer
+            to be used (see self.setup_structure)
+        sequence: str
+            The amino acid sequence
+        expose_indicator_functions: bool
+            If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
+        potts: bool
+            Whether to set up the potts model (can be RAM-intensive and therefore time-intensive),
+            which is unnecessary if all you want to get is the indicator functions or 
+            perform certain frustration calculations, for which energies can be computed 
+            on the fly instead of saved in memory.
+        alt_sigma_wat : bool=False
+            Whether to use alternative functional form for sigma_wat (experimental feature)
+        **parameters:
+            Used to initialize an AWSEMHamiltonianParameters, which becomes an attribute
+            of this class and helps us organize the parameters of our AWSEM Hamiltonian
+
+        Returns
+        -------
+        AWSEM object
+        """
+
         # assume the user wanted the sequence from the pdb structure if not given
         if not sequence:
             try:
@@ -437,13 +494,16 @@ class AWSEM(AWSEMBase):
                                         as a separate argument to this class.""")
                 else:
                     raise
+
         # load structure-independent parameters and methods
         super().__init__(sequence, expose_indicator_functions, potts, **parameters) 
         self.alt_sigma_wat = alt_sigma_wat
+
         # set up strucure
         self.setup_structure(pdb_structure)
         self.subclass_setup_helper()
 
+    # methods for structure-dependent stuff
     def setup_structure(self, pdb_structure):
         if not isinstance(pdb_structure, tuple): # alt_conf should be our custom Structure object
                                                  # maybe our type check here should be more restrictive,
@@ -489,22 +549,6 @@ class AWSEM(AWSEMBase):
         else:
             raise AssertionError("unexpected else block")
 
-    @property
-    def pdb_structure(self):
-        return self._pdb_structure
-    @pdb_structure.setter
-    def pdb_structure(self,pdb_structure):
-        # reset structural attributes
-        self.setup_structure(pdb_structure)
-        # check that our new structure is compatible with our old one
-        if self.N != len(self.sequence):
-            breakpoint()
-            raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
-        self.subclass_setup_helper()
-    def change_conformation(self,alt_conf):
-        # this method is an alias for the setter
-        self.pdb_structure = alt_conf
-
     def calculate_indicators(self):
         if self.expose_indicator_functions:
             # Calculate rho
@@ -542,11 +586,35 @@ class AWSEM(AWSEMBase):
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length)
             self.electrostatics_indicator = electrostatics_indicator 
         else:
-            print("""self.expose_indicator_functions was False; will not calculate and store indicator functions.
-                     Indicator functions will be computed on the fly as needed for energy calculations and then discarded.
-                     If you want to get the indicator functions for your own purposes, set self.expose_indicator_functions
-                     to True and then call this method again.""")
+            print("""
+                self.expose_indicator_functions was False; 
+                will not calculate and store indicator functions.
+                Indicator functions will be computed on the fly as needed 
+                for energy calculations and then discarded.
+                If you want to get the indicator functions for your own purposes, 
+                set expose_indicator_functions to True 
+                and then call self.calculate_indicators().""")
 
+    # make self.pdb_structure into a property so that structure-dependent
+    # stuff is recalculated automatically when we change the conformation
+    @property
+    def pdb_structure(self):
+        return self._pdb_structure
+    @pdb_structure.setter
+    def pdb_structure(self,pdb_structure):
+        # reset structural attributes
+        self.setup_structure(pdb_structure)
+        # check that our new structure is compatible with our old one
+        if self.N != len(self.sequence):
+            breakpoint()
+            raise ValueError("The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object.")
+        self.subclass_setup_helper()
+    def change_conformation(self,alt_conf):
+        # this method is an alias for the setter
+        self.pdb_structure = alt_conf
+
+    # self.masked_indicators is calculated from other attributes, 
+    # so it should be made into a property
     @property
     def masked_indicators(self):
         # store indicators and gammas for our particular sequence as attributes
@@ -568,19 +636,7 @@ class AWSEM(AWSEMBase):
                                  {self.__class__}.sequence_mask_contact,
                                  or {self.__class__}.electrostatics_mask instead.""")
 
-    def calculate_energy_and_potts(self):
-        super().calculate_energy_and_potts()
-        # if expose_indicator_functions is off, we should never set the attributes in the first place
-        #if not self.expose_indicator_functions:
-        #    del self.burial_indicator
-        #    del self.direct_indicator
-        #    del self.water_indicator
-        #    del self.protein_indicator
-        #    if "electrostatics_indicator" in dir(self):
-        #        # won't exist if electrostatics are turned off
-        #        del self.electrostatics_indicator
-        #    del self.indicators
-
+    # implementations of frustration algorithms
     def compute_configurational_decoy_statistics(self, n_decoys=4000,aa_freq=None):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
         _AA = self.gamma.alphabet #'ARNDCQEGHILKMFPSTWYV'
@@ -697,8 +753,14 @@ class AWSEM(AWSEMBase):
         return configurational_energies #, pd.DataFrame(decoy_data, columns=decoy_data_columns)
     
 
-class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyEvaluatorFromIndicators?
-
+class AWSEMIndicators(_AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyEvaluatorFromIndicators?
+    """
+    This class is intended to be equivalent to AWSEM
+    but allows initialization from numpy arrays of
+    indicator functions, rather than calculating
+    those indicators from a Structure or set of
+    distance matrices.
+    """
     def __init__(self, 
                  burial_indicator: np.ndarray,
                  direct_indicator: np.ndarray,
@@ -707,10 +769,15 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
                  electrostatics_indicator: Union[np.ndarray, None],
                  sequence: str,          # sequence is optional if we initialize from a Structure but not here
                  expose_indicator_functions: bool=False,
+                 potts : bool=False,
                  absolute_value_gamma: bool=False,
                  **parameters)->object:
         """
-        A stripped-down version of the AWSEM class that can be initialized from a set of indicator functions
+        Pass parameters to _AWSEMBase to 
+        set attributes that DO NOT depend on the implementations of
+        the indicator function and potts model setup calculations,
+        then set attributes that DO depend on the implementations
+        of the indicator function and potts model setup calculations.
 
         Parameters
         ----------
@@ -729,6 +796,10 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. 
         expose_indicator_functions: bool
             If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
+        potts : bool
+            Whether to set up the potts model (can be RAM-intensive and therefore time-intensive),
+            which is unnecessary if all you want is to perform certain frustration calculations, 
+            for which energies can be computed on the fly instead of saved in memory.        
         absolute_value_gamma: bool
             If True, replace gammas with their absolute values. This is helpful for the standard deviation approximation
 
@@ -737,10 +808,7 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
         AWSEMIndicators object
 
         """
-        # if we already have our indicator functions, 
-        # our goal is probably to compute the potts model,
-        # so we'll just hard code a value of True for that argument  VVVV
-        super().__init__(sequence, expose_indicator_functions, potts=True, **parameters)
+        super().__init__(sequence, expose_indicator_functions, potts, **parameters)
         self.burial_indicator = burial_indicator
         self.direct_indicator = direct_indicator
         self.protein_indicator = protein_indicator
@@ -777,7 +845,13 @@ class AWSEMIndicators(AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergyE
     def calculate_indicators(self):
         pass # the function was initialized with indicators, so there's nothing to do
 
-class AWSEMVariancePotts(AWSEMBase):
+class AWSEMVariancePotts(_AWSEMBase):
+    """
+    EXPERIMENTAL CLASS THAT TRIES TO REPURPOSE OUR CODE TO CREATE
+    A SPECIAL KIND OF "POTTS MODEL" WHERE THE "ENERGY" IS ACTUALLY
+    THE VARIANCE OF THE ENERGIES OF A PREDEFINED SET OF DECOY CONFORMERS.
+    THIS CLASS IS STILL UNDER DEVELOPMENT.
+    """
     def __init__(self, 
                  covariance_matrix: np.ndarray,
                  sequence: str,          # sequence is optional if we initialize from a Structure but not here
@@ -785,6 +859,10 @@ class AWSEMVariancePotts(AWSEMBase):
                  absolute_value_gamma: bool=False,
                  **parameters)->object:
         """
+        EXPERIMENTAL CLASS THAT TRIES TO REPURPOSE OUR CODE TO CREATE
+        A SPECIAL KIND OF "POTTS MODEL" WHERE THE "ENERGY" IS ACTUALLY
+        THE VARIANCE OF THE ENERGIES OF A PREDEFINED SET OF DECOY CONFORMERS.
+        THIS CLASS IS STILL UNDER DEVELOPMENT.
 
         Parameters
         ----------
@@ -929,7 +1007,7 @@ class AWSEMVariancePotts(AWSEMBase):
         # ???????????????? why are we multiplying electrostatics by k_contact? 
         # electrostatics_gamma already had the electrostatics weight k_electrostatics multiplied in and k_electrostatics
         # isn't necessarily equal to k_contact. Anyway, i'm now going to factor k_electrostatics out of electrostatics_gamma
-        # in the AWSEMBase class
+        # in the _AWSEMBase class
         # probably should be
         # elec = elec[elec != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.electrostatics_gamma[np.newaxis,np.newaxis,:,:][J_index[3]]*(-self.k_electrostatics)
         #############################################################################################################################
@@ -983,6 +1061,13 @@ class AWSEMVariancePotts(AWSEMBase):
         self._native_energy=None # don't know what this does
 
 class DecoyEnsemble():
+    """
+    EXPERIMENTAL CLASS THAT ITERATIVELY COMPUTES INDICATOR FUNCTIONS
+    AND STATISTICS FOR A SET OF CONFORMERS, SPECIFIED AS A PYTHON
+    Generator OF Structure OBJECTS.
+    THIS CLASS IS STILL UNDER DEVELOPMENT AND MAYBE SHOULD BE
+    MOVED OUT OF THIS MODULE.
+    """
 
     def __init__(self, 
                  pdb_structures: Generator[object,None,None],
@@ -1000,7 +1085,7 @@ class DecoyEnsemble():
         
         Returns
         -------
-        DecoyEnsemble object, which holds indicator arrays (and gammas???) computed by the AWSEM class.
+        DecoyEnsemble object
         """
         # the AWSEM class takes care of the indicator calculation (including masking) for us
         #     AWSEM normally accepts an amino acid sequence argument, but we don't need that here
