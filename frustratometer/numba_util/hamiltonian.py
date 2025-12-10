@@ -225,7 +225,8 @@ def check_same_chain(i, j, chain_starts, chain_ends):
             break # this could save us a couple iterations, probably doesn't matter
     return same_chain
 #
-@njit(signature_or_function=boolean(int64, float64, float64, int64, boolean, float64))
+#@njit(signature_or_function=boolean(int64, float64, float64, int64, boolean, float64))
+@njit(signature_or_function=float64(int64, float64, float64, int64, boolean, float64))
 def mask_of_pair(min_seq_sep, seq_sep, min_dist, max_dist, same_chain, dist_ij):
     """
     Get a bool representing whether a pair of residues having
@@ -241,10 +242,12 @@ def mask_of_pair(min_seq_sep, seq_sep, min_dist, max_dist, same_chain, dist_ij):
     mask_bit : bool
         Whether pair should be considered unmasked (True) or masked (False).
     """
-    if min_dist<=dist_ij<=max_dist and (min_seq_sep<=seq_sep or not same_chain):
-        mask_bit = True
+    if (min_dist<=dist_ij) and (dist_ij<=max_dist) and ((min_seq_sep<=seq_sep) or (not same_chain)):
+        if seq_sep==25 and 9.05<dist_ij<9.07:
+            print('if triggered')
+        mask_bit = 1.0#True
     else:
-        mask_bit = False
+        mask_bit = 0.0#False
     return mask_bit
 #
 @njit(signature_or_function=float64(float64, float64, float64))
@@ -735,6 +738,7 @@ def compute_long_potentials_ij_from_rho_distij_gamma(dist_ij, rho_i, rho_j,
         set to 0 if the pair is masked.
     """    
     sigma_water = compute_sigma_water(rho_i, rho_j)
+    #assert 0 < sigma_water < 1, f'rho_i: {repr(rho_i)}, rho_j: {repr(rho_j)}, sigma_water: {repr(sigma_water)}'
     protein_energy, water_energy = compute_long_potentials_ij_from_sigmawater_distij_gamma(
         dist_ij, sigma_water, lambda_protein, gamma_p, lambda_water, gamma_w)
     return protein_energy, water_energy
@@ -1413,6 +1417,8 @@ def compute_potts_model_J(
     rho_array = np.zeros(num_aa)
     for i in prange(num_aa):
         rho_array[i] = compute_rho_i(i, min_seq_sep_rho, chain_starts, chain_ends, dist_mat)
+    #assert rho_array[1] == 345, rho_array[1]
+    #assert rho_array[26] ==234789, rho_array[26]
     # main code
     J = np.zeros((num_aa, num_aa, num_aa_types, num_aa_types))
     for i in prange(num_aa):
@@ -1424,7 +1430,36 @@ def compute_potts_model_J(
             rho_i = rho_array[i]
             rho_j = rho_array[j]
             same_chain = check_same_chain(i, j, chain_starts, chain_ends)
-            contact_mask_ij = mask_of_pair(min_seq_sep_contact, abs(j-i), 0, max_dist_contact, same_chain, dist_ij)
+            #assert min_seq_sep_contact is int64, min_seq_sep_contact
+            #assert abs(j-i) is int64
+            #assert 0.0 is float64
+            #assert max_dist_contact is float64
+            #assert same_chain is boolean
+            #assert dist_ij is float64
+            contact_mask_ij = mask_of_pair(min_seq_sep=min_seq_sep_contact, seq_sep=abs(j-i), 
+                                           min_dist=0.0, max_dist=max_dist_contact, 
+                                           same_chain=same_chain, dist_ij=dist_ij)
+            if (0.0<=dist_ij) and (dist_ij<=max_dist_contact) and ((min_seq_sep_contact<=abs(j-i)) or (not same_chain)):
+                mask_bit2 = True
+            else:
+                mask_bit2 = False
+            contact_mask_ij = mask_bit2 # temporary
+            if i==1 and j==26:
+                #print(direct_energy)
+                #print(protein_energy)
+                #print(water_energy)
+                print(f'contact_mask_ij: {contact_mask_ij}')
+                print(f'mask_bit2: {mask_bit2}')
+                #print(contact_energy)
+                if contact_mask_ij is False or contact_mask_ij==0.0:
+                    print('contact_mask_ij is False')
+                    #min_seq_sep_contact, abs(j-i), 0, max_dist_contact, same_chain, dist_ij
+                    print(f'    min_seq_sep_contact: {min_seq_sep_contact}')
+                    print(f'    abs(j-i): {abs(j-i)}')
+                    print(f'    0.0: {0.0}')
+                    print(f'    max_dist_contact==9.499: {max_dist_contact==9.499}')
+                    print(f'    same_chain: {same_chain}')
+                    print(f'    9.05<dist_ij<9.07: {9.05<dist_ij<9.07}')
             electrostatic_mask_ij = mask_of_pair(min_seq_sep_electrostatic, abs(j-i), 0, max_dist_electrostatic, same_chain, dist_ij)
             for qi in range(num_aa_types):
                 for qj in range(qi, num_aa_types):
@@ -1435,6 +1470,11 @@ def compute_potts_model_J(
                     direct_energy = compute_direct_potential_ij_from_distij_gamma(dist_ij, lambda_direct, gamma_dij)
                     protein_energy, water_energy = compute_long_potentials_ij_from_rho_distij_gamma(
                         dist_ij, rho_i, rho_j, lambda_protein, gamma_pij, lambda_water, gamma_wij)
+                    #if 6.5 < dist_ij < max_dist_contact:
+                    #    assert abs(gamma_wij) > 0.0003 # the smallest gamma
+                        #assert protein_energy != 0
+                        #assert water_energy != 0
+                    #    assert abs(protein_energy + water_energy) >= 0.00001
                     contact_energy = contact_mask_ij * (direct_energy + protein_energy + water_energy)
                     electrostatic_energy = electrostatic_mask_ij * compute_electrostatic_potential_ij_from_distij_gamma(
                                                                         l_D, dist_ij, lambda_electrostatic, gamma_eij)
@@ -1442,7 +1482,24 @@ def compute_potts_model_J(
                     energy = contact_energy + electrostatic_energy
                     J[i,j,qi,qj] = energy
                     J[i,j,qj,qi] = energy
+                    #if i==1 and j==26 and qi==0 and qj==0:
+                    #    print(direct_energy)
+                    #    print(protein_energy)
+                    #    print(water_energy)
+                    #    print(contact_mask_ij)
+                    #    print(contact_energy)
+                    #    if contact_mask_ij is False:
+                    #        print('contact_mask_ij is False')
+                    #        #min_seq_sep_contact, abs(j-i), 0, max_dist_contact, same_chain, dist_ij
+                    #        print(f'    min_seq_sep_contact: {min_seq_sep_contact}')
+                    #        print(f'    abs(j-i): {abs(j-i)}')
+                    #        print(f'    0.0: {0.0}')
+                    #        print(f'    max_dist_contact==9.499: {max_dist_contact==9.499}')
+                    #        print(f'    same_chain: {same_chain}')
+                    #        print(f'    9.05<dist_ij<9.07: {9.05<dist_ij<9.07}')
     J = -J # i guess we define it as the negative of the actual potential?
+    #np.save('new_way_J.npy', J)
+    #print(J[1,26,0,0])  # -0.0
     return J
 compute_potts_model_J_parallel = njit(signature_or_function=signature, parallel=True)(compute_potts_model_J)
 compute_potts_model_J = njit(signature_or_function=signature)(compute_potts_model_J)

@@ -331,8 +331,29 @@ class AWSEMBase(Frustratometer):
                 self.k_electrostatics, self.electrostatics_gamma)
             #breakpoint()
             #self.potts_model['J'] = ham.compute_potts_model_J(
-           #     self.distance_matrix, )
-
+            #     self.distance_matrix, )
+            J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
+            h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
+            
+            # compute burial and contact energies
+            old_burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :] 
+            direct = self.direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
+            water_mediated = self.water_indicator * self.water_gamma[J_index[2], J_index[3]]
+            protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
+            contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * self.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+            
+            electrostatics_energy = -self.k_electrostatics * self.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+                * self.electrostatics_mask[:,:,np.newaxis,np.newaxis]
+            contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
+            old_contact_energy = contact_energy
+            # Compute potts model
+            old_potts_model = {}
+            old_potts_model['h'] = old_burial_energy.sum(axis=-1)[:, :]
+            old_potts_model['J'] = old_contact_energy.sum(axis=0)[:, :, :, :]
+            diff_h = np.max(np.abs(old_potts_model['h'] - self.potts_model['h']))
+            assert diff_h < 3E-4, diff_h
+            diff_J = np.max(np.abs(old_potts_model['J'] - self.potts_model['J']))
+            assert diff_J < 3E-4, diff_J
             """
             J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
             h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
@@ -356,11 +377,12 @@ class AWSEMBase(Frustratometer):
             assert self.potts_model['h'].shape == (self.N, self.q), self.potts_model['h'].shape
             self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, :, :]#self.aa_map_awsem_x, self.aa_map_awsem_y]
             assert self.potts_model['J'].shape == (self.N, self.N, self.q, self.q), self.potts_model['J'].shape 
+            breakpoint()
+            """
             # Set the gap energy to zero
             #self.potts_model['h'][:, 0] = 0
             #self.potts_model['J'][:, :, 0, :] = 0
             #self.potts_model['J'][:, :, :, 0] = 0
-            """
         else:
             print("""self.potts was False; will not calculate and store potts model.
                      Energies will be computed on the fly as needed for frustration calculations and then discarded.

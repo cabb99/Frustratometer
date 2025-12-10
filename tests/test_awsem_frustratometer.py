@@ -2,6 +2,7 @@ import pytest
 import pandas as pd
 import numpy as np
 import frustratometer
+from frustratometer.numba_util import hamiltonian as ham
 from pathlib import Path
 
 
@@ -206,6 +207,76 @@ def test_single_residue_AWSEM_energy():
     test_residue_total_energy=(h +j_prime.sum(axis=0))/4.184
 
     assert (abs(np.array(lammps_single_frustration_dataframe["native_energy"])-test_residue_total_energy) < 1E-1).all()
+
+
+
+def test_numba_potts_construction():
+    """Check that the potts models constructed in the old (numpy vectorized)
+       and new (numba) ways are identical. By doing this for a sufficiently 
+       diverse set of structures, we also implicitly verify that the numba
+       functions (well, the ones invoked by the potts model setup)
+       compute the potential accurately."""
+    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A")
+    model=frustratometer.AWSEM(structure,distance_cutoff_contact=9.499,
+                                                  min_sequence_separation_contact=2,
+                                                  k_electrostatics=0,
+                                                   expose_indicator_functions=True, potts=False)
+    ########################################
+    # old way -- note that these are all negatives of the actual energy:
+    #            burial, direct, protein, water don't have a factor of -1 when the should,
+    #            and electrostatics has a factor of -1 when it shouldn't. 
+    #            For some reason, this is just how we do the potts model.
+    J_index = np.meshgrid(range(model.N), range(model.N), range(model.q), range(model.q), indexing='ij', sparse=False)
+    h_index = np.meshgrid(range(model.N), range(model.q), indexing='ij', sparse=False)
+    
+    # compute burial and contact energies
+    old_burial_energy = 0.5 * model.p.k_contact * model.burial_gamma[h_index[1]] * model.burial_indicator[:, np.newaxis, :] 
+    direct = model.direct_indicator * model.direct_gamma[J_index[2], J_index[3]]
+    water_mediated = model.water_indicator * model.water_gamma[J_index[2], J_index[3]]
+    protein_mediated = model.protein_indicator  * model.protein_gamma[J_index[2], J_index[3]]
+    contact_energy = model.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * model.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+    
+    electrostatics_energy = -model.k_electrostatics * model.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * model.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+        * model.electrostatics_mask[:,:,np.newaxis,np.newaxis]
+    contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
+    old_contact_energy = contact_energy
+    # Compute potts model
+    old_potts_model = {}
+    old_potts_model['h'] = old_burial_energy.sum(axis=-1)[:, :]
+    old_potts_model['J'] = old_contact_energy.sum(axis=0)[:, :, :, :] 
+    np.save('old_way_h.npy',old_potts_model['h'])
+    np.save('old_way_J.npy',old_potts_model['J'])
+    ###############################################
+    # new way
+    new_potts_model = {'h':None, 'J':None}
+    chain_starts = np.array([0])
+    chain_ends = np.array([len(model.seq_index)-1])
+    if model.distance_cutoff_contact is None:
+        contact_max_dist = 12.5
+    else:
+        contact_max_dist = model.distance_cutoff_contact
+    new_potts_model['h'] = ham.compute_potts_model_h_parallel(
+        model.min_sequence_separation_rho,
+        chain_starts, chain_ends,
+        model.distance_matrix,  
+        model.k_contact, model.burial_gamma)
+    new_potts_model['J'] = ham.compute_potts_model_J_parallel(
+        model.electrostatics_screening_length, model.min_sequence_separation_rho, 
+        model.min_sequence_separation_contact, model.min_sequence_separation_electrostatics,
+        chain_starts, chain_ends, 
+        contact_max_dist, 10*model.electrostatics_screening_length, # maximum distance for contact potential, maximum for electrostatics
+        model.distance_matrix,  
+        model.k_contact, model.direct_gamma, 
+        model.k_contact, model.protein_gamma,
+        model.k_contact, model.water_gamma, 
+        model.k_electrostatics, model.electrostatics_gamma)
+    #np.save('new_way_h.npy',new_potts_model['h'])
+    #np.save('new_way_J.npy',new_potts_model['J'])
+    assert np.max(np.abs(old_potts_model['h'] - new_potts_model['h'])) < 1E-5 # 10^-5 kJ/mol error is acceptable
+    assert np.max(np.abs(old_potts_model['J'] - new_potts_model['J'])) < 1E-5 # 10^-5 kJ/mol error is acceptable
+
+
+
 
 def test_contact_pair_AWSEM_energy():
     #Import Lammps AWSEM Frustratometer mutational frustration values
@@ -414,6 +485,70 @@ def test_expose_indicators(structure, k_electrostatics, min_sequence_separation_
     contact_energy_predicted = (contact_gamma * np.concatenate([a.ravel() for a in true_indicator2D])).sum()
     contact_energy_expected = model.couplings_energy()
     assert np.isclose(contact_energy_predicted,contact_energy_expected), f"Expected energy {contact_energy_expected} but got {contact_energy_predicted}"
+
+#@pytest.mark.parametrize("k_electrostatics", [0, 4])
+#@pytest.mark.parametrize("min_sequence_separation_contact", [2, 10])
+#@pytest.mark.parametrize("distance_cutoff_contact", [None, 10])
+#def test_numba_potts_construction(structure, k_electrostatics, min_sequence_separation_contact, distance_cutoff_contact):
+#    """Check that the potts models constructed in the old (numpy vectorized)
+#       and new (numba) ways are identical. By doing this for a sufficiently 
+#       diverse set of structures, we also implicitly verify that the numba
+#       functions (well, the ones invoked by the potts model setup)
+#       compute the potential accurately."""
+#    model=frustratometer.AWSEM(structure,k_electrostatics=k_electrostatics, 
+#                                min_sequence_separation_contact = min_sequence_separation_contact,
+#                                distance_cutoff_contact = distance_cutoff_contact, expose_indicator_functions=True, potts=True)
+#    ########################################
+#    # old way -- note that these are all negatives of the actual energy:
+#    #            burial, direct, protein, water don't have a factor of -1 when the should,
+#    #            and electrostatics has a factor of -1 when it shouldn't. 
+#    #            For some reason, this is just how we do the potts model.
+#    J_index = np.meshgrid(range(model.N), range(model.N), range(model.q), range(model.q), indexing='ij', sparse=False)
+#    h_index = np.meshgrid(range(model.N), range(model.q), indexing='ij', sparse=False)
+#    
+#    # compute burial and contact energies
+#    old_burial_energy = 0.5 * model.p.k_contact * model.burial_gamma[h_index[1]] * model.burial_indicator[:, np.newaxis, :] 
+#    direct = model.direct_indicator * model.direct_gamma[J_index[2], J_index[3]]
+#    water_mediated = model.water_indicator * model.water_gamma[J_index[2], J_index[3]]
+#    protein_mediated = model.protein_indicator  * model.protein_gamma[J_index[2], J_index[3]]
+#    contact_energy = model.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * model.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+#    
+#    electrostatics_energy = -model.k_electrostatics * model.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * model.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+#        * model.electrostatics_mask[:,:,np.newaxis,np.newaxis]
+#    contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
+#    old_contact_energy = contact_energy
+#    # Compute potts model
+#    old_potts_model = {}
+#    old_potts_model['h'] = old_burial_energy.sum(axis=-1)[:, :]
+#    old_potts_model['J'] = old_contact_energy.sum(axis=0)[:, :, :, :] 
+#    ###############################################
+#    # new way
+#    new_potts_model = {'h':None, 'J':None}
+#    chain_starts = np.array([0])
+#    chain_ends = np.array([len(model.seq_index)-1])
+#    if model.distance_cutoff_contact is None:
+#        contact_max_dist = 12.5
+#    else:
+#        contact_max_dist = model.distance_cutoff_contact
+#    new_potts_model['h'] = ham.compute_potts_model_h_parallel(
+#        model.min_sequence_separation_rho,
+#        chain_starts, chain_ends,
+#        model.distance_matrix,  
+#        model.k_contact, model.burial_gamma)
+#    new_potts_model['J'] = ham.compute_potts_model_J_parallel(
+#        model.electrostatics_screening_length, model.min_sequence_separation_rho, 
+#        model.min_sequence_separation_contact, model.min_sequence_separation_electrostatics,
+#        chain_starts, chain_ends, 
+#        contact_max_dist, 10*model.electrostatics_screening_length, # maximum distance for contact potential, maximum for electrostatics
+#        model.distance_matrix,  
+#        model.k_contact, model.direct_gamma, 
+#        model.k_contact, model.protein_gamma,
+#        model.k_contact, model.water_gamma, 
+#        model.k_electrostatics, model.electrostatics_gamma)
+#    #np.save('new_way_h.npy',new_potts_model['h'])
+#    #np.save('new_way_J.npy',new_potts_model['J'])
+#    assert np.max(np.abs(old_potts_model['h'] - new_potts_model['h'])) < 1E-5 # 10^-5 kJ/mol error is acceptable
+#    assert np.max(np.abs(old_potts_model['J'] - new_potts_model['J'])) < 1E-5 # 10^-5 kJ/mol error is acceptable
 
 if __name__ == "__main__":
     pytest.main()
