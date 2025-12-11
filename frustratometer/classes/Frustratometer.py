@@ -67,10 +67,6 @@ class Frustratometer:
             self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask, self.alphabet, 
                                                                   ignore_couplings_of_gaps, ignore_fields_of_gaps)
         else:
-            # For the direct children of this Frustratometer class, DCA and AWSEMBase,  
-            # changing the alphabet or gammas of an instance is not allowed, so there should never be a case 
-            # where we have a previously defined (not None) but "out-of-date" _native_energy.
-            # Still, we will check that our code is working as intended
             new = frustration.compute_native_energy(
                         sequence, self.potts_model, self.mask, self.alphabet, 
                         ignore_couplings_of_gaps, ignore_fields_of_gaps)
@@ -80,8 +76,8 @@ class Frustratometer:
                                         the native energy of your system is now different from what it was
                                         originally computed to be. Our code probably should prevent this 
                                         from happening, but you can prevent it too by not changing the alphabet
-                                        or any other parameters after initializing your DCA or child of 
-                                        AWSEMBase.
+                                        or any other parameters after initializing your DCA or AWSEM-family
+                                        class (anything that inherits from _AWSEMBase).
                                         
                                         Previous value of {self.__class__}._native_energy: {self._native_energy}
                                         New value of {self.__class__}._native_energy: {new}""")
