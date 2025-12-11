@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 from ..utils import _path
 from .. import frustration
@@ -12,7 +13,7 @@ import os
 
 __all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble', 'AWSEMVariancePotts']
 
-class AWSEMHamiltonianParameters(BaseModel):
+class ParametersAWSEM(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
     """Default parameters for AWSEM energy calculations."""
     k_contact: float = Field(4.184, description="""
@@ -75,7 +76,7 @@ class _AWSEMBase(Frustratometer):
     def __init__(self, 
                  sequence: str,
                  expose_indicator_functions: bool=False,
-                 potts: bool=False,
+                 potts_option: bool=False,
                  **parameters)->object:
         """
         Set attributes that do not depend on the implementations of
@@ -87,11 +88,11 @@ class _AWSEMBase(Frustratometer):
             The amino acid sequence
         expose_indicator_functions: bool
             If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
-        potts: bool
+        potts_option: bool
             Whether to set up the potts model (can be RAM-intensive and time-intensive),
             which is unnecessary if all you want to get is the indicator functions.
         **parameters:
-            Used to initialize an AWSEMHamiltonianParameters, which becomes an attribute
+            Used to initialize an ParametersAWSEM, which becomes an attribute
             of this class and helps us organize the parameters of our AWSEM Hamiltonian
 
         Returns
@@ -109,11 +110,11 @@ class _AWSEMBase(Frustratometer):
 
         # whether to store the potts model as an object attribute, 
         # which requires a lot of ram
-        self.potts = potts
+        self.potts_option = potts_option
 
-        if self.potts and not self.expose_indicator_functions:
-            print(f"""
-                You requested storing the potts model as an object attribute by using potts=True
+        if self.potts_option and not self.expose_indicator_functions:
+            warnings.warn(f"""
+                You requested storing the potts model as an object attribute by using potts_option=True
                 but requested NOT storing the indicator functions as object attributes by using 
                 expose_indicator_functions=False. Since the potts model requires far more RAM than
                 the indicator functions, we will override your indicator function request
@@ -123,7 +124,7 @@ class _AWSEMBase(Frustratometer):
             self.expose_indicator_functions = True
 
         # parse other arguments
-        p = AWSEMHamiltonianParameters(**parameters)
+        p = ParametersAWSEM(**parameters)
         if p.min_sequence_separation_contact is None:
             p.min_sequence_separation_contact = 1
         if p.min_sequence_separation_rho is None:
@@ -145,26 +146,6 @@ class _AWSEMBase(Frustratometer):
             self.p.gamma = gamma
         else:
             raise ValueError("Gamma parameter must be a path or a Gamma object.")
-        """
-        # CARLOS: if you really want to reorder, we can do something like this,
-                  but it shouldn't be necessary--we always have access to the
-                  order in self.gamma.alphabet
-        ordered_alphabet = ['A','C','D','E','F','G','H','I','K','L',
-                            'M','N','P','Q','R','S','T','V','W','Y']
-        for aa in ordered_alphabet:
-            assert aa in gamma.alphabet, f'{aa} missing from gamma.alphabet!'
-        if len(gamma.alphabet) == 20: # alphabet is exactly the canonical AAs
-            gamma = gamma.reorder(ordered_alphabet)
-        elif len(gamma.alphabet) > 20: # includes noncanonical AA(s) (or a "gap")
-            ncAA = []
-            for aa in gamma.alphabet:
-                if aa not in ordered_alphabet:
-                    ncAA.append(AA)
-            ordered_alphabet = ncAA + ordered_alphabet # insert at the beginning
-            gamma = gamma.reorder(ordered_alphabet)
-        else:
-            raise ValueError(f"gamma file alphabet {gamma.alphabet} was too short")
-        """
         #    burial gamma
         self.q = len(gamma.alphabet) # most likely 20, but could be different
         gb = gamma['Burial']
@@ -311,7 +292,11 @@ class _AWSEMBase(Frustratometer):
     def calculate_energy_and_potts(self, chain_starts=None, chain_ends=None):
         # chain_starts and chain_ends should be calculated based on object attributes
         # (maybe Structure.chain?) but i don't know how to do that, so we'll do this for now
-        if self.potts:
+        if self.potts_option:
+            warnings.warn("""
+            Constructing full potts model in RAM. 
+            If you don't want to do this, set potts_option=False
+            """)
             self.potts_model = {'h':None, 'J':None}
             if chain_starts is None:
                 chain_starts = np.array([0])
@@ -361,44 +346,16 @@ class _AWSEMBase(Frustratometer):
             assert diff_h < 3E-4, diff_h
             diff_J = np.max(np.abs(old_potts_model['J'] - self.potts_model['J']))
             assert diff_J < 3E-4, diff_J
-            """
-            J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
-            h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
-            
-            # compute burial and contact energies
-            self.burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :] 
-            direct = self.direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
-            water_mediated = self.water_indicator * self.water_gamma[J_index[2], J_index[3]]
-            protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
-            contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * self.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
-            
-            electrostatics_energy = -self.k_electrostatics * self.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
-                * self.electrostatics_mask[:,:,np.newaxis,np.newaxis]
-            contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
-    
-            self.contact_energy = contact_energy
-    
-            # Compute potts model
-            self.potts_model = {}
-            self.potts_model['h'] = self.burial_energy.sum(axis=-1)[:, :]#self.aa_map_awsem_list]
-            assert self.potts_model['h'].shape == (self.N, self.q), self.potts_model['h'].shape
-            self.potts_model['J'] = self.contact_energy.sum(axis=0)[:, :, :, :]#self.aa_map_awsem_x, self.aa_map_awsem_y]
-            assert self.potts_model['J'].shape == (self.N, self.N, self.q, self.q), self.potts_model['J'].shape 
-            breakpoint()
-            """
-            # Set the gap energy to zero
-            #self.potts_model['h'][:, 0] = 0
-            #self.potts_model['J'][:, :, 0, :] = 0
-            #self.potts_model['J'][:, :, :, 0] = 0
         else:
-            print("""self.potts was False; will not calculate and store potts model.
+            warnings.warn("""
+                     potts_option was False; will not calculate and store potts model.
                      Energies will be computed on the fly as needed for frustration calculations and then discarded.
-                     If you want to get the energies for your own purposes, set self.potts
-                     to True and then call this method again.""")
+                     If you want to get the energies for your own purposes, set self.potts_option=True
+                     and then call calculate_energy_and_potts.""")
 
     # not really sure what the point of this is
     def native_energy(self):
-        if self.potts: 
+        if self.potts_option: 
             if not hasattr(self, 'potts_model'): # create potts model if it doesn't already exist
                 self.calculate_energy_and_potts()
             energy = super().native_energy() # method to compute native energy given potts model
@@ -446,7 +403,7 @@ class AWSEM(_AWSEMBase):
                  pdb_structure: object | tuple, # tuple is an object, but this clarifies what we expect
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
-                 potts: bool=False,
+                 potts_option: bool=False,
                  alt_sigma_wat: bool=False,
                  **parameters)->object:
         """
@@ -473,7 +430,7 @@ class AWSEM(_AWSEMBase):
         alt_sigma_wat : bool=False
             Whether to use alternative functional form for sigma_wat (experimental feature)
         **parameters:
-            Used to initialize an AWSEMHamiltonianParameters, which becomes an attribute
+            Used to initialize an ParametersAWSEM, which becomes an attribute
             of this class and helps us organize the parameters of our AWSEM Hamiltonian
 
         Returns
@@ -496,7 +453,7 @@ class AWSEM(_AWSEMBase):
                     raise
 
         # load structure-independent parameters and methods
-        super().__init__(sequence, expose_indicator_functions, potts, **parameters) 
+        super().__init__(sequence, expose_indicator_functions, potts_option, **parameters) 
         self.alt_sigma_wat = alt_sigma_wat
 
         # set up strucure
@@ -586,14 +543,14 @@ class AWSEM(_AWSEMBase):
             electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / self.p.electrostatics_screening_length)
             self.electrostatics_indicator = electrostatics_indicator 
         else:
-            print("""
+            warnings.warn("""
                 self.expose_indicator_functions was False; 
                 will not calculate and store indicator functions.
                 Indicator functions will be computed on the fly as needed 
                 for energy calculations and then discarded.
                 If you want to get the indicator functions for your own purposes, 
-                set expose_indicator_functions to True 
-                and then call self.calculate_indicators().""")
+                set expose_indicator_functions=True 
+                and then call calculate_indicators().""")
 
     # make self.pdb_structure into a property so that structure-dependent
     # stuff is recalculated automatically when we change the conformation
@@ -611,6 +568,7 @@ class AWSEM(_AWSEMBase):
         self.subclass_setup_helper()
     def change_conformation(self,alt_conf):
         # this method is an alias for the setter
+        # Keep this method if the setter is too slow
         self.pdb_structure = alt_conf
 
     # self.masked_indicators is calculated from other attributes, 
@@ -769,7 +727,7 @@ class AWSEMIndicators(_AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergy
                  electrostatics_indicator: Union[np.ndarray, None],
                  sequence: str,          # sequence is optional if we initialize from a Structure but not here
                  expose_indicator_functions: bool=False,
-                 potts : bool=False,
+                 potts_option : bool=False,
                  absolute_value_gamma: bool=False,
                  **parameters)->object:
         """
@@ -796,7 +754,7 @@ class AWSEMIndicators(_AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergy
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. 
         expose_indicator_functions: bool
             If set to True, indicator functions of the contact and burial energy terms can be accessed by user.
-        potts : bool
+        potts_option : bool
             Whether to set up the potts model (can be RAM-intensive and therefore time-intensive),
             which is unnecessary if all you want is to perform certain frustration calculations, 
             for which energies can be computed on the fly instead of saved in memory.        
@@ -808,7 +766,7 @@ class AWSEMIndicators(_AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergy
         AWSEMIndicators object
 
         """
-        super().__init__(sequence, expose_indicator_functions, potts, **parameters)
+        super().__init__(sequence, expose_indicator_functions, potts_option, **parameters)
         self.burial_indicator = burial_indicator
         self.direct_indicator = direct_indicator
         self.protein_indicator = protein_indicator
@@ -883,7 +841,7 @@ class AWSEMVariancePotts(_AWSEMBase):
         # if we already have our indicator functions, 
         # our goal is probably to compute the potts model,
         # so we'll just hard code a value of True for that argument  VVVV
-        super().__init__(sequence, expose_indicator_functions, potts=True, **parameters)
+        super().__init__(sequence, expose_indicator_functions, potts_option=True, **parameters)
         self.covariance_matrix = covariance_matrix
         self.num_indicators = 3*self.N + 4*(self.N**2-self.N)/2 # low, med, high burial for each N, 4 classes of pair interactions
         self.subclass_setup_helper()

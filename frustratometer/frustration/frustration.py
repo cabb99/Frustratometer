@@ -365,6 +365,7 @@ def compute_singleresidue_decoy_energy_fluctuation(seq: str,
     pos1, aa1 = np.meshgrid(np.arange(seq_len), np.arange(q), indexing='ij', sparse=True)
 
     decoy_energy = np.zeros([seq_len, q])
+    # potts_model['h'][pos1, aa1] == potts_model['h']
     decoy_energy -= (potts_model['h'][pos1, aa1] - potts_model['h'][pos1, seq_index[pos1]])  # h correction aa1
 
     j_correction = np.zeros([seq_len, seq_len, q])
