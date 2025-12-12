@@ -226,17 +226,17 @@ def test_numba_potts_construction():
     #            burial, direct, protein, water don't have a factor of -1 when the should,
     #            and electrostatics has a factor of -1 when it shouldn't. 
     #            For some reason, this is just how we do the potts model.
-    J_index = np.meshgrid(range(model.N), range(model.N), range(model.q), range(model.q), indexing='ij', sparse=False)
-    h_index = np.meshgrid(range(model.N), range(model.q), indexing='ij', sparse=False)
+    J_index = np.meshgrid(range(model.N), range(model.N), range(model.p.q), range(model.p.q), indexing='ij', sparse=False)
+    h_index = np.meshgrid(range(model.N), range(model.p.q), indexing='ij', sparse=False)
     
     # compute burial and contact energies
-    old_burial_energy = 0.5 * model.p.k_contact * model.burial_gamma[h_index[1]] * model.burial_indicator[:, np.newaxis, :] 
-    direct = model.direct_indicator * model.direct_gamma[J_index[2], J_index[3]]
-    water_mediated = model.water_indicator * model.water_gamma[J_index[2], J_index[3]]
-    protein_mediated = model.protein_indicator  * model.protein_gamma[J_index[2], J_index[3]]
+    old_burial_energy = 0.5 * model.p.k_contact * model.p.burial_gamma[h_index[1]] * model.burial_indicator[:, np.newaxis, :] 
+    direct = model.direct_indicator * model.p.direct_gamma[J_index[2], J_index[3]]
+    water_mediated = model.water_indicator * model.p.water_gamma[J_index[2], J_index[3]]
+    protein_mediated = model.protein_indicator  * model.p.protein_gamma[J_index[2], J_index[3]]
     contact_energy = model.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * model.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
     
-    electrostatics_energy = -model.p.k_electrostatics * model.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * model.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+    electrostatics_energy = -model.p.k_electrostatics * model.p.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * model.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
         * model.electrostatics_mask[:,:,np.newaxis,np.newaxis]
     contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
     old_contact_energy = contact_energy
@@ -259,17 +259,17 @@ def test_numba_potts_construction():
         model.p.min_sequence_separation_rho,
         chain_starts, chain_ends,
         model.distance_matrix,  
-        model.p.k_contact, model.burial_gamma)
+        model.p.k_contact, model.p.burial_gamma)
     new_potts_model['J'] = ham.compute_potts_model_J_parallel(
         model.p.electrostatics_screening_length, model.p.min_sequence_separation_rho, 
         model.p.min_sequence_separation_contact, model.p.min_sequence_separation_electrostatics,
         chain_starts, chain_ends, 
         contact_max_dist, 10*model.p.electrostatics_screening_length, # maximum distance for contact potential, maximum for electrostatics
         model.distance_matrix,  
-        model.p.k_contact, model.direct_gamma, 
-        model.p.k_contact, model.protein_gamma,
-        model.p.k_contact, model.water_gamma, 
-        model.p.k_electrostatics, model.electrostatics_gamma)
+        model.p.k_contact, model.p.direct_gamma, 
+        model.p.k_contact, model.p.protein_gamma,
+        model.p.k_contact, model.p.water_gamma, 
+        model.p.k_electrostatics, model.p.electrostatics_gamma)
     #np.save('new_way_h.npy',new_potts_model['h'])
     #np.save('new_way_J.npy',new_potts_model['J'])
     assert np.max(np.abs(old_potts_model['h'] - new_potts_model['h'])) < 1E-5 # 10^-5 kJ/mol error is acceptable

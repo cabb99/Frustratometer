@@ -34,6 +34,10 @@ class Gamma:
 
         self._validate_segments()
 
+    @property
+    def q(self):
+        return len(self.alphabet)
+
     def _init_from_array(self, gamma_array):
         self.gamma_array = gamma_array
 

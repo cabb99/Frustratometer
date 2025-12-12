@@ -14,6 +14,10 @@ import os
 __all__ = ['AWSEM','AWSEMIndicators','DecoyEnsemble', 'AWSEMVariancePotts']
 
 class ParametersAWSEM(BaseModel):
+    # due to the presence of the pydantic BaseModel,
+    # these variables that look like class attributes 
+    # are actually instance attributes
+
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
     """Default parameters for AWSEM energy calculations."""
     k_contact: float = Field(4.184, description="""
@@ -56,9 +60,9 @@ class ParametersAWSEM(BaseModel):
     k_electrostatics: float = Field(17.3636, description="Coefficient for electrostatic interactions. (kJ/mol)")
     electrostatics_screening_length: float = Field(10.0, description="Screening length for electrostatic interactions. (Angstrom)")
 
-    # We might not know the order of amino acids in our alphabet at the time of instantiating this class
-    # (this happens the above gammas are Paths), so we'll have to build the electrostatic "gamma" when 
-    # initializing _AWSEMBase. Fortunately, we can still specify everything we need to know in this dict.
+    # We might not know the order of amino acids in our alphabet at the time of initialization
+    # (this happens the above gammas are Paths), so we'll have to build the electrostatic "gamma" 
+    # later (see self.model_post_init)
     charge_dict : dict = Field({'A':0.0,'C':0.0,'D':-1.0,'E':-1.0,
                                 'F':0.0,'G':0.0,'H':0.0,'I':0.0,
                                 'K':1.0,'L':0.0,'M':0.0,'N':0.0,'P':0.0,
@@ -66,6 +70,130 @@ class ParametersAWSEM(BaseModel):
                                 'V':0.0,'W':0.0,'Y':0.0}, 
                                 description='charge of each amino acid type that may be used')
 
+    def model_post_init(self, __context__):
+        """Pydantic v2 hook called after model initialization.
+
+        The signature must accept a single positional argument named
+        ``__context__`` (per pydantic v2). If ``gamma`` was provided
+        as a path, convert it to a ``Gamma`` instance here.
+        """
+        if isinstance(self.gamma, Path):
+            self.gamma = Gamma(self.gamma)
+
+    # make properties that reshape gammas stored inside the Gamma object (self.gamma)
+    @property 
+    def burial_gamma(self):
+        # check shape of gamma
+        gb = self.gamma['Burial']
+        if gb.shape == (3,self.gamma.q):
+            return gb.T
+        elif gb.shape == (self.gamma.q,3):
+            return gb
+        else:
+            raise ValueError(f"""
+            Don't know how to parse burial gamma with shape {gb.shape}.
+            Expected ({self.gamma.q},3) or (3,{self.gamma.q}).""")
+    @burial_gamma.setter
+    def burial_gamma(self, _):
+        raise AttributeError("""
+            Modifying burial_gamma directly is not allowed.
+            Instead, modify the underlying Gamma object, accessible at self.gamma.""")
+    @property 
+    def direct_gamma(self):
+        gd = np.squeeze(self.gamma['Direct']) # gammas commonly formatted as (1,q,q)
+        # check shape of gamma
+        if gd.shape != (self.gamma.q,self.gamma.q):
+            raise ValueError(f"""
+            Don't know how to parse direct gamma with shape {gd.shape}.
+            Expected ({self.gamma.q}, {self.gamma.q})""")
+        else:
+            return gd
+    @direct_gamma.setter
+    def direct_gamma(self, _):
+        raise AttributeError("""
+            Modifying direct_gamma directly is not allowed.
+            Instead, modify the underlying Gamma object, accessible at self.gamma.""")
+    @property 
+    def protein_gamma(self):
+        gp = np.squeeze(self.gamma['Protein']) # gammas commonly formatted as (1,q,q)
+        # check shape of gamma
+        if gp.shape != (self.gamma.q,self.gamma.q):
+            raise ValueError(f"""
+            Don't know how to parse protein gamma with shape {gp.shape}.
+            Expected ({self.gamma.q}, {self.gamma.q})""")
+        else:
+            return gp
+    @protein_gamma.setter
+    def protein_gamma(self, _):
+        raise AttributeError("""
+            Modifying protein_gamma directly is not allowed.
+            Instead, modify the underlying Gamma object, accessible at self.gamma.""")
+    @property 
+    def water_gamma(self):
+        gw = np.squeeze(self.gamma['Water']) # gammas commonly formatted as (1,q,q)
+        # check shape of gamma
+        if gw.shape != (self.gamma.q,self.gamma.q):
+            raise ValueError(f"""
+            Don't know how to parse water gamma with shape {gw.shape}.
+            Expected ({self.gamma.q}, {self.gamma.q})""")
+        else:
+            return gw
+    @direct_gamma.setter
+    def direct_gamma(self, _):
+        raise AttributeError("""
+            Modifying direct_gamma directly is not allowed.
+            Instead, modify the underlying Gamma object, accessible at self.gamma.""")
+    @property
+    def electrostatic_gamma(self):
+        charges = []
+        for oneletter in self.gamma.alphabet:
+            if oneletter not in self.charge_dict.keys():
+                raise ValueError(f"""
+                One letter code {oneletter} found in Gamma.alphabet
+                is not known to the electrostatic potential.
+                Provide your ParametersAWSEM object with a complete
+                charge_dict specifying the electric charge, in fundamental 
+                units, of {oneletter} and all other amino acids
+                in your alphabet so that an electrostatic "gamma" array
+                of the same shape and amino acid order as your direct,
+                protein, and water gammas can be created.""")
+            else:
+                charges.append(self.charge_dict[oneletter])
+        assert len(charges) == self.gamma.q
+        return np.outer(charges, charges) # our electrostatic "gamma"
+    @electrostatic_gamma.setter
+    def electrostatic_gamma(self, _):
+        raise AttributeError("""
+            Electrostatic_gamma is a property computed from the
+            ParametersAWSEM.charge_dict and ParametersAWSEM.Gamma.alphabet.
+            To set the electrostatic gamma, change the charge_dict 
+            of your parameters object.""")
+    @property
+    def electrostatics_gamma(self):
+        return self.electrostatic_gamma
+    @electrostatics_gamma.setter
+    def electrostatics_gamma(self, _):
+        self.electrostatic_gamma = _
+    
+    # if we're going to make gamma arrays from self.gamma available as
+    # properties of this class, we should also make the alphabet and q from
+    # self.gamma available as a property of this class
+    @property
+    def alphabet(self):
+        return self.gamma.alphabet
+    @alphabet.setter
+    def alphabet(self, new_alphabet):
+        # we might need new_alphabet to be either a list or str, but not the other
+        self.gamma.reorder(alphabet=new_alphabet)
+        #raise AttributeError("""
+        #Resetting the alphabet must be done using self.gamma.reorder()
+        #(self.gamma is an instance of the Gamma class).
+        #Changes made to the underlying Gamma object will then
+        #propagate upward.""")
+    @property
+    def q(self):
+        return self.gamma.q 
+        # gamma.q is itself a property that calculates seq len and returns it
 
 class _AWSEMBase(Frustratometer):
     """
@@ -111,6 +239,7 @@ class _AWSEMBase(Frustratometer):
         # which requires a lot of ram
         self.potts_option = potts_option
 
+        # check consistency of potts_option and expose_indicator_functions arguments
         if self.potts_option and not self.expose_indicator_functions:
             warnings.warn(f"""
                 You requested storing the potts model as an object attribute by using potts_option=True
@@ -123,221 +252,110 @@ class _AWSEMBase(Frustratometer):
             self.expose_indicator_functions = True
 
         # parse other arguments
-        p = ParametersAWSEM(**parameters)
-        if p.min_sequence_separation_contact is None:
-            p.min_sequence_separation_contact = 1
-        if p.min_sequence_separation_rho is None:
-            p.min_sequence_separation_rho = 1
-        if p.min_sequence_separation_electrostatics is None:
-            p.min_sequence_separation_electrostatics = 1
-        # doing this arguably defeats the purpose of having an 
-        # AWSEMHamilonianParams class;
-        # we should think about how we can clean up the namespace of this (_AWSEMBase) class
-        #for field, value in p:
-        #    setattr(self, field, value)
-        self.p = p
+        self.p = ParametersAWSEM(**parameters)
 
-        # set gamma
-        if isinstance(self.p.gamma, Gamma):
-            gamma = self.p.gamma
-        elif isinstance(self.p.gamma, Path):
-            gamma = Gamma(self.p.gamma)
-            self.p.gamma = gamma
-        else:
-            raise ValueError("Gamma parameter must be a path or a Gamma object.")
-        #    burial gamma
-        self.q = len(gamma.alphabet) # most likely 20, but could be different
-        gb = gamma['Burial']
-        if gb.shape == (3,self.q):
-            self._burial_gamma = gb.T
-        elif gb.shape == (self.q,3):
-            self._burial_gamma = gb
-        else:
-            raise ValueError(f"""Don't know how to parse burial gamma with shape {gb.shape}.
-            Expected ({self.q},3) or (3,{self.q}).""")
-        #     pairwise gamma: squeeze to remove extra axis that is commonly present
-        self._direct_gamma = np.squeeze(gamma['Direct']) 
-        self._protein_gamma = np.squeeze(gamma['Protein'])
-        self._water_gamma = np.squeeze(gamma['Water'])
-        if not self._direct_gamma.shape == self._protein_gamma.shape ==\
-            self._water_gamma.shape == (self.q,self.q):
-            raise ValueError(f"""
-            direct and/or protein and/or water gammas had unexpected shape. 
-            Expected (q,q) or (1,q,q). Got shapes of:
-            direct: {self._direct_gamma.shape}
-            protein: {self._protein_gamma.shape}
-            water: {self._direct_gamma.shape}""")
-        #     electrostatic gamma
-        ordered_charges = np.zeros(self.q)
-        for counter in range(self.q):
-            try:
-                ordered_charges[counter] = self.p.charge_dict[self.p.gamma.alphabet[counter]]
-            except KeyError as e:
-                raise Exception(f"""
-                One-letter code {order[counter]} from alphabet {self.p.gamma.alphabet}
-                with unknown charge. If use of this noncanonical AA in intentional,
-                you must supply a custom charge_dict 
-                so that we know how to calculate the electrostatic potential.""")
-        charges2 = ordered_charges[:,np.newaxis] * ordered_charges[np.newaxis,:]
-        if self.p.k_electrostatics != 0:
-            self._sequence_cutoff=min(self.p.min_sequence_separation_electrostatics, self.p.min_sequence_separation_contact)
-            self._distance_cutoff=None # the distance matrix isn't guaranteed to exist in all subclasses,
-                                      # but it doesn't hurt to define the distance_cutoff attribute--
-                                      # it's just like any other parameter, such as sequence_cutoff,
-                                      # that only matters if we need to compute a mask from a distance matrix 
-        else:
-            self._sequence_cutoff=self.p.min_sequence_separation_contact
-            self._distance_cutoff=self.p.distance_cutoff_contact # the distance matrix isn't guaranteed to exist in all subclasses,
-                                                                # but it doesn't hurt to define the distance_cutoff attribute--
-                                                                # it's just like any other parameter, such as sequence_cutoff,
-                                                                # that only matters if we need to compute a mask from a distance matrix 
-        self._charges2 = charges2 
-        #     helpful ? 
-        self._gamma = self.p.gamma
+        # i don't know why these aren't the defaults in ParametersAWSEM
+        # if we're going to override them anyway
+        if self.p.min_sequence_separation_contact is None:
+            self.p.min_sequence_separation_contact = 1
+        if self.p.min_sequence_separation_rho is None:
+            self.p.min_sequence_separation_rho = 1
+        if self.p.min_sequence_separation_electrostatics is None:
+            self.p.min_sequence_separation_electrostatics = 1
 
         # set other attributes
-        self.burial_in_context = self.p.burial_in_context
-        self._aa_freq = frustration.compute_aa_freq(self.sequence, self.p.gamma.alphabet)
-        self._contact_freq = frustration.compute_contact_freq(self.sequence, self.p.gamma.alphabet)
-        self._decoy_fluctuation = {} # used for mutational calculation, possibly others
+        self.burial_in_context = self.p.burial_in_context #i'd prefer to move this out of ParametersAWSEM completely
+        self._decoy_fluctuation = {} # used for non-configurational frustration calculations
         self._minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
         self._native_energy = None
-        self._seq_index = None
 
-    ##################################################################################
-    # quantities previously defined as attributes that are calculated based on
-    # other attributes should be converted to properties
+    # although the alphabet is really an attribute of the AWSEM
+    # Hamiltonian, and therefore belongs in the ParametersAWSEM instance,
+    # at least one method in the Frustratometer class requires 
+    # it to be accessible in this namespace, so we make it a property
     @property 
-    def N(self):
-        return len(self.sequence)
-
-    @property
-    def electrostatics_gamma(self): # used to be distinct from charges2 but eliminating the distinction
-        return self.charges2        # makes these gammas more analogous to the other gammas
-    @property 
-    def electrostatic_gamma(self):
-        return self.electrostatics_gamma
-
-    @property
     def alphabet(self):
-        return self.p.gamma.alphabet # this allows us to access the alphabet in the same way as for DCA instances
-    @alphabet.setter # the user might think they can change the alphabet like the conformation (see AWSEM), but that's not supported
-    def alphabet(self):
-        raise AttributeError("Changing the underlying alphabet is prohibited. Instead, create a new AWSEM instance from a different Gamma.")
+        return self.p.alphabet
+    @alphabet.setter
+    def alphabet(self, new_alphabet):
+        # we might need new_alphabet to be either a list or str, but not the other
+        self.p.alphabet = new_alphabet
 
-    @property # emphasizes that seq_index is computed from the alphabet
-    def seq_index(self):
-        if self._seq_index is None: # so we only have to compute it once
-            self._seq_index = np.array([self.alphabet.index(aa) for aa in self.sequence])
-        return self._seq_index
-
-    # carlos wanted to have gamma_array with gammas multiplied by lambda and coefficients
-    @property
-    def coefficient_lambda_gamma_array(self):
-        _coefficient_lambda_gamma_array = []
-        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.burial_gamma[:,0])
-        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.burial_gamma[:,1])
-        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.burial_gamma[:,2])
-        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.direct_gamma)
-        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.protein_gamma)
-        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.water_gamma)
-        _coefficient_lambda_gamma_array.append(0.5 * self.p.k_electrostatics * self.charges2)
-        #  not a typo, supposed to be positive ^^^
-        # charges2 is our electrostatic "gamma"
-        return _coefficient_lambda_gamma_array
-    @coefficient_lambda_gamma_array.setter # clarifies that this is derived from more fundamental quantities
-    def coefficient_lambda_gamma_array(self):
-        raise AttributeError(f"""Setting {self.__class__}.coefficient_lambda_gamma_array 
-                                directly is not allowed. Initialize a new instance with a different
-                                {self.__class__}.p.k_contact, {self.__class__}.burial_gamma, {self.__class__}.direct_gamma, 
-                                {self.__class__}.p.gamma.protein_gamma, or {self.__class__}.water_gamma instead.""")
-    
-    # other properties for extra protection
+    # we make these attributes into properties for protection;
+    # may write setters at some point to update everything appropriately 
+    # and allow modification of initialized objects
     @property
     def sequence(self):
         return self._sequence
     @sequence.setter
-    def sequence(self):
+    def sequence(self, _):
         raise NotImplementedError("Modifying the sequence is not permitted. May add support at some point.")
-    
-    # making properties into setters
-    @property
-    def burial_gamma(self):
-        return self._burial_gamma
-    @burial_gamma.setter
-    def burial_gamma(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.burial_gamma")
-    
-    @property
-    def direct_gamma(self):
-        return self._direct_gamma
-    @direct_gamma.setter
-    def direct_gamma(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.direct_gamma")
-    
-    @property
-    def protein_gamma(self):
-        return self._protein_gamma
-    @protein_gamma.setter
-    def protein_gamma(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.protein_gamma")
-    
-    @property
-    def water_gamma(self):
-        return self._water_gamma
-    @water_gamma.setter
-    def water_gamma(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.water_gamma")
-    
-    @property
-    def sequence_cutoff(self):
-        return self._sequence_cutoff
-    @sequence_cutoff.setter
-    def sequence_cutoff(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.sequence_cutoff")
-    
-    @property
-    def distance_cutoff(self):
-        return self._distance_cutoff
-    @distance_cutoff.setter
-    def distance_cutoff(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.distance_cutoff")
-    
-    @property
-    def charges2(self):
-        return self._charges2
-    @charges2.setter
-    def charges2(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.charges2")
-    
-    @property
-    def gamma(self):
-        return self._gamma
-    @gamma.setter
-    def gamma(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.gamma")
-    
-    @property
-    def aa_freq(self):
-        return self._aa_freq
-    @aa_freq.setter
-    def aa_freq(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.aa_freq")
-    
-    @property
-    def contact_freq(self):
-        return self._contact_freq
-    @contact_freq.setter
-    def contact_freq(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.contact_freq")
-    
     @property
     def minimally_frustrated_threshold(self):
         return self._minimally_frustrated_threshold
     @minimally_frustrated_threshold.setter
     def minimally_frustrated_threshold(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.minimally_frustrated_threshold")
+        raise NotImplementedError(f"Cannot directly set {self.__class__}.minimally_frustrated_threshold. May add support in the future")
     
+    # these attributes are computed from other attributes,
+    # so we make them into properties
+    @property
+    def sequence_cutoff(self):
+        if self.p.k_electrostatics == 0:
+            return self.p.min_sequence_separation_contact
+        else:
+            return min(self.p.min_sequence_separation_contact, 
+                       self.p.min_sequence_separation_electrostatics)
+    @property
+    def distance_cutoff(self):
+        # the distance cutoff might not exist in all subclasses,
+        # but they just won't use it. there's no harm in defining it
+        if self.p.k_electrostatics == 0:
+            return self.p.distance_cutoff_contact
+        else:
+            return None
+    @property 
+    def N(self):
+        return len(self.sequence)
+    @property # emphasizes that seq_index is computed from the alphabet
+    def seq_index(self):
+        self._seq_index = np.array([self.p.alphabet.index(aa) for aa in self.sequence])
+        return self._seq_index
+    @property
+    def aa_freq(self):
+        return frustration.compute_aa_freq(self.sequence, self.p.alphabet)
+    @property
+    def contact_freq(self):
+        return frustration.compute_contact_freq(self.sequence, self.p.alphabet)
+
+    # this format is a little bit unusual but is useful for the optimization code
+    @property
+    def coefficient_lambda_gamma_array(self):
+        _coefficient_lambda_gamma_array = []
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.p.burial_gamma[:,0])
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.p.burial_gamma[:,1])
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.p.burial_gamma[:,2])
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.p.direct_gamma)
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.p.protein_gamma)
+        _coefficient_lambda_gamma_array.append(-0.5 * self.p.k_contact * self.p.water_gamma)
+        _coefficient_lambda_gamma_array.append(0.5 * self.p.k_electrostatics * self.p.electrostatic_gamma)
+        #  not a typo, supposed to be positive ^^^
+        # charges2 is our electrostatic "gamma"
+        return _coefficient_lambda_gamma_array
+    @coefficient_lambda_gamma_array.setter # clarifies that this is derived from more fundamental quantities
+    def coefficient_lambda_gamma_array(self, _):
+        raise AttributeError(f"""Setting {self.__class__}.coefficient_lambda_gamma_array 
+                                directly is not allowed. Initialize a new instance with a different
+                                {self.__class__}.p.k_contact, {self.__class__}.burial_gamma, {self.__class__}.direct_gamma, 
+                                {self.__class__}.p.gamma.protein_gamma, or {self.__class__}.water_gamma instead.""")
+    
+
+
+
+ 
+
+
+
     @property
     def sequence_mask_rho(self):
         return self._sequence_mask_rho
@@ -449,31 +467,31 @@ class _AWSEMBase(Frustratometer):
                 self.p.min_sequence_separation_rho,
                 chain_starts, chain_ends,
                 self.distance_matrix,  
-                self.p.k_contact, self.burial_gamma)
+                self.p.k_contact, self.p.burial_gamma)
             self._potts_model['J'] = ham.compute_potts_model_J_parallel(
                 self.p.electrostatics_screening_length, self.p.min_sequence_separation_rho, 
                 self.p.min_sequence_separation_contact, self.p.min_sequence_separation_electrostatics,
                 chain_starts, chain_ends, 
                 contact_max_dist, 10*self.p.electrostatics_screening_length, # maximum distance for contact potential, maximum for electrostatics
                 self.distance_matrix,  
-                self.p.k_contact, self.direct_gamma, 
-                self.p.k_contact, self.protein_gamma,
-                self.p.k_contact, self.water_gamma, 
-                self.p.k_electrostatics, self.electrostatics_gamma)
+                self.p.k_contact, self.p.direct_gamma, 
+                self.p.k_contact, self.p.protein_gamma,
+                self.p.k_contact, self.p.water_gamma, 
+                self.p.k_electrostatics, self.p.electrostatic_gamma)
             #breakpoint()
             #self.potts_model['J'] = ham.compute_potts_model_J(
             #     self.distance_matrix, )
-            J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
-            h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
+            J_index = np.meshgrid(range(self.N), range(self.N), range(self.p.q), range(self.p.q), indexing='ij', sparse=False)
+            h_index = np.meshgrid(range(self.N), range(self.p.q), indexing='ij', sparse=False)
             
             # compute burial and contact energies
-            old_burial_energy = 0.5 * self.p.k_contact * self.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :] 
-            direct = self.direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
-            water_mediated = self.water_indicator * self.water_gamma[J_index[2], J_index[3]]
-            protein_mediated = self.protein_indicator  * self.protein_gamma[J_index[2], J_index[3]]
+            old_burial_energy = 0.5 * self.p.k_contact * self.p.burial_gamma[h_index[1]] * self.burial_indicator[:, np.newaxis, :] 
+            direct = self.direct_indicator * self.p.direct_gamma[J_index[2], J_index[3]]
+            water_mediated = self.water_indicator * self.p.water_gamma[J_index[2], J_index[3]]
+            protein_mediated = self.protein_indicator  * self.p.protein_gamma[J_index[2], J_index[3]]
             contact_energy = self.p.k_contact * np.array([direct, water_mediated, protein_mediated]) * self.sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
             
-            electrostatics_energy = -self.p.k_electrostatics * self.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
+            electrostatics_energy = -self.p.k_electrostatics * self.p.electrostatic_gamma[np.newaxis,np.newaxis,:,:] * self.electrostatics_indicator[:,:,np.newaxis,np.newaxis]\
                 * self.electrostatics_mask[:,:,np.newaxis,np.newaxis]
             contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
             old_contact_energy = contact_energy
@@ -482,6 +500,8 @@ class _AWSEMBase(Frustratometer):
             old_potts_model['h'] = old_burial_energy.sum(axis=-1)[:, :]
             old_potts_model['J'] = old_contact_energy.sum(axis=0)[:, :, :, :]
             diff_h = np.max(np.abs(old_potts_model['h'] - self.potts_model['h']))
+            assert self.distance_matrix.shape == (self.N, self.N)
+            assert self.distance_matrix.shape == (len(self.sequence), len(self.sequence))
             assert diff_h < 3E-4, diff_h
             diff_J = np.max(np.abs(old_potts_model['J'] - self.potts_model['J']))
             assert diff_J < 3E-4, diff_J
@@ -750,7 +770,7 @@ class AWSEM(_AWSEMBase):
     # implementations of frustration algorithms
     def compute_configurational_decoy_statistics(self, n_decoys=4000,aa_freq=None):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
-        _AA = self.p.gamma.alphabet #'ARNDCQEGHILKMFPSTWYV'
+        _AA = self.p.alphabet #'ARNDCQEGHILKMFPSTWYV'
         if aa_freq is None:
             seq_index = self.seq_index
             N=self.N
@@ -791,12 +811,12 @@ class AWSEM(_AWSEMBase):
             q2=seq_index[qi2]
 
             
-            burial_energy1 = (-0.5 * self.p.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
-            burial_energy2 = (-0.5 * self.p.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+            burial_energy1 = (-0.5 * self.p.k_contact * self.p.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+            burial_energy2 = (-0.5 * self.p.k_contact * self.p.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
             
-            direct = theta[c] * self.direct_gamma[q1, q2]
-            water_mediated = sigma_water[n1,n2] * thetaII[c] * self.water_gamma[q1,q2]
-            protein_mediated = sigma_protein[n1,n2] * thetaII[c] * self.protein_gamma[q1,q2]
+            direct = theta[c] * self.p.direct_gamma[q1, q2]
+            water_mediated = sigma_water[n1,n2] * thetaII[c] * self.p.water_gamma[q1,q2]
+            protein_mediated = sigma_protein[n1,n2] * thetaII[c] * self.p.protein_gamma[q1,q2]
             contact_energy = -self.p.k_contact * (direct+water_mediated+protein_mediated)
             electrostatics_energy = self.p.k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
 
@@ -808,7 +828,7 @@ class AWSEM(_AWSEMBase):
         return mean_decoy_energy, std_decoy_energy
     
     def compute_configurational_energies(self):
-        _AA= self.p.gamma.alphabet #'ARNDCQEGHILKMFPSTWYV'
+        _AA= self.p.alphabet #'ARNDCQEGHILKMFPSTWYV'
         seq_index = self.seq_index
         distances = np.triu(self.distance_matrix)
         distances = distances[(distances<self.p.distance_cutoff_contact) & (distances>0)]
@@ -847,12 +867,12 @@ class AWSEM(_AWSEMBase):
             q1=seq_index[n1]
             q2=seq_index[n2]
 
-            burial_energy1 = (-0.5 * self.p.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
-            burial_energy2 = (-0.5 * self.p.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+            burial_energy1 = (-0.5 * self.p.k_contact * self.p.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+            burial_energy2 = (-0.5 * self.p.k_contact * self.p.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
             
-            direct = theta[c] * self.direct_gamma[q1, q2]
-            water_mediated = sigma_water[n1,n2] * thetaII[c] * self.water_gamma[q1,q2]
-            protein_mediated = sigma_protein[n1,n2] * thetaII[c] * self.protein_gamma[q1,q2]
+            direct = theta[c] * self.p.direct_gamma[q1, q2]
+            water_mediated = sigma_water[n1,n2] * thetaII[c] * self.p.water_gamma[q1,q2]
+            protein_mediated = sigma_protein[n1,n2] * thetaII[c] * self.p.protein_gamma[q1,q2]
             contact_energy = -self.p.k_contact * (direct+water_mediated+protein_mediated)
             electrostatics_energy = self.p.k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
 
@@ -938,13 +958,13 @@ class AWSEMIndicators(_AWSEMBase): # PottsEvaluatorFromIndicators or PottsEnergy
         self.mask = frustration.compute_mask(np.zeros((self.N,self.N)), 
                                              maximum_contact_distance=self.distance_cutoff, 
                                              minimum_sequence_separation = self.sequence_cutoff)
-        if absolute_value_gamma:
-            self.burial_gamma = np.abs(self.burial_gamma)
-            self.direct_gamma = np.abs(self.direct_gamma)
-            self.protein_gamma = np.abs(self.protein_gamma)
-            self.water_gamma = np.abs(self.water_gamma)
-            self.electrostatics_gamma = np.abs(self.electrostatics_gamma)
-        self.absolute_value_gamma = absolute_value_gamma 
+        #if absolute_value_gamma:
+        #    self.burial_gamma = np.abs(self.burial_gamma)
+        #    self.direct_gamma = np.abs(self.direct_gamma)
+        #    self.protein_gamma = np.abs(self.protein_gamma)
+        #    self.water_gamma = np.abs(self.water_gamma)
+        #    self.electrostatics_gamma = np.abs(self.electrostatics_gamma)
+        #self.absolute_value_gamma = absolute_value_gamma 
         #np.save('absolute_value_gamma_1.npy',absolute_value_gamma)
         #np.save('burial_indicator_1.npy',burial_indicator)
         #np.save('direct_indicator_1.npy', direct_indicator)
@@ -1074,31 +1094,31 @@ class AWSEMVariancePotts(_AWSEMBase):
         # compute burial and contact energies
         #     the "energy" of our potts model representing the covariance, not a physical energy
         #     this "burial energy" is the sum of variances of the burial indicators (the one-body part of the model)
-        self.burial_energy = (0.5*self.p.k_contact*self.burial_gamma[h_index[1]])**2 * self.burial_variances.reshape((self.N,1,3))
+        self.burial_energy = (0.5*self.p.k_contact*self.p.burial_gamma[h_index[1]])**2 * self.burial_variances.reshape((self.N,1,3))
         #     the "contact energy" is ordinarily the sum of all two-body components of the model
         #     (direct, protein, water, electrostatics), so we do the analogous thing here
         template = np.zeros((self.N,self.N))
         num_upper = int((self.N**2-self.N)/2)
         triu_indices = np.triu_indices(self.N,k=1)
         template[triu_indices] = self.pairwise_variances[:num_upper]
-        direct = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.direct_gamma[J_index[2], J_index[3]]**2
+        direct = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.p.direct_gamma[J_index[2], J_index[3]]**2
         template[triu_indices] = self.pairwise_variances[num_upper:2*num_upper]
-        protein_mediated = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.protein_gamma[J_index[2], J_index[3]]**2
+        protein_mediated = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.p.protein_gamma[J_index[2], J_index[3]]**2
         template[triu_indices] = self.pairwise_variances[2*num_upper:3*num_upper]
-        water_mediated = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.water_gamma[J_index[2], J_index[3]]**2
+        water_mediated = (template+template.T)[:,:,np.newaxis,np.newaxis] * self.p.water_gamma[J_index[2], J_index[3]]**2
         contact_energy = self.p.k_contact * np.array([direct, protein_mediated, water_mediated])
         if self.p.k_electrostatics!=0:
             template[triu_indices] = self.pairwise_variances[3*num_upper:]
-            electrostatics_energy = -self.p.k_electrostatics * self.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * (template+template.T)[:,:,np.newaxis,np.newaxis]**2
+            electrostatics_energy = -self.p.k_electrostatics * self.p.electrostatics_gamma[np.newaxis,np.newaxis,:,:] * (template+template.T)[:,:,np.newaxis,np.newaxis]**2
             contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis,:,:,:,:], axis=0)
         #    for the variance potts model, there is one more kind of two-body interaction:
         #    burial-pairwise covariance when the pairwise energy term involves the residue in the burial term
         #        self.burial_pairwise_covariances_2 has shape (3N, 4(N^2-N)/2)
         #        we first multiply each row by the appropriate burial energy
         temp = self.burial_pairwise_covariances_2
-        low = temp[::3,:,np.newaxis]*0.5*self.p.k_contact*self.burial_gamma[h_index[1],0]
-        med = temp[1::3,:,:]*0.5*self.p.k_contact*self.burial_gamma[h_index[1],1]
-        high = temp[2::3,:,:]*0.5*self.p.k_contact*self.burial_gamma[h_index[1],2]
+        low = temp[::3,:,np.newaxis]*0.5*self.p.k_contact*self.p.burial_gamma[h_index[1],0]
+        med = temp[1::3,:,:]*0.5*self.p.k_contact*self.p.burial_gamma[h_index[1],1]
+        high = temp[2::3,:,:]*0.5*self.p.k_contact*self.p.burial_gamma[h_index[1],2]
         #        we can now collapse our 3 burial indicator types
         temp = np.sum(np.concatenate((low[None,...], med[None,...], high[None,...]), axis=0), axis=0)
         assert temp.shape == (self.N, 4*((self.N**2-self.N)/2)), temp.shape
@@ -1110,11 +1130,11 @@ class AWSEMVariancePotts(_AWSEMBase):
         #         but only N of them include the same residue from the burial indicator;
         #         others have a value of 0, which we can easily eliminate)
         #        we also need to multiply by our pairwise gammas
-        direct = direct[direct != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.direct_gamma[J_index[3]]*self.p.k_contact
-        prot = prot[prot != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.protein_gamma[J_index[3]]*self.p.k_contact
-        wat = wat[wat != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.water_gamma[J_index[3]]*self.p.k_contact
+        direct = direct[direct != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.p.direct_gamma[J_index[3]]*self.p.k_contact
+        prot = prot[prot != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.p.protein_gamma[J_index[3]]*self.p.k_contact
+        wat = wat[wat != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.p.water_gamma[J_index[3]]*self.p.k_contact
         ############################################################################################################################
-        elec = elec[elec != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.electrostatics_gamma[np.newaxis,np.newaxis,:,:][J_index[3]]*self.p.k_contact
+        elec = elec[elec != 0].reshape((self.N,self.N,self.q))[...,np.newaxis]*self.p.electrostatics_gamma[np.newaxis,np.newaxis,:,:][J_index[3]]*self.p.k_contact
         # ???????????????? why are we multiplying electrostatics by k_contact? 
         # electrostatics_gamma already had the electrostatics weight k_electrostatics multiplied in and k_electrostatics
         # isn't necessarily equal to k_contact. Anyway, i'm now going to factor k_electrostatics out of electrostatics_gamma
@@ -1146,9 +1166,9 @@ class AWSEMVariancePotts(_AWSEMBase):
         for counter,row in enumerate(self.burial_pairwise_covariances_2):
             direct_indicators = row[:len(row)//4]
             direct_energy = direct_indicators[direct_indicators>0].reshape((-1,1))\
-                *0.5*self.p.k_contact*self.burial_gamma[:,counter%3]\
+                *0.5*self.p.k_contact*self.p.burial_gamma[:,counter%3]\
                 *self.p.k_contact*self.direct_gamma[]
-            direct = row[row!=0] * 0.5*self.p.k_contact*self.burial_gamma[]
+            direct = row[row!=0] * 0.5*self.p.k_contact*self.p.burial_gamma[]
             template[counter] = row[row==1] # where the residue corresponding to the burial row is involved in the pairwise indicator
         burial_pairwise_2 = self.burial_pairwise_covariances_2[]
         """
