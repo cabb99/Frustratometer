@@ -401,9 +401,10 @@ def compute_electrostatic_indicator(l_D, dist_ij):
 # THESE FUNCTIONS **DON'T** CHECK MASK CONDITIONS!
 #
 # BURIAL POTENTIAL
+"""
 @njit(signature_or_function=float64(float64[:], float64, float64[:]))
 def compute_burial_potential_i_from_indicator_gamma(burial_indicator, lambda_burial, gamma):
-    """
+    """"""
     Compute the burial energy for residue i based on its local density.
     Note that this function computes and sums the 3 types of burial energies:
     low-density, medium-density, and high-density.
@@ -416,7 +417,7 @@ def compute_burial_potential_i_from_indicator_gamma(burial_indicator, lambda_bur
     -------
     burial_energy : float
         Total burial energy for residue i, sum across all three burial wells.
-    """
+    """"""
     # Caution: the burial indicator functions range from 0 to 2,
     # not 0 to 1, like the other indicator functions.
     # This is why we have a coefficient of 0.5 in the energy expression.
@@ -429,6 +430,7 @@ def compute_burial_potential_i_from_indicator_gamma(burial_indicator, lambda_bur
     burial_energy = -0.5*lambda_burial *\
         (low_indicator*low_gamma+medium_indicator*medium_gamma+high_indicator*high_gamma)
     return burial_energy
+"""
 @njit(signature_or_function=float64(float64, float64, float64[:]))
 def compute_burial_potential_i_from_rho_gamma(rho_i, lambda_burial, gamma):
     """
@@ -446,11 +448,20 @@ def compute_burial_potential_i_from_rho_gamma(rho_i, lambda_burial, gamma):
         Total burial energy for residue i, sum across all three burial wells.
     """
     burial_indicator = compute_burial_indicator_i(rho_i)
-    burial_energy = compute_burial_potential_i_from_indicator_gamma(burial_indicator, lambda_burial, gamma)
+    #burial_energy = compute_burial_potential_i_from_indicator_gamma(burial_indicator, lambda_burial, gamma)
+    low_indicator = burial_indicator[0]
+    low_gamma = gamma[0]
+    medium_indicator = burial_indicator[1]
+    medium_gamma = gamma[1]
+    high_indicator = burial_indicator[2]
+    high_gamma = gamma[2]
+    burial_energy = -0.5*lambda_burial *\
+        (low_indicator*low_gamma+medium_indicator*medium_gamma+high_indicator*high_gamma)    
     return burial_energy
+"""
 @njit(signature_or_function=float64(int64, float64, float64, float64[:,:], int64[:]))
 def compute_burial_potential_i_from_rho(i, rho_i, lambda_burial, burial_gamma, seq_index):
-    """
+    """"""
     Compute the burial energy for residue i based on its local density.
     Note that this function computes and sums the 3 types of burial energies:
     low-density, medium-density, and high-density.
@@ -463,10 +474,11 @@ def compute_burial_potential_i_from_rho(i, rho_i, lambda_burial, burial_gamma, s
     -------
     burial_energy : float
         Total burial energy for residue i, sum across all three burial wells.
-    """
+    """"""
     gamma = burial_gamma[seq_index[i]]
     burial_energy = compute_burial_potential_i_from_rho_gamma(rho_i, lambda_burial, gamma)
     return burial_energy
+"""
 @njit(signature_or_function=float64(int64, int64, int64[:], int64[:], float64[:,:], float64, float64[:]))
 def compute_burial_potential_i_from_gamma(i, min_seq_sep_rho, chain_starts, chain_ends, dist_mat, lambda_burial, gamma):
     """
@@ -508,22 +520,22 @@ def compute_burial_potential_i(i, min_seq_sep_rho, chain_starts, chain_ends, dis
 # feel free to add more functions with different signatures for greater flexibility of use
 #
 # DIRECT POTENTIAL
-@njit(signature_or_function=float64(float64, float64, float64))
-def compute_direct_potential_ij_from_thetaI_gamma(thetaI, lambda_direct, gamma):
-    """
-    Compute the direct interaction potential for a pair of residues.
-
-    Parameters
-    ----------
-    See module-level docstring. 
-
-    Returns
-    -------
-    direct_energy : float
-        Energy of the direct contact term for the pair (i,j),
-        set to 0 if the pair is masked.
-    """    
-    return -lambda_direct * thetaI * gamma
+#@njit(signature_or_function=float64(float64, float64, float64))
+#def compute_direct_potential_ij_from_thetaI_gamma(thetaI, lambda_direct, gamma):
+#    """
+#    Compute the direct interaction potential for a pair of residues.
+#
+#    Parameters
+#    ----------
+#    See module-level docstring. 
+#
+#    Returns
+#    -------
+#    direct_energy : float
+#        Energy of the direct contact term for the pair (i,j),
+#        set to 0 if the pair is masked.
+#    """    
+#    return -lambda_direct * thetaI * gamma
 @njit(signature_or_function=float64(float64, float64, float64))
 def compute_direct_potential_ij_from_distij_gamma(dist_ij, lambda_direct, gamma):
     """
@@ -542,7 +554,7 @@ def compute_direct_potential_ij_from_distij_gamma(dist_ij, lambda_direct, gamma)
     # get indicator
     thetaI = compute_thetaI(dist_ij)
     # put it all together
-    direct_energy = compute_direct_potential_ij_from_thetaI_gamma(thetaI, lambda_direct, gamma)
+    direct_energy = -lambda_direct * thetaI * gamma
     return direct_energy
 @njit(signature_or_function=float64(int64, int64, float64[:,:], float64, float64))
 def compute_direct_potential_ij_from_gamma(i, j, dist_mat, lambda_direct, gamma):
@@ -580,61 +592,62 @@ def compute_direct_potential_ij(i, j, dist_mat, lambda_direct, direct_gamma, seq
     return compute_direct_potential_ij_from_gamma(i, j, dist_mat, lambda_direct, gamma)
 #
 # LONG RANGE (protein-mediated and water-mediated) CONTACT POTENTIALS
-@njit(signature_or_function=numba.types.UniTuple(float64,2)(
-    float64, float64, float64, float64, float64, float64))
-def compute_long_potentials_ij_from_sigmawater_thetaII_gamma(thetaII, sigma_water, 
-    lambda_protein, gamma_p, lambda_water, gamma_w):    
-    """
-    Compute the protein-mediated and water-mediated (long-range) potentials 
-    for a pair of residues. 
-
-    Parameters
-    ----------
-    See module-level docstring.
-
-    Returns
-    -------
-    protein_energy : float
-        Energy of the protein-mediated contact term for the pair (i,j),
-        set to 0 if the pair is masked.
-    water_energy : float
-        Energy of the water-mediated contact term for the pair (i,j),
-        set to 0 if the pair is masked.
-    """    
-    # this function is defined so that we have the details of the 
-    # calculation in one place and don't have to type the equation
-    # in several different places. probably not a big deal,
-    # but just trying to follow best practices
-    sigma_protein = 1.0 - sigma_water
-    protein_energy = -lambda_protein * thetaII * sigma_protein * gamma_p
-    water_energy = -lambda_water * thetaII * sigma_water * gamma_w
-    return protein_energy, water_energy
-@njit(signature_or_function=numba.types.UniTuple(float64,2)(float64, float64, float64, float64, float64, float64))
-def compute_long_potentials_ij_from_sigmawater_distij_gamma(dist_ij, sigma_water, 
-        lambda_protein, gamma_p, lambda_water, gamma_w):
-    """
-    Compute the protein-mediated and water-mediated (long-range) potentials 
-    for a pair of residues. 
-
-    Parameters
-    ----------
-    See module-level docstring.
-
-    Returns
-    -------
-    protein_energy : float
-        Energy of the protein-mediated contact term for the pair (i,j),
-        set to 0 if the pair is masked.
-    water_energy : float
-        Energy of the water-mediated contact term for the pair (i,j),
-        set to 0 if the pair is masked.
-    """
-    # get indicators and sigma values
-    thetaII = compute_thetaII(dist_ij)
-    # compute energies
-    protein_energy, water_energy = compute_long_potentials_ij_from_sigmawater_thetaII_gamma(
-            thetaII, sigma_water, lambda_protein, gamma_p, lambda_water, gamma_w)
-    return protein_energy, water_energy
+#@njit(signature_or_function=numba.types.UniTuple(float64,2)(
+#    float64, float64, float64, float64, float64, float64))
+#def compute_long_potentials_ij_from_sigmawater_thetaII_gamma(thetaII, sigma_water, 
+#    lambda_protein, gamma_p, lambda_water, gamma_w):    
+#    """
+#    Compute the protein-mediated and water-mediated (long-range) potentials 
+#    for a pair of residues. 
+#
+#    Parameters
+#    ----------
+#    See module-level docstring.
+#
+#    Returns
+#    -------
+#    protein_energy : float
+#        Energy of the protein-mediated contact term for the pair (i,j),
+#        set to 0 if the pair is masked.
+#    water_energy : float
+#        Energy of the water-mediated contact term for the pair (i,j),
+#        set to 0 if the pair is masked.
+#    """    
+#    # this function is defined so that we have the details of the 
+#    # calculation in one place and don't have to type the equation
+#    # in several different places. probably not a big deal,
+#    # but just trying to follow best practices
+#    sigma_protein = 1.0 - sigma_water
+#    protein_energy = -lambda_protein * thetaII * sigma_protein * gamma_p
+#    water_energy = -lambda_water * thetaII * sigma_water * gamma_w
+#    return protein_energy, water_energy
+#@njit(signature_or_function=numba.types.UniTuple(float64,2)(float64, float64, float64, float64, float64, float64))
+#def compute_long_potentials_ij_from_sigmawater_distij_gamma(dist_ij, sigma_water, 
+#        lambda_protein, gamma_p, lambda_water, gamma_w):
+#    """
+#    Compute the protein-mediated and water-mediated (long-range) potentials 
+#    for a pair of residues. 
+#
+#    Parameters
+#    ----------
+#    See module-level docstring.
+#
+#    Returns
+#    -------
+#    protein_energy : float
+#        Energy of the protein-mediated contact term for the pair (i,j),
+#        set to 0 if the pair is masked.
+#    water_energy : float
+#        Energy of the water-mediated contact term for the pair (i,j),
+#        set to 0 if the pair is masked.
+#    """
+#    # get indicators and sigma values
+#    thetaII = compute_thetaII(dist_ij)
+#    # compute energies
+#    sigma_protein = 1.0 - sigma_water
+#    protein_energy = -lambda_protein * thetaII * sigma_protein * gamma_p
+#    water_energy = -lambda_water * thetaII * sigma_water * gamma_w
+#    return protein_energy, water_energy
 @njit(signature_or_function=numba.types.UniTuple(float64,2)(int64, int64, float64, float64,
         float64, float64[:,:], float64, float64[:,:], int64[:]))
 def compute_long_potentials_ij_from_sigmawater_distij(i, j, dist_ij, sigma_water, 
@@ -688,31 +701,31 @@ def compute_long_potentials_ij_from_sigmawater(i, j, dist_mat, sigma_water,
     protein_energy, water_energy = compute_long_potentials_ij_from_sigmawater_distij(i, j,
             dist_ij, sigma_water, lambda_protein, protein_gamma, lambda_water, water_gamma, seq_index)
     return protein_energy, water_energy
-@njit(signature_or_function=numba.types.UniTuple(float64,2)(
-    float64, float64, float64, float64, float64, float64, float64))
-def compute_long_potentials_ij_from_rho_thetaII_gamma(rho_i, rho_j, thetaII,
-    lambda_protein, gamma_p, lambda_water, gamma_w):
-    """
-    Compute the protein-mediated and water-mediated (long-range) potentials 
-    for a pair of residues. 
-
-    Parameters
-    ----------
-    See module-level docstring.
-
-    Returns
-    -------
-    protein_energy : float
-        Energy of the protein-mediated contact term for the pair (i,j),
-        set to 0 if the pair is masked.
-    water_energy : float
-        Energy of the water-mediated contact term for the pair (i,j),
-        set to 0 if the pair is masked.
-    """    
-    sigma_water = compute_sigma_water(rho_i, rho_j)
-    protein_energy, water_energy = compute_long_potentials_ij_from_sigmawater_thetaII_gamma(
-        thetaII, sigma_water, lambda_protein, gamma_p, lambda_water, gamma_w)
-    return protein_energy, water_energy    
+#@njit(signature_or_function=numba.types.UniTuple(float64,2)(
+#    float64, float64, float64, float64, float64, float64, float64))
+#def compute_long_potentials_ij_from_rho_thetaII_gamma(rho_i, rho_j, thetaII,
+#    lambda_protein, gamma_p, lambda_water, gamma_w):
+#    """
+#    Compute the protein-mediated and water-mediated (long-range) potentials 
+#    for a pair of residues. 
+#
+#    Parameters
+#    ----------
+#    See module-level docstring.
+#
+#    Returns
+#    -------
+#    protein_energy : float
+#        Energy of the protein-mediated contact term for the pair (i,j),
+#        set to 0 if the pair is masked.
+#    water_energy : float
+#        Energy of the water-mediated contact term for the pair (i,j),
+#        set to 0 if the pair is masked.
+#    """    
+#    sigma_water = compute_sigma_water(rho_i, rho_j)
+#    protein_energy, water_energy = compute_long_potentials_ij_from_sigmawater_thetaII_gamma(
+#        thetaII, sigma_water, lambda_protein, gamma_p, lambda_water, gamma_w)
+#    return protein_energy, water_energy    
 @njit(signature_or_function=numba.types.UniTuple(float64,2)(
     float64, float64, float64, float64, float64, float64, float64))
 def compute_long_potentials_ij_from_rho_distij_gamma(dist_ij, rho_i, rho_j, 
@@ -736,8 +749,14 @@ def compute_long_potentials_ij_from_rho_distij_gamma(dist_ij, rho_i, rho_j,
     """    
     sigma_water = compute_sigma_water(rho_i, rho_j)
     #assert 0 < sigma_water < 1, f'rho_i: {repr(rho_i)}, rho_j: {repr(rho_j)}, sigma_water: {repr(sigma_water)}'
-    protein_energy, water_energy = compute_long_potentials_ij_from_sigmawater_distij_gamma(
-        dist_ij, sigma_water, lambda_protein, gamma_p, lambda_water, gamma_w)
+    #protein_energy, water_energy = compute_long_potentials_ij_from_sigmawater_distij_gamma(
+    #    dist_ij, sigma_water, lambda_protein, gamma_p, lambda_water, gamma_w)
+    
+    thetaII = compute_thetaII(dist_ij)
+    # compute energies
+    sigma_protein = 1.0 - sigma_water
+    protein_energy = -lambda_protein * thetaII * sigma_protein * gamma_p
+    water_energy = -lambda_water * thetaII * sigma_water * gamma_w
     return protein_energy, water_energy
 @njit(signature_or_function=numba.types.UniTuple(float64,2)(
     int64, int64, int64, int64[:], int64[:], float64[:,:], float64, float64, float64, float64))
@@ -792,26 +811,26 @@ def compute_long_potentials_ij(i, j, min_seq_sep_rho, chain_starts, chain_ends, 
           lambda_protein, lambda_water, gamma_p, gamma_w)
 # feel free to add more functions with different signatures for greater flexibility of use
 #
-@njit(signature_or_function=float64(float64, float64, float64))
-def compute_electrostatic_potential_ij_from_indicator_gamma(electrostatic_indicator, lambda_electrostatic, gamma):
-    """
-    Compute the solvation-averaged electrostatic potential
-    for a pair of residues.   
-
-    Parameters
-    ----------
-    See module-level docstring.
-
-    Returns
-    -------
-    electrostatic_energy : float
-        Energy of the electrostatic interaction between residues i and j
-    """
-    # gamma is negative if interaction is favorable and positive if
-    # unfavorable, and our lambdas and indicators are all positive by convention,
-    # so we don't precede this equation with a negative sign
-    #return -lambda_electrostatic * electrostatic_indicator * gamma
-    return lambda_electrostatic * electrostatic_indicator * gamma
+#@njit(signature_or_function=float64(float64, float64, float64))
+#def compute_electrostatic_potential_ij_from_indicator_gamma(electrostatic_indicator, lambda_electrostatic, gamma):
+#    """
+#    Compute the solvation-averaged electrostatic potential
+#    for a pair of residues.   
+#
+#    Parameters
+#    ----------
+#    See module-level docstring.
+#
+#    Returns
+#    -------
+#    electrostatic_energy : float
+#        Energy of the electrostatic interaction between residues i and j
+#    """
+#    # gamma is negative if interaction is favorable and positive if
+#    # unfavorable, and our lambdas and indicators are all positive by convention,
+#    # so we don't precede this equation with a negative sign
+#    #return -lambda_electrostatic * electrostatic_indicator * gamma
+#    return lambda_electrostatic * electrostatic_indicator * gamma
 @njit(signature_or_function=float64(float64, float64, float64, float64))
 def compute_electrostatic_potential_ij_from_distij_gamma(l_D, dist_ij, lambda_electrostatic, gamma):
     """
@@ -828,12 +847,19 @@ def compute_electrostatic_potential_ij_from_distij_gamma(l_D, dist_ij, lambda_el
         Energy of the electrostatic interaction between residues i and j
     """
     indicator = compute_electrostatic_indicator(l_D, dist_ij)
-    electrostatic_energy = compute_electrostatic_potential_ij_from_indicator_gamma(
-        indicator, lambda_electrostatic, gamma)
+    #electrostatic_energy = compute_electrostatic_potential_ij_from_indicator_gamma(
+    #    indicator, lambda_electrostatic, gamma)
+
+    # gamma is negative if interaction is favorable and positive if
+    # unfavorable, and our lambdas and indicators are all positive by convention,
+    # so we don't precede this equation with a negative sign
+    #return -lambda_electrostatic * electrostatic_indicator * gamma
+    return lambda_electrostatic * electrostatic_indicator * gamma
     return electrostatic_energy
+"""
 @njit(signature_or_function=float64(int64, int64, float64, float64[:,:], float64, float64))
 def compute_electrostatic_potential_ij_from_gamma(i, j, l_D, dist_mat, lambda_electrostatic, gamma):
-    """
+    """"""
     Compute the solvation-averaged electrostatic potential
     for a pair of residues.   
 
@@ -845,10 +871,11 @@ def compute_electrostatic_potential_ij_from_gamma(i, j, l_D, dist_mat, lambda_el
     -------
     electrostatic_energy : float
         Energy of the electrostatic interaction between residues i and j
-    """
+    """"""
     dist_ij = dist_mat[i,j]
     electrostatic_energy = compute_electrostatic_potential_ij_from_distij_gamma(l_D, dist_ij, lambda_electrostatic, gamma)
     return electrostatic_energy
+"""
 @njit(signature_or_function=float64(int64, int64, float64, float64[:,:], float64, float64[:,:], int64[:]))
 def compute_electrostatic_potential_ij(i, j, l_D, dist_mat, lambda_electrostatic, electrostatic_gamma, seq_index):
     """
@@ -1131,6 +1158,7 @@ def compute_potential_total(l_D, min_seq_sep_rho, min_seq_sep_contact, min_seq_s
 # PAIR ENERGY: burial(i)+burial(j)+direct(i,j)+protein(i,j)+water(i,j)+electrostatic(i,j)
 # important: total energy is NOT sum over all pairs ij of pair_energy(i,j)
 # these functions DO NOT check mask conditions
+"""
 @njit(signature_or_function=float64(
     float64, float64, float64, float64, float64,
     float64, float64, float64, float64, float64, float64,
@@ -1150,6 +1178,7 @@ def compute_pair_energy_ij_useful(
     pair_energy = burial_energy_i + burial_energy_j + direct_energy +\
                       protein_energy + water_energy + electrostatic_energy
     return pair_energy
+"""
 @njit(signature_or_function=float64(
                             int64, int64, float64, int64, int64[:], int64[:],
                             float64[:,:],
@@ -1186,6 +1215,7 @@ def compute_pair_energy_ij_from_gamma(
         protein_energy + water_energy + electrostatic_energy
     return pair_energy
 #
+"""
 @njit(signature_or_function=float64(
         int64, int64, float64,
         float64[:,:],
@@ -1227,7 +1257,9 @@ def compute_pair_energy_ij_from_rho_sigmawater(
     pair_energy = burial_energy_i + burial_energy_j + direct_energy +\
         protein_energy + water_energy + electrostatic_energy
     return pair_energy
+"""
 #
+"""
 @njit(signature_or_function=float64(int64, int64, float64,
                                     float64[:,:],
                                     float64, float64,
@@ -1246,7 +1278,7 @@ def compute_pair_energy_ij_from_rho(i, j, l_D,
                            lambda_burial, burial_gamma,
                            lambda_electrostatic, electrostatic_gamma,
                            seq_index):
-    """
+    """"""
     Compute the "pair energy" for residues i and j, defined as the sum of:
     - Direct contact energy
     - Protein-mediated contact energy
@@ -1265,7 +1297,7 @@ def compute_pair_energy_ij_from_rho(i, j, l_D,
     -------
     pair_energy : float
         Total "pair energy" of residues i and j
-    """
+    """"""
     sigma_water = compute_sigma_water(rho_i, rho_j)
     pair_energy = compute_pair_energy_ij_from_rho_sigmawater(
         i, j, l_D,
@@ -1278,6 +1310,7 @@ def compute_pair_energy_ij_from_rho(i, j, l_D,
         lambda_electrostatic, electrostatic_gamma,
         seq_index)
     return pair_energy
+"""
 #
 @njit(signature_or_function=float64(int64, int64, float64, int64, int64[:], int64[:],
                                     float64[:,:],
@@ -1384,6 +1417,34 @@ def compute_potts_model_h(
     return h
 compute_potts_model_h_parallel = njit(signature_or_function=signature, parallel=True)(compute_potts_model_h)
 compute_potts_model_h = njit(signature_or_function=signature)(compute_potts_model_h)
+
+
+def potts_model_functions( l_D, min_seq_sep_rho, min_seq_sep_contact, min_seq_sep_electrostatic,
+    chain_starts, chain_ends, max_dist_contact, max_dist_electrostatic):
+
+    signature = float64[:,:,:,:](
+    float64[:,:],
+    float64, float64[:,:],
+    float64, float64[:,:],
+    float64, float64[:,:],
+    float64, float64[:,:])
+    def compute_potts_model_J(dist_mat, lambda_direct, direct_gamma, 
+    lambda_protein, protein_gamma,
+    lambda_water, water_gamma, 
+    lambda_electrostatic, electrostatic_gamma):
+        return J
+    return compute_potts_model_J
+
+compute_potts_model_J_function = potts_model_functions(l_D, min_seq_sep_rho, min_seq_sep_contact, min_seq_sep_electrostatic,
+    chain_starts, chain_ends, max_dist_contact, max_dist_electrostatic)
+
+compute_potts_model_J_function(dist_mat, lambda_direct, direct_gamma, 
+    lambda_protein, protein_gamma,
+    lambda_water, water_gamma, 
+    lambda_electrostatic, electrostatic_gamma)
+
+
+
 #
 signature = float64[:,:,:,:](
     float64, int64, int64, int64,
@@ -1518,3 +1579,9 @@ def compute_pair_energy_matrix(l_D,
 compute_pair_energy_matrix_parallel = njit(signature_or_function=signature, parallel=True)(compute_pair_energy_matrix)
 compute_pair_energy_matrix = njit(signature_or_function=signature)(compute_pair_energy_matrix)
 """
+
+#def get_args_for_numba(self, target):
+#    name_dict = {'l_D' : self.electrostatics_screening_length,
+#    # etc. }
+#    needed_args = inspect.get_args(target)
+#    return name_dict[needed_args]

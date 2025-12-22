@@ -268,6 +268,7 @@ class _AWSEMBase(Frustratometer):
         self._decoy_fluctuation = {} # used for non-configurational frustration calculations
         self._minimally_frustrated_threshold=.78 # this should be a class variable or an argument to __init__
         self._native_energy = None
+        self._potts_model = None
 
     # although the alphabet is really an attribute of the AWSEM
     # Hamiltonian, and therefore belongs in the ParametersAWSEM instance,
@@ -327,6 +328,55 @@ class _AWSEMBase(Frustratometer):
     @property
     def contact_freq(self):
         return frustration.compute_contact_freq(self.sequence, self.p.alphabet)
+    @property 
+    def potts_model(self):
+        if self._potts_model is None:
+            if self.potts_option:
+                #raise AssertionError(f"""
+                #The user requested potts model calculation but apparently
+                #it wasn't done upon initialization of {self.__class__}.
+                #This is likely an issue with the _AWSEMBase class.""") 
+                # 
+                # the user may have changed their mind after initializing
+                # the object (see the else block of this conditional),
+                # so the above assertion is inappropriate
+                self.calculate_energy_and_potts()
+                return self._potts_model
+            else:
+                warnings.warn(f"""
+                Attempting to access (N,N,q,q)-shaped numpy array of potts model,
+                but {self.__class__}.potts_option evaluated to False.
+                Will not return potts model.
+                To get the potts model, set self.potts_option=True and try again.""")
+                return None
+        else:
+            return self._potts_model
+    @potts_model.setter
+    def potts_model(self, value):
+        raise NotImplementedError(f"Cannot directly set {self.__class__}.potts_model")
+
+    # this is like derived properties (see above), but certain functions
+    # require native_energy to be a callable method instead of a property
+    def native_energy(self):
+        if self._potts_model is not None:
+            energy = super().native_energy() # method to compute native energy given potts model
+        else:
+            l_D = float(self.p.electrostatics_screening_length)
+            min_seq_sep_rho = self.p.min_sequence_separation_rho
+            min_seq_sep_contact = self.p.min_sequence_separation_contact
+            min_seq_sep_electrostatic = self.p.min_sequence_separation_electrostatics
+            energy = ham.compute_potential_total(
+                l_D, min_seq_sep_rho, min_seq_sep_contact, min_seq_sep_electrostatic,
+                chain_starts, chain_ends,
+                dist_mat=self.distance_matrix,
+                lambda_direct=self.p.k_contact, direct_gamma=self.p.direct_gamma,
+                lambda_protein=self.p.k_contact, protein_gamma=self.p.protein_gamma, 
+                lambda_water=self.p.k_contact, water_gamma=self.p.water_gamma, 
+                lambda_burial=self.p.k_contact, burial_gamma=self.p.burial_gamma,
+                lambda_electrostatic=self.p.k_electrostatics, electrostatic_gamma=self.p.electrostatic_gamma,
+                seq_index=self.seq_index, parallel=True) # can set to False if having numba issues
+        #self._native_energy = energy # maybe _native_energy is needed for compatibility with certain things?
+        return energy
 
     # this format is a little bit unusual but is useful for the optimization code
     @property
@@ -391,12 +441,6 @@ class _AWSEMBase(Frustratometer):
     def selected_matrix(self, value):
         raise NotImplementedError(f"Cannot directly set {self.__class__}.selected_matrix")
     
-    @property
-    def potts_model(self):
-        return self._potts_model
-    @potts_model.setter
-    def potts_model(self, value):
-        raise NotImplementedError(f"Cannot directly set {self.__class__}.potts_model")
 
     ##################################################################################
 
@@ -512,16 +556,7 @@ class _AWSEMBase(Frustratometer):
                      If you want to get the energies for your own purposes, set self.potts_option=True
                      and then call calculate_energy_and_potts.""")
 
-    # not really sure what the point of this is
-    def native_energy(self):
-        if self.potts_option: 
-            if not hasattr(self, '_potts_model'): # create potts model if it doesn't already exist
-                self.calculate_energy_and_potts()
-            energy = super().native_energy() # method to compute native energy given potts model
-        else:
-            energy = 0 # fill in numba function here
-        #self._native_energy = energy # maybe _native_energy is needed for compatibility with certain things?
-        return energy
+
 
     # methods to calculate different kinds of frustration
     def compute_configurational_decoy_statistics(self):
