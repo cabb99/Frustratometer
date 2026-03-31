@@ -34,7 +34,7 @@ def test_density_residues(test_data, test_structure):
     structure = test_structure[test_data['pdb']]
     sequence_separation = 2 if test_data['seqsep'] == 3 else 13
     model = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_rho=sequence_separation, k_electrostatics=0)
-    data = pd.read_csv(test_data['singleresidue'], delim_whitespace=True)
+    data = pd.read_csv(test_data['singleresidue'], sep=r'\s+')
     data['Calculated_density'] = model.rho_r
     data['Expected_density'] = data['DensityRes']
     max_atol = np.max(np.abs(data['Calculated_density'] - data['Expected_density']))
@@ -52,7 +52,7 @@ def test_single_residue_frustration(test_data,test_structure):
     structure = test_structure[test_data['pdb']]
     sequence_separation = 2 if test_data['seqsep'] == 3 else 13
     model = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_rho=sequence_separation, min_sequence_separation_contact=2, k_electrostatics=test_data['k_electrostatics'] * 4.184, min_sequence_separation_electrostatics=1)
-    data = pd.read_csv(test_data['singleresidue'], delim_whitespace=True)
+    data = pd.read_csv(test_data['singleresidue'], sep=r'\s+')
     data['Calculated_frustration'] = model.frustration(kind='singleresidue')
     data['Expected_frustration'] = data['FrstIndex']
     try:
@@ -71,7 +71,7 @@ def test_mutational_frustration(test_data,test_structure):
         assert True
         return
     model = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_rho=sequence_separation, min_sequence_separation_contact=0, k_electrostatics=test_data['k_electrostatics'] * 4.184, min_sequence_separation_electrostatics=1)
-    data = pd.read_csv(test_data['mutational'], delim_whitespace=True)
+    data = pd.read_csv(test_data['mutational'], sep=r'\s+')
     
     if test_data['pdb']!="ijge":
         chains=['A','B','C']
@@ -115,7 +115,7 @@ def test_configurational_frustration(test_data,test_structure):
                                  k_electrostatics=test_data['k_electrostatics'] * 4.184, 
                                  min_sequence_separation_electrostatics=1)
     
-    data = pd.read_csv(test_data['configurational'], delim_whitespace=True)
+    data = pd.read_csv(test_data['configurational'], sep=r'\s+')
     
     if test_data['pdb'] != "ijge":
         chains = ['A', 'B', 'C']
@@ -145,7 +145,7 @@ def test_configurational_frustration(test_data,test_structure):
 #####
 def test_residue_density_calculation():
     #Import Lammps AWSEM Frustratometer single residue frustration values
-    lammps_single_frustration_dataframe=pd.read_csv(test_data_path/"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
+    lammps_single_frustration_dataframe=pd.read_csv(test_data_path/"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep=r"\s+")
     lammps_single_frustration_dataframe["i"]=lammps_single_frustration_dataframe["i"]-1
     expected_rho_values=lammps_single_frustration_dataframe["rho_i"]
 
@@ -183,7 +183,7 @@ def test_fields_couplings_AWSEM_energy():
 def test_single_residue_AWSEM_energy():
     _AA = '-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer single residue frustration values
-    lammps_single_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
+    lammps_single_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep=r"\s+")
     ###
     structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A")
     model=frustratometer.AWSEM(structure,distance_cutoff_contact=9.499,
@@ -208,7 +208,7 @@ def test_single_residue_AWSEM_energy():
 def test_contact_pair_AWSEM_energy():
     _AA = '-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer mutational frustration values
-    lammps_mutational_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_mutational_1E6decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
+    lammps_mutational_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_mutational_1E6decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep=r"\s+")
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
     lammps_mutational_frustration_dataframe["j"]=lammps_mutational_frustration_dataframe["j"]-1
     ###
@@ -306,7 +306,7 @@ def test_selected_subsequence_AWSEM_contact_energy_without_protein_context():
 def test_single_residue_decoy_AWSEM_energy_statistics():
     _AA = '-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer single residue frustration values
-    lammps_single_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
+    lammps_single_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_singleresidue_1E8decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep=r"\s+")
     ###
     structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A")
     model=frustratometer.AWSEM(structure,distance_cutoff_contact=9.499, min_sequence_separation_contact=2, k_electrostatics=0)
@@ -335,7 +335,7 @@ def test_single_residue_decoy_AWSEM_energy_statistics():
 def test_contact_pair_decoy_AWSEM_energy_statistics():
     _AA = '-ACDEFGHIKLMNPQRSTVWY'
     #Import Lammps AWSEM Frustratometer mutational frustration values
-    lammps_mutational_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_mutational_1E6decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep="\s+")
+    lammps_mutational_frustration_dataframe=pd.read_csv(test_data_path/f"6U5E_A_tertiary_frustration_mutational_1E6decoys_AWSEM_Frustratometer_LAMMPS_Carlos.dat",header=0,sep=r"\s+")
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
     lammps_mutational_frustration_dataframe["j"]=lammps_mutational_frustration_dataframe["j"]-1
     ###
