@@ -342,8 +342,8 @@ def test_diff_mean_inner_product_1_by_1(n_elements = 10):
 
 _AA = '-ACDEFGHIKLMNPQRSTVWY'
 
+#"distance_cutoff_contact", "min_sequence_separation_contact", "k_electrostatics"
 @pytest.fixture(params=[(10, 2, 0.0), (10, 2, 4.15), (None, 10, 4.15)])
-@pytest.mark.parametrize(["distance_cutoff_contact", "min_sequence_separation_contact", "k_electrostatics"], [])
 def model(request):
     native_pdb = "tests/data/1bfz.pdb"
     distance_cutoff_contact, min_sequence_separation_contact, k_electrostatics = request.param
