@@ -439,11 +439,11 @@ def compute_mutational_decoy_energy_fluctuation(seq: str,
     seq_len = len(seq_index)
 
     # Create masked decoys
-    pos1,pos2=np.where(mask>0)
-    contacts_len=len(pos1)
+    pos1_flat,pos2_flat=np.where(mask>0)
+    contacts_len=len(pos1_flat)
 
-    pos1,aa1,aa2=np.meshgrid(pos1, np.arange(21), np.arange(21), indexing='ij', sparse=True)
-    pos2,aa1,aa2=np.meshgrid(pos2, np.arange(21), np.arange(21), indexing='ij', sparse=True)
+    pos1,aa1,aa2=np.meshgrid(pos1_flat, np.arange(21), np.arange(21), indexing='ij', sparse=True)
+    pos2,aa1,aa2=np.meshgrid(pos2_flat, np.arange(21), np.arange(21), indexing='ij', sparse=True)
 
     #Compute fields
     decoy_energy = np.zeros([contacts_len, 21, 21])
@@ -451,14 +451,25 @@ def compute_mutational_decoy_energy_fluctuation(seq: str,
     decoy_energy -= (potts_model['h'][pos2, aa2] - potts_model['h'][pos2, seq_index[pos2]])  # h correction aa2
 
     #Compute couplings
-    j_correction = np.zeros([contacts_len, 21, 21])
-    for pos, aa in enumerate(seq_index):
-        # J correction interactions with other aminoacids
-        reduced_j = potts_model['J'][pos, :, aa, :].astype(np.float32)
-        j_correction += reduced_j[pos1, seq_index[pos1]] * mask[pos, pos1]
-        j_correction -= reduced_j[pos1, aa1] * mask[pos, pos1]
-        j_correction += reduced_j[pos2, seq_index[pos2]] * mask[pos, pos2]
-        j_correction -= reduced_j[pos2, aa2] * mask[pos, pos2]
+    # j_correction = np.zeros([contacts_len, 21, 21])
+    # for pos, aa in enumerate(seq_index):
+    #     # J correction interactions with other aminoacids
+    #     reduced_j = potts_model['J'][pos, :, aa, :].astype(np.float32)
+    #     j_correction += reduced_j[pos1, seq_index[pos1]] * mask[pos, pos1]
+    #     j_correction -= reduced_j[pos1, aa1] * mask[pos, pos1]
+    #     j_correction += reduced_j[pos2, seq_index[pos2]] * mask[pos, pos2]
+    #     j_correction -= reduced_j[pos2, aa2] * mask[pos, pos2]
+
+    # Vectorized: Compute reduced_j[pos1, aa1] * mask[pos, pos1] in einsum
+    # V[j, a] = sum_i J[i, j, seq_index[i], a] * mask[i, j] 
+    j_reduced = potts_model['J'][np.arange(seq_len), :, seq_index, :].astype(np.float32)  # (L, L, 21)
+    mask_float = mask.astype(np.float32)
+    V = np.einsum('ijk,ij->jk', j_reduced, mask_float)  # (L, 21)
+    j_correction = (  V[pos1_flat, seq_index[pos1_flat]][:, None, None]
+                    - V[pos1_flat, :][:, :, None]
+                    + V[pos2_flat, seq_index[pos2_flat]][:, None, None]
+                    - V[pos2_flat, :][:, None, :])
+    
     # J correction, interaction with self aminoacids
     j_correction -= potts_model['J'][pos1, pos2, seq_index[pos1], seq_index[pos2]] * mask[pos1, pos2]  # Taken two times
     j_correction += potts_model['J'][pos1, pos2, aa1, seq_index[pos2]] * mask[pos1, pos2]  # Added mistakenly
