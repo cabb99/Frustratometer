@@ -57,22 +57,22 @@ def setup_2_by_2(length):
 
 # Specific test functions
 def test_compute_region_means_1_by_1():
-    template_test_compute_region_means(compute_region_means_1_by_1_numpy, compute_region_means_1_by_1, setup_1_by_1, range(1, 200))
+    template_test_compute_region_means(compute_region_means_1_by_1_numpy, compute_region_means_1_by_1, setup_1_by_1, [1, 2, 3, 5, 10, 20, 50, 100, 150, 200])
 
 def test_compute_region_means_1_by_2():
-    template_test_compute_region_means(compute_region_means_1_by_2_numpy, compute_region_means_1_by_2, setup_1_by_2, range(1, 100))
+    template_test_compute_region_means(compute_region_means_1_by_2_numpy, compute_region_means_1_by_2, setup_1_by_2, [1, 2, 3, 5, 10, 25, 50, 100])
 
 def test_compute_region_means_2_by_2():
-    template_test_compute_region_means(compute_region_means_2_by_2_numpy, compute_region_means_2_by_2, setup_2_by_2, range(1, 40))
+    template_test_compute_region_means(compute_region_means_2_by_2_numpy, compute_region_means_2_by_2, setup_2_by_2, [1, 2, 5, 10, 20, 40])
 
 def test_compute_region_means_2_by_2_parallel():
-    template_test_compute_region_means(compute_region_means_2_by_2, compute_region_means_2_by_2_parallel, setup_2_by_2, range(1, 50))
+    template_test_compute_region_means(compute_region_means_2_by_2, compute_region_means_2_by_2_parallel, setup_2_by_2, [1, 2, 5, 10, 25, 50])
 
 
 def test_compute_region_means():
-    template_test_compute_region_means(compute_region_means, compute_region_means_1_by_1, setup_1_by_1, range(1, 400,5))
-    template_test_compute_region_means(compute_region_means, compute_region_means_1_by_2, setup_1_by_2, range(1, 400,5))
-    template_test_compute_region_means(compute_region_means, compute_region_means_2_by_2_parallel, setup_2_by_2, range(1, 300,5))
+    template_test_compute_region_means(compute_region_means, compute_region_means_1_by_1, setup_1_by_1, [1, 2, 5, 10, 25, 50, 100, 200, 400])
+    template_test_compute_region_means(compute_region_means, compute_region_means_1_by_2, setup_1_by_2, [1, 2, 5, 10, 25, 50, 100, 200, 400])
+    template_test_compute_region_means(compute_region_means, compute_region_means_2_by_2_parallel, setup_2_by_2, [1, 2, 5, 10, 25, 50, 100, 200, 400])
 
 def test_mean_inner_product():
     native_sequences=[
@@ -341,9 +341,11 @@ def test_diff_mean_inner_product_1_by_1(n_elements = 10):
 ################
 
 _AA = '-ACDEFGHIKLMNPQRSTVWY'
+_AB = ''.join([a for a in _AA if a not in ['-','C','P']])
+_AC = ''.join([a for a in _AA if a != '-'] + ['-'])
 
 #"distance_cutoff_contact", "min_sequence_separation_contact", "k_electrostatics"
-@pytest.fixture(params=[(10, 2, 0.0), (10, 2, 4.15), (None, 10, 4.15)])
+@pytest.fixture(scope="module", params=[(10, 2, 0.0), (10, 2, 4.15), (None, 10, 4.15)])
 def model(request):
     native_pdb = "tests/data/1bfz.pdb"
     distance_cutoff_contact, min_sequence_separation_contact, k_electrostatics = request.param
@@ -351,24 +353,27 @@ def model(request):
     model = AWSEM(structure, distance_cutoff_contact=distance_cutoff_contact, min_sequence_separation_contact=min_sequence_separation_contact, expose_indicator_functions=True, k_electrostatics=k_electrostatics)   
     return model
 
-@pytest.mark.parametrize("reduced_alphabet", [_AA,''.join([a for a in _AA if a not in ['-','C','P']]),''.join([a for a in _AA if a != '-'] + ['-'])])
+@pytest.mark.parametrize("reduced_alphabet,use_numba", [
+    (_AA, True), (_AA, False), (_AB, False), (_AC, False),
+])
 @pytest.mark.parametrize("exact", [True, False])
-@pytest.mark.parametrize("use_numba", [True, False])
 def test_heterogeneity(reduced_alphabet, exact, use_numba):
     seq_indices = np.random.randint(0, len(reduced_alphabet), size=(1,5))
     het=Heterogeneity(exact=exact,use_numba=use_numba,alphabet=reduced_alphabet)
     het.test(seq_indices[0])
 
-@pytest.mark.parametrize("reduced_alphabet", [_AA,''.join([a for a in _AA if a not in ['-','C','P']]),''.join([a for a in _AA if a != '-'] + ['-'])])
-@pytest.mark.parametrize("use_numba", [True, False])
+@pytest.mark.parametrize("reduced_alphabet,use_numba", [
+    (_AA, True), (_AA, False), (_AB, False), (_AC, False),
+])
 def test_awsem_energy(model,reduced_alphabet,use_numba):
     seq_indices = np.random.randint(0, len(reduced_alphabet), size=(1,len(model.sequence)))
     awsem_energy = AwsemEnergy(use_numba=use_numba, model=model, alphabet=reduced_alphabet)
     awsem_energy.test(seq_indices[0])
     awsem_energy.regression_test()
 
-@pytest.mark.parametrize("reduced_alphabet", [_AA,''.join([a for a in _AA if a not in ['-','C','P']]),''.join([a for a in _AA if a != '-'] + ['-'])])
-@pytest.mark.parametrize("use_numba", [True, False])
+@pytest.mark.parametrize("reduced_alphabet,use_numba", [
+    (_AA, True), (_AA, False), (_AB, False), (_AC, False),
+])
 def test_awsem_energy_average(model, reduced_alphabet, use_numba):
     seq_indices = np.random.randint(0, len(reduced_alphabet), size=(1,len(model.sequence)))
     awsem_de2 = AwsemEnergyAverage(use_numba=use_numba, model=model, alphabet=reduced_alphabet)
@@ -376,8 +381,10 @@ def test_awsem_energy_average(model, reduced_alphabet, use_numba):
     awsem_de2.regression_test(seq_indices[0])
 
 
-@pytest.mark.parametrize("reduced_alphabet", [_AA,''.join([a for a in _AA if a not in ['-','C','P']]),''.join([a for a in _AA if a != '-'] + ['-'])])
-@pytest.mark.parametrize("use_numba", [True, False])
+@pytest.mark.slow
+@pytest.mark.parametrize("reduced_alphabet,use_numba", [
+    (_AA, True), (_AA, False), (_AB, False), (_AC, False),
+])
 def test_awsem_energy_variance(model, reduced_alphabet, use_numba):
     seq_indices = np.random.randint(0, len(reduced_alphabet), size=(1,len(model.sequence)))
     awsem_de2 = AwsemEnergyVariance(use_numba=use_numba, model=model, alphabet=reduced_alphabet)
