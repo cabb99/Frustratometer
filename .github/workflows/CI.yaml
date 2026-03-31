@@ -92,6 +92,7 @@ jobs:
     
     #Install numpy first
     - name: Install numpy
+      shell: bash -l {0}
       run: |
         conda install "numpy<2"
 
