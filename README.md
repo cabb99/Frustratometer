@@ -25,9 +25,21 @@ This principle of minimum frustration has been shown using the AWSEM forcefield 
 
 ## Installation
 
-To install this modules please clone this repository and install it using the following commands.
+### Using conda (recommended)
 
-    git clone HanaJaafari/Frustratometer
+    conda install -c conda-forge frustratometer
+
+### Using pip
+
+    pip install frustratometer
+
+Note: `openmm` and `pdbfixer` are not available on PyPI and must be installed separately via conda:
+
+    conda install -c conda-forge openmm pdbfixer
+
+### From source
+
+    git clone https://github.com/HanaJaafari/Frustratometer
     cd Frustratometer
     conda install -c conda-forge --file requirements.txt
     pip install -e .
