@@ -1,30 +1,31 @@
 import subprocess
 from pathlib import Path
 import tempfile
-from typing import Union
+import typing
 
-def jackhmmer(sequence,
-              output_file,
-              database,
-              log=subprocess.DEVNULL,
+def jackhmmer(sequence: str,
+              output_file: typing.Union[Path,str],
+              database: typing.Union[Path,str],
+              log = subprocess.DEVNULL,
               dry_run: bool = False,
-              **kwargs)->Path:
+              **kwargs) -> Path:
     """
-    Generates alignment using jackhmmer
+    Generates alignment in stockholm format using jackhmmer.
 
     Parameters
     ----------
     sequence :  str
         Protein sequence
     output_file : str
-        If True, will record alignment output messages;
-        Arguments: True OR False (Default is False)
+        Path to save the alignment file
     database: str
-        Location of the sequence database used to generation MSA
+        Location of the sequence database used to generation MSA.
+        The database should be in fasta format.
+        Databases can be downloaded from: https://www.uniprot.org/help/downloads
     log: File handle
-        jackhmmer output Default:DEVNULL
+        Path to write the output of the program. Default:DEVNULL
     dry_run: bool (default: False)
-        Save the temporary fasta_file and print the command instead of running
+        Creates a fasta file with the sequence and prints the command needed to run jackhmmer
     **kwargs: 
         Other arguments that can be passed to jackhmmer.
         More information can be found by executing `jackhmmer -h`
@@ -32,8 +33,6 @@ def jackhmmer(sequence,
         Common kwargs:
             N: number of iterations
             E: E-value threshold
-
-
     Returns
     -------
     output_file: Path
@@ -98,7 +97,7 @@ def extract_sequences_from_alignment(alignment_file,
     import Bio.SeqIO
 
     alignment = Bio.AlignIO.read(alignment_file,'stockholm')
-    database = Bio.SeqIO.parse('/home/cb/Development/DCA_Frustratometer/dca_frustratometer/databases/Uniprot/uniprot_sprot.fasta','fasta')
+    database = Bio.SeqIO.parse(database,'fasta')
     alignment_records=[]
     for record in alignment:
         alignment_records+=[record.name]

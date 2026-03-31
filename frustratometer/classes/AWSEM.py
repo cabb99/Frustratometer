@@ -341,7 +341,7 @@ class AWSEM(Frustratometer):
 
         # decoy_data_columns=['decoy_i','i_resno','j_resno','ires_type','jres_type','aa1','aa2','rij','rho_i','rho_j','water_energy','burial_energy_i','burial_energy_j','electrostatic_energy','total_energies']
         # decoy_data=[]
-        configurational_energies=np.zeros((n,n))
+        configurational_energies=np.full((n,n), np.nan) # masked pairs will be left as nan
         for c in range(n_contacts):
             n1=indices1[c]
             n2=indices2[c]

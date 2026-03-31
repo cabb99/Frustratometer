@@ -1,3 +1,21 @@
+"""
+Utilities for sequence energies, decoys, and frustration metrics from Potts models.
+
+Conventions
+-----------
+- Alphabet: `_AA = '-ACDEFGHIKLMNPQRSTVWY'` (gap '-' at index 0)
+- Sequence length: L
+- Fields and couplings:
+    * potts_model['h'] has shape (L, Q)
+    * potts_model['J'] has shape (L, L, Q, Q)
+- Energies: A positive value in the potts model or a negative value in the energy is a favorable contribution.
+- Masks: boolean array of shape (L, L). True values indicate included residue pairs.
+
+Notes
+-----
+All functions assume `len(seq) == potts_model['h'].shape[0] == potts_model['J'].shape[0]`.
+"""
+
 import prody
 import scipy.spatial.distance as sdist
 import numpy as np
@@ -10,25 +28,24 @@ def compute_mask(distance_matrix: np.array,
                  maximum_contact_distance: Union[float, None] = None,
                  minimum_sequence_separation: Union[int, None] = None) -> np.array:
     """
-    Computes a 2D Boolean mask from a given distance matrix based on a distance cutoff and a sequence separation cutoff.
+    Computes a 2D Boolean mask (L, L) for pairwise interactions from a given distance matrix using a distance cutoff and/or a minimum sequence-separation cutoff.
+    Both cutoffs are inclusive. True indicates that the residue pair meets the criteria.
 
     Parameters
     ----------
-    distance_matrix : np.array
+    distance_matrix : np.array (L,L)
         A 2D array where the element at index [i, j] represents the spatial distance
-        between residues i and j. This matrix is assumed to be symmetric.
+        between residues i and j (e.g., Ca-Ca, Cb-Cb). This matrix is assumed to be symmetric.
     maximum_contact_distance : float, optional
-        The maximum distance of a contact. Pairs of residues with distances less than this
-        threshold are marked as True in the mask. If None, the spatial distance criterion
-        is ignored and all distances are included. Default is None.
+        The maximum distance of a contact. Include i,j if distance_matrix[i,j] <= maximum_contact_distance. 
+        If None, no distance filtering is applied. Default is None.
     minimum_sequence_separation : int, optional
-        A minimum sequence distance threshold. Pairs of residues with sequence indices
-        differing by at least this value are marked as True in the mask. If None,
-        the sequence distance criterion is ignored. Default is None.
+        A minimum sequence separation threshold. Include i,j if |i-j| >= minimum_sequence_separation.
+        If None, no sequence separation is applied . Default is None.
 
     Returns
     -------
-    mask : np.array
+    mask : np.array (L,L)
         A 2D Boolean array of the same dimensions as `distance_matrix`. Elements of the mask
         are True where the residue pairs meet the specified `distance_cutoff` and
         `sequence_distance_cutoff` criteria.

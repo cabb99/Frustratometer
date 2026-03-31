@@ -408,7 +408,8 @@ class Gamma:
         
         # Plot setup
         f, axes = plt.subplots(2, 2, figsize=(18, 16))
-        titles = ['Burial Gammas', 'Direct Gammas', 'Water Gammas', 'Protein Gammas']
+        f.subplots_adjust(hspace=50) # fix overlap between axis ticks of upper subplots and titles of lower subplots
+        titles = ['Burial Gammas', 'Direct Gammas', 'Protein Gammas', 'Water Gammas']
 
         for i, (title, name) in enumerate(zip(titles, segments)):
             ax = axes[i // 2, i % 2]
@@ -416,8 +417,12 @@ class Gamma:
             ax.set_title(title)
             ax.set_xticks(np.arange(len(self.alphabet)) + 0.5)
             ax.set_xticklabels(self.alphabet)
-            ax.set_yticks(np.arange(segments[name].shape[0] // 20) + 0.5)
-            ax.set_yticklabels(range(segments[name].shape[0] // 20))
+            if i==0: # burial
+                ax.set_yticks([0.5,1.5,2.5])
+                ax.set_yticklabels(['low','medium','high'], rotation=45, size=12)
+            else: # direct, prot, or wat
+                ax.set_yticks(np.arange(len(self.alphabet)) + 0.5)
+                ax.set_yticklabels(self.alphabet, rotation=0)
 
         plt.tight_layout()
         plt.show()
