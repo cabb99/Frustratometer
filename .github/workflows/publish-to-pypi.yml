@@ -66,31 +66,40 @@ jobs:
       with:
         persist-credentials: false
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+    - uses: conda-incubator/setup-miniconda@v2
       with:
         python-version: ${{ matrix.python-version }}
+        channels: conda-forge,defaults
+        activate-environment: test-publish
+        auto-update-conda: false
+        auto-activate-base: false
+
+    - name: Install conda dependencies
+      shell: bash -l {0}
+      run: |
+        conda install -c conda-forge openmm pdbfixer pytest
 
     - name: Wait for TestPyPI to index the package
+      shell: bash -l {0}
       run: sleep 30
 
-    - name: Install from TestPyPI
+    - name: Install frustratometer from TestPyPI
+      shell: bash -l {0}
       run: |
-        python3 -m pip install \
+        pip install --pre \
           --index-url https://test.pypi.org/simple/ \
           --extra-index-url https://pypi.org/simple/ \
           frustratometer
 
     - name: Verify import and version
+      shell: bash -l {0}
       run: |
-        python3 -c "import frustratometer; print(frustratometer.__version__)"
-
-    - name: Install test dependencies
-      run: python3 -m pip install pytest
+        python -c "import frustratometer; print(frustratometer.__version__)"
 
     - name: Run tests
+      shell: bash -l {0}
       run: |
-        python3 -m pytest tests/ \
+        python -m pytest tests/ \
           --ignore=tests/test_dca_frustratometer.py \
           -x --tb=short
 
