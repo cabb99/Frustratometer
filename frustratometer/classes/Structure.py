@@ -5,6 +5,7 @@ import Bio.PDB.Polypeptide as poly
 import numpy as np
 from typing import Union
 from pathlib import Path
+import tempfile
 import warnings
 
 __all__ = ['Structure']
@@ -14,7 +15,7 @@ residue_names=[]
 class Structure:
 
     def __init__(self, pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = Path.cwd(), repair_pdb:bool = True)->object:
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb:bool = True)->object:
         
         """
         Generates structure object. Both PDB and CIF format files are accepted as input.
@@ -49,7 +50,7 @@ class Structure:
             and 'minimum' for using the minimum distance between all atoms in each residue.    
 
         pdb_directory: str
-            Directory where repaired pdb will be downloaded
+            Directory where repaired pdb will be stored. Defaults to the system temporary directory.
 
         repair_pdb: bool
             If True, provided pdb file will be repaired with missing residues inserted and heteroatoms removed.
@@ -59,6 +60,8 @@ class Structure:
         -------
         Structure object
         """        
+        if pdb_directory is None:
+            pdb_directory = Path(tempfile.gettempdir())
 
         try:
             #Check if file exists
@@ -183,7 +186,7 @@ class Structure:
 
     @classmethod
     def full_pdb(cls,pdb_file: Union[Path,str], chain: Union[str,None]=None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = Path.cwd(), repair_pdb:bool = True):
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb:bool = True):
         warnings.warn("The class method 'full_pdb' is now depreciated. You can now simply call the Structure class to create a full pdb or spliced pdb object.")
         return cls(pdb_file=pdb_file,
                    chain=chain,
@@ -196,7 +199,7 @@ class Structure:
 
     @classmethod
     def spliced_pdb(cls,pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = Path.cwd(), repair_pdb:bool = True):
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb:bool = True):
         warnings.warn("The class method 'spliced_pdb' is now depreciated. You can now simply call the Structure class to create a full pdb or spliced pdb object.")
         return cls(pdb_file=pdb_file,
                     chain=chain,
