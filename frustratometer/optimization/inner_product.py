@@ -513,11 +513,14 @@ def compute_all_region_means(indicators1d, indicators2d):
 def diff_mean_inner_product_2_by_2(r0, r1, repetitions, region_mean):
     ijkl, iikl, ijil, ijjl, ijki, ijkj, ijkk, iiil, iiki, iikk, ijii, ijij, ijji, ijjj, iiii = range(15)
     n_elements= len(repetitions)
+    mean_inner_product = np.zeros(n_elements**4)
+    # Cannot decrease a count that is already zero
+    if repetitions[r0] == 0 or r0 == r1:
+        return mean_inner_product.reshape(n_elements**2, n_elements**2)
     m=repetitions
     n=m.copy()
     n[r0]-=1
     n[r1]+=1
-    mean_inner_product = np.zeros(n_elements**4)
     n_elements_2=n_elements**2
     n_elements_3=n_elements**3
     # dijkx = np.zeros(n_elements)
@@ -688,6 +691,9 @@ def diff_mean_inner_product_2_by_2(r0, r1, repetitions, region_mean):
 def diff_mean_inner_product_1_by_2(r0, r1, repetitions, region_mean):
     ijk, iik, iji, ijj, iii = range(5)
     n_elements= len(repetitions)
+    # Cannot decrease a count that is already zero
+    if repetitions[r0] == 0 or r0 == r1:
+        return np.zeros(n_elements**3).reshape(n_elements, n_elements**2)
     m=repetitions
     n=m.copy()
     n[r0]-=1
@@ -728,6 +734,9 @@ def diff_mean_inner_product_1_by_1(r0, r1, repetitions,region_mean):
     ij, ii = range(2)
     
     n_elements= len(repetitions)
+    # Cannot decrease a count that is already zero
+    if repetitions[r0] == 0 or r0 == r1:
+        return np.zeros(n_elements**2).reshape(n_elements, n_elements)
     m=repetitions
     n=m.copy()
     n[r0]-=1
@@ -768,6 +777,10 @@ def diff_mean_inner_product_matrix(r0,r1, repetitions, indicators1d, indicators2
     
     # Create the resulting matrix filled with zeros
     R = np.zeros((total_size, total_size))
+
+    # Cannot decrease a count that is already zero
+    if repetitions[r0] == 0 or r0 == r1:
+        return R
         
     # Compute the starting indices for each matrix
     #start_indices = np.cumsum([0] + block_sizes[:-1])
