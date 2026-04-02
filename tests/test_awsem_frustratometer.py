@@ -136,6 +136,7 @@ def test_mutational_frustration(test_data,test_structure):
         raise AssertionError(f"Maximum absolute tolerance found was {max_atol}, which exceeds the allowed tolerance of {atol}.")
 
 @pytest.mark.slow
+@pytest.mark.stochastic
 @pytest.mark.parametrize("test_data", tests_config.to_dict(orient="records"))
 def test_configurational_frustration(test_data,test_structure):
     #This test may fail due to the randomness of the decoy generation

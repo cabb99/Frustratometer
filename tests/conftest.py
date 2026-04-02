@@ -14,6 +14,12 @@ def pytest_addoption(parser):
         default=False,
         help="Skip tests that require network access (downloads, remote databases).",
     )
+    parser.addoption(
+        "--skip-stochastic",
+        action="store_true",
+        default=False,
+        help="Skip tests marked as stochastic (Monte Carlo / random-sampling results).",
+    )
 
 
 def pytest_configure(config):
@@ -26,6 +32,11 @@ def pytest_configure(config):
         "markers",
         "network: marks tests that require network access; "
         "runs by default, pass --skip-network to exclude.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "stochastic: marks tests whose results depend on random sampling and may "
+        "occasionally fail; runs by default, pass --skip-stochastic to exclude.",
     )
 
 
@@ -41,3 +52,9 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "network" in item.keywords:
                 item.add_marker(skip_network)
+
+    if config.getoption("--skip-stochastic"):
+        skip_stochastic = pytest.mark.skip(reason="stochastic test — skipped via --skip-stochastic")
+        for item in items:
+            if "stochastic" in item.keywords:
+                item.add_marker(skip_stochastic)
