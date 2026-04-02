@@ -1,7 +1,25 @@
 import abc
+import sys
 import numpy as np
-from functools import cached_property
 from frustratometer.utils.format_time import format_time
+
+if sys.version_info >= (3, 8):
+    from functools import cached_property
+else:
+    # Python 3.7 backfill
+    class cached_property:  # noqa: N801
+        def __init__(self, func):
+            self.func = func
+            self.attrname = None
+            self.__doc__ = func.__doc__
+        def __set_name__(self, owner, name):
+            self.attrname = name
+        def __get__(self, instance, owner=None):
+            if instance is None:
+                return self
+            val = self.func(instance)
+            instance.__dict__[self.attrname] = val
+            return val
 
 try:
     import numba

@@ -384,20 +384,22 @@ class TestGammaCorrelation(unittest.TestCase):
     def test_correlate_with_compatible_instances(self):
         correlation = self.gamma1.correlate(self.gamma2)
         self.assertIsNotNone(correlation)
-        self.assertEqual(correlation, 1.0)
+        self.assertAlmostEqual(correlation, 1.0, places=10)
 
         correlation = self.gamma1.correlate(self.gamma3)
-        self.assertEqual(correlation, -1.0)
+        self.assertAlmostEqual(correlation, -1.0, places=10)
 
 
     def test_correlate_segments_with_compatible_instances(self):
         correlations = self.gamma1.correlate_segments(self.gamma2)
         expected_correlations = {'Burial': 1.0, 'Direct': 1.0, 'Water': 1.0, 'Protein': 1.0}
-        self.assertDictEqual(correlations, expected_correlations)
+        for key in expected_correlations:
+            self.assertAlmostEqual(correlations[key], expected_correlations[key], places=10)
 
         correlations = self.gamma1.correlate_segments(self.gamma3)
         expected_correlations = {'Burial': -1.0, 'Direct': -1.0, 'Water': -1.0, 'Protein': -1.0}
-        self.assertDictEqual(correlations, expected_correlations)
+        for key in expected_correlations:
+            self.assertAlmostEqual(correlations[key], expected_correlations[key], places=10)
 
 
     def test_correlate_with_incompatible_instances(self):

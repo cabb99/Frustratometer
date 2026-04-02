@@ -395,7 +395,7 @@ def compute_singleresidue_decoy_energy_fluctuation(seq: str,
 def compute_mutational_decoy_energy_fluctuation(seq: str,
                                                 potts_model: dict,
                                                 mask: np.array, ) -> np.array:
-    """
+    r"""
     Computes a (LxLx21x21) matrix for a sequence of length L. Matrix[i,j] describes all possible changes in energy upon mutating residue i and j simultaneously.
     
     .. math::
@@ -485,7 +485,7 @@ def compute_mutational_decoy_energy_fluctuation(seq: str,
 def compute_configurational_decoy_energy_fluctuation(seq: str,
                                                      potts_model: dict,
                                                      mask: np.array, ) -> np.array:
-    """
+    r"""
     Computes a (LxLx21x21) matrix for a sequence of length L. Matrix[i,j] describes all possible changes in energy upon mutating and altering the 
     local densities of residue i and j simultaneously.
     

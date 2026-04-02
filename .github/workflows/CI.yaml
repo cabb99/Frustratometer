@@ -26,7 +26,7 @@ jobs:
         #os: [macOS-latest, ubuntu-latest, windows-latest]
         #python-version: [3.8, 3.9, "3.10"]
         os: [ubuntu-latest]
-        python-version: [3.8, 3.9, "3.10", "3.11"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
     - uses: actions/checkout@v1
 
@@ -94,7 +94,7 @@ jobs:
     - name: Install numpy
       shell: bash -l {0}
       run: |
-        conda install "numpy<2"
+        conda install "numpy"
 
     # Install pyDCA from GitHub (optional – tests that need it will be skipped if this fails)
     - name: Install pydca
@@ -110,16 +110,10 @@ jobs:
       # conda setup requires this special shell
       shell: bash -l {0}
       run: |
-        conda install -c conda-forge --file requirements.txt
+        pip install -r requirements.txt
+        conda install -c conda-forge pdbfixer
         python -m pip install . --no-deps
         conda list
-
-    - name: Install pdbfixer
-
-      # conda setup requires this special shell
-      shell: bash -l {0}
-      run: |
-        conda install -c conda-forge pdbfixer
 
     - name: Run tests
 
