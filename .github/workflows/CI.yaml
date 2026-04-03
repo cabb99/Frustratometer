@@ -124,7 +124,7 @@ jobs:
         python -c "import sys; print(sys.executable); print('\n'.join(sys.path))"
         python -c "import pydca; print('pydca is installed and importable')"
         pip freeze | grep pydca
-        pytest -v --skip-slow --cov=frustratometer --cov-report=xml --color=yes tests/
+        pytest -v --skip-slow --skip-memory-heavy --cov=frustratometer --cov-report=xml --color=yes tests/
 
     - name: CodeCov
       uses: codecov/codecov-action@v3

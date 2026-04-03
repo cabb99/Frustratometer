@@ -20,6 +20,12 @@ def pytest_addoption(parser):
         default=False,
         help="Skip tests marked as stochastic (Monte Carlo / random-sampling results).",
     )
+    parser.addoption(
+        "--skip-memory-heavy",
+        action="store_true",
+        default=False,
+        help="Skip tests marked as memory_heavy (peak RSS > 7 GB).",
+    )
 
 
 def pytest_configure(config):
@@ -37,6 +43,12 @@ def pytest_configure(config):
         "markers",
         "stochastic: marks tests whose results depend on random sampling and may "
         "occasionally fail; runs by default, pass --skip-stochastic to exclude.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "memory_heavy: marks tests that require more than ~7 GB of RAM "
+        "(e.g. large protein AWSEM models); "
+        "runs by default, pass --skip-memory-heavy to exclude.",
     )
 
 
@@ -58,3 +70,9 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "stochastic" in item.keywords:
                 item.add_marker(skip_stochastic)
+
+    if config.getoption("--skip-memory-heavy"):
+        skip_mh = pytest.mark.skip(reason="memory-heavy test — skipped via --skip-memory-heavy")
+        for item in items:
+            if "memory_heavy" in item.keywords:
+                item.add_marker(skip_mh)
