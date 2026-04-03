@@ -11,11 +11,14 @@ import pytest
 from frustratometer.utils import _path
 import Bio.AlignIO
 import subprocess
+import os
+import importlib.util
 
 data_path = frustratometer.utils.create_directory(_path/'..'/'tests'/'data')
-#scratch_path = frustratometer.utils.create_directory(_path/'..'/'tests'/'scratch')
+output_path = Path(os.environ.get('FRUSTRATOMETER_TEST_OUTPUT', tempfile.gettempdir()))
 
 _AA = '-ACDEFGHIKLMNPQRSTVWY'
+_HAS_PYDCA = importlib.util.find_spec("pydca") is not None
 
 def test_download_pfam_database():
     """Downloads a small database from Pfam and tests that the files are splitted correctly."""
@@ -464,12 +467,13 @@ def test_from_potts_model_file():
     assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
     assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
 
+@pytest.mark.skipif(not _HAS_PYDCA, reason="pyDCA is not installed")
 def test_from_pfam_alignment_mfDCA_calculation():
     pdb_file = f'{data_path}/6JXX_A.pdb'
     chain = 'A'
     distance_matrix_method='CB'
-    alignment_output_file_name=f"{data_path}/PF11976_test_alignment.sto"
-    filtered_alignment_output_file_name=f"{data_path}/PF11976_test_filtered_alignment.sto"
+    alignment_output_file_name=f"{output_path}/PF11976_test_alignment.sto"
+    filtered_alignment_output_file_name=f"{output_path}/PF11976_test_filtered_alignment.sto"
     PFAM_ID="PF11976"
     DCA_format="mfDCA"
     
@@ -481,12 +485,13 @@ def test_from_pfam_alignment_mfDCA_calculation():
     assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
     assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
 
+@pytest.mark.skipif(not _HAS_PYDCA, reason="pyDCA is not installed")
 def test_from_pfam_alignment_plmDCA_calculation():
     pdb_file = f'{data_path}/6JXX_A.pdb'
     chain = 'A'
     distance_matrix_method='CB'
-    alignment_output_file_name=f"{data_path}/PF11976_test_alignment.sto"
-    filtered_alignment_output_file_name=f"{data_path}/PF11976_test_filtered_alignment.sto"
+    alignment_output_file_name=f"{output_path}/PF11976_test_alignment.sto"
+    filtered_alignment_output_file_name=f"{output_path}/PF11976_test_filtered_alignment.sto"
     PFAM_ID="PF11976"
     DCA_format="plmDCA"
     
@@ -498,12 +503,13 @@ def test_from_pfam_alignment_plmDCA_calculation():
     assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
     assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
 
+@pytest.mark.skipif(not _HAS_PYDCA, reason="pyDCA is not installed")
 def test_from_hmmer_alignment_plmDCA_calculation():    
     pdb_file = f'{data_path}/6JXX_A.pdb'
     chain = 'A'
     distance_matrix_method='CB'
-    alignment_output_file_name=f"{data_path}/PF11976_test_alignment.sto"
-    filtered_alignment_output_file_name=f"{data_path}/PF11976_test_filtered_alignment.sto"
+    alignment_output_file_name=f"{output_path}/PF11976_test_alignment.sto"
+    filtered_alignment_output_file_name=f"{output_path}/PF11976_test_filtered_alignment.sto"
     query_sequence_database_file=f"{data_path}/protein-matching-PF11976.fasta"
     DCA_format="plmDCA"
 

@@ -21,13 +21,25 @@ The frustratometer is based on the principle of minimal frustration postulated b
 
 Under most circunstances amino acids are minimally frustrated in the protein, but pockets where amino acids are of interest for protein function can remain frustrated, as they become minimally frustrated when achieving the corresponding function. In short, a frustrated residue or interaction indicates that the particular amino acid would be minimized under a different environment, which reveals possible competing evolutionary pressures on its selection. We have identified that these pockets usually correspond to regions of functional importance, for example, that may form part of a catalitic domain, a hinge domain, or a binding region.
 
-This principle of minimum frustration has been shown using the AWSEM forcefield but can be extended to any other forcefield, including atomistic forcefields, or a pseudo-forcefield like DCA, as implemented here.
+This principle of minimum frustration has been shown using the AWSEM forcefield but can be extended to any other forcefield, including atomistic forcefields, or energy models derived from coevolutionary analysis, such as DCA-based Potts models, as implemented here.
 
 ## Installation
 
-To install this modules please clone this repository and install it using the following commands.
+### Using conda (recommended)
 
-    git clone HanaJaafari/Frustratometer
+    conda install -c conda-forge frustratometer
+
+### Using pip
+
+    pip install frustratometer
+
+Note: `openmm` and `pdbfixer` are not available on PyPI and must be installed separately via conda:
+
+    conda install -c conda-forge openmm pdbfixer
+
+### From source
+
+    git clone https://github.com/HanaJaafari/Frustratometer
     cd Frustratometer
     conda install -c conda-forge --file requirements.txt
     pip install -e .

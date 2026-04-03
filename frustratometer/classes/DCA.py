@@ -30,6 +30,24 @@ class DCA(Frustratometer):
     locally generate these parameters using the pyDCA package. In this case, the user can try using the "from_distance_matrix," "from_pfam_alignment,"
     or "from_hmmer_alignment" methods.
     """
+
+    @staticmethod
+    def _compute_potts_model_from_alignment(filtered_alignment_file: Union[Path, str], DCA_format: str) -> dict:
+        """Compute a Potts model from a filtered alignment using pyDCA backends."""
+        if DCA_format not in ("plmDCA", "mfDCA"):
+            raise ValueError("DCA_format must be either 'plmDCA' or 'mfDCA'.")
+
+        try:
+            if DCA_format == "plmDCA":
+                return dca.pydca.plmdca(str(filtered_alignment_file))
+            return dca.pydca.mfdca(str(filtered_alignment_file))
+        except ImportError as exc:
+            raise ImportError(
+                "from_pfam_alignment requires the optional dependency 'pydca' to compute a Potts model. "
+                "Install it (for example: pip install \"git+https://github.com/cabb99/pydca.git\") or use from_potts_model_file/from_pottsmodel "
+                "with a precomputed Potts model."
+            ) from exc
+
     # @classmethod
     # def from_distance_matrix(cls,
     #              potts_model: dict,
@@ -294,10 +312,10 @@ class DCA(Frustratometer):
         self.alignment_file=pfam.download_aligment(self.PFAM_ID,self.alignment_output_file_name)
         self.filtered_alignment_file=filter.filter_alignment(self.alignment_output_file_name,self.filtered_alignment_output_file_name)
         
-        if self.DCA_format=="plmDCA":
-            self.potts_model=dca.pydca.plmdca(str(self.filtered_alignment_file))
-        else:
-            self.potts_model=dca.pydca.mfdca(str(self.filtered_alignment_file))
+        self.potts_model = cls._compute_potts_model_from_alignment(
+            filtered_alignment_file=self.filtered_alignment_file,
+            DCA_format=self.DCA_format,
+        )
 
         self.aa_freq = None
         self.contact_freq = None 
@@ -365,10 +383,10 @@ class DCA(Frustratometer):
         self.alignment_file=align.jackhmmer(self.sequence,self.alignment_output_file_name,self.query_sequence_database_file)
         self.filtered_alignment_file=filter.filter_alignment(self.alignment_output_file_name,self.filtered_alignment_output_file_name)
 
-        if self.DCA_format=="plmDCA":
-            self.potts_model=dca.pydca.plmdca(str(self.filtered_alignment_file))
-        else:
-            self.potts_model=dca.pydca.mfdca(str(self.filtered_alignment_file))
+        self.potts_model = cls._compute_potts_model_from_alignment(
+            filtered_alignment_file=self.filtered_alignment_file,
+            DCA_format=self.DCA_format,
+        )
 
         self.aa_freq = None
         self.contact_freq = None 

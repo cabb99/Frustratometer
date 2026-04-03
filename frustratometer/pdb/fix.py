@@ -1,10 +1,11 @@
 from pathlib import Path
+import tempfile
 import pdbfixer
 
 PDBFile = pdbfixer.pdbfixer.app.PDBFile
 PDBFixer = pdbfixer.PDBFixer
 
-def repair_pdb(pdb_file: str, chain: str, pdb_directory: Path= Path.cwd()) -> PDBFixer:
+def repair_pdb(pdb_file: str, chain: str, pdb_directory: Path = None) -> PDBFixer:
     """
     Repairs a pdb or cif file using pdbfixer. Note that a pdb file will be produced, regardless of input file format
 
@@ -22,6 +23,8 @@ def repair_pdb(pdb_file: str, chain: str, pdb_directory: Path= Path.cwd()) -> PD
     fixer : object
         Repaired PDB Object
     """
+    if pdb_directory is None:
+        pdb_directory = Path(tempfile.gettempdir())
     pdb_directory=Path(pdb_directory)
     pdb_file=Path(pdb_file)
     

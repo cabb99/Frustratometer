@@ -1,0 +1,124 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+        fetch-depth: 0  # versioneer needs full history
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+
+    - name: Install build dependencies
+      run: python3 -m pip install build --user
+
+    - name: Build wheel and source tarball
+      run: python3 -m build
+
+    - name: Store distribution packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+  publish-to-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/frustratometer
+    permissions:
+      id-token: write  # mandatory for trusted publishing
+
+    steps:
+    - name: Download distributions
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Publish to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://test.pypi.org/legacy/
+
+  test-from-testpypi:
+    name: Test install from TestPyPI
+    needs: publish-to-testpypi
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - uses: conda-incubator/setup-miniconda@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+        channels: conda-forge,defaults
+        activate-environment: test-publish
+        auto-update-conda: false
+        auto-activate-base: false
+
+    - name: Install conda dependencies
+      shell: bash -l {0}
+      run: |
+        conda install -c conda-forge openmm pdbfixer pytest
+
+    - name: Wait for TestPyPI to index the package
+      shell: bash -l {0}
+      run: sleep 30
+
+    - name: Install frustratometer from TestPyPI
+      shell: bash -l {0}
+      run: |
+        pip install --pre \
+          --index-url https://test.pypi.org/simple/ \
+          --extra-index-url https://pypi.org/simple/ \
+          frustratometer
+
+    - name: Verify import and version
+      shell: bash -l {0}
+      run: |
+        python -c "import frustratometer; print(frustratometer.__version__)"
+
+    - name: Run tests
+      shell: bash -l {0}
+      run: |
+        python -m pytest tests/ \
+          --ignore=tests/test_dca_frustratometer.py \
+          -x --tb=short
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    needs: test-from-testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/frustratometer
+    permissions:
+      id-token: write  # mandatory for trusted publishing
+
+    steps:
+    - name: Download distributions
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1

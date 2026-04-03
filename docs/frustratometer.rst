@@ -20,7 +20,7 @@ The frustratometer is based on the principle of minimal frustration postulated b
 
 Under most circumstances, amino acids are minimally frustrated in the protein, but pockets where amino acids are of interest for protein function. In short, a frustrated residue or interaction indicates that the particular amino acid would be minimized under a different configuration, or a different sequence, which reveals possible competing evolutionary pressures on its selection. We have identified that these pockets usually correspond to regions of functional importance, for example, that may form part of a catalytic domain, a hinge domain, or a binding region.
 
-This principle of minimum frustration has been shown using the AWSEM forcefield but can be extended to any other forcefield, including atomistic forcefields, or a pseudo-forcefield like DCA, as implemented here.
+This principle of minimum frustration has been shown using the AWSEM forcefield but can be extended to any other forcefield, including atomistic forcefields, or energy models derived from coevolutionary analysis, such as DCA-based Potts models, as implemented here.
 
 In this module, we implement a version of the frustratometer based on Direct Coupling analysis.
 

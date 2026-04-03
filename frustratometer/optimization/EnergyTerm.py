@@ -1,8 +1,25 @@
 import abc
+import sys
 import numpy as np
 from frustratometer.utils.format_time import format_time
-# from typing import Callable
-# from functools import lru_cache  #TODO: Implement lru_cache for memoization of energy functions
+
+if sys.version_info >= (3, 8):
+    from functools import cached_property
+else:
+    # Python 3.7 backfill
+    class cached_property:  # noqa: N801
+        def __init__(self, func):
+            self.func = func
+            self.attrname = None
+            self.__doc__ = func.__doc__
+        def __set_name__(self, owner, name):
+            self.attrname = name
+        def __get__(self, instance, owner=None):
+            if instance is None:
+                return self
+            val = self.func(instance)
+            instance.__dict__[self.attrname] = val
+            return val
 
 try:
     import numba
@@ -58,7 +75,9 @@ class EnergyTerm(abc.ABC):
     def use_numba(self, value):
         if self._use_numba != value:
             self._use_numba = value
-            # self.clear_cache()
+            for attr in ('energy_function', 'denergy_mutation_function',
+                         'denergy_swap_function', 'energies_function'):
+                self.__dict__.pop(attr, None)
     
     def clear_cache(self):
         # Clear the cache for all cached properties
@@ -79,10 +98,9 @@ class EnergyTerm(abc.ABC):
         """ Dummy decorator for functions that do not require numba compilation. """
         return func
 
-    @property
-    #@lru_cache(maxsize=None)
+    @cached_property
     def energies_function(self):
-        """ Returns the energy function as a numba dispatcher. """
+        """ Returns the energies function as a numba dispatcher. """
         energy_function = self.energy_function
         def compute_energies(seq_indices:np.ndarray):
             """Compute the energies of multiple sequences."""
@@ -90,30 +108,25 @@ class EnergyTerm(abc.ABC):
             for i in numba.prange(len(seq_indices)):
                 energies[i] = energy_function(seq_indices[i])
             return energies
-        
         if self.use_numba:
             return numba.njit(types.Array(types.float64, 1, 'C')(types.Array(types.int64, 2, 'A', readonly=True)), parallel=True)(compute_energies)
-        else:
-            return compute_energies
+        return compute_energies
 
-    @property
-    #@lru_cache(maxsize=None)
+    @cached_property
     def energy_function(self):
         """ Returns the energy function as a numba dispatcher. """
         if self.use_numba:
             return numba.njit(types.float64(types.Array(types.int64, 1, 'A', readonly=True)))(self.compute_energy)
         return self.compute_energy
-    
-    @property
-    #@lru_cache(maxsize=None)
+
+    @cached_property
     def denergy_mutation_function(self):
         """ Returns the mutation energy change function as a numba dispatcher. """
         if self.use_numba:
             return numba.njit(types.float64(types.Array(types.int64, 1, 'A', readonly=True),types.int64,types.int64))(self.compute_denergy_mutation)
         return self.compute_denergy_mutation
 
-    @property
-    #@lru_cache(maxsize=None)
+    @cached_property
     def denergy_swap_function(self):
         """ Returns the swap energy change function as a numba dispatcher. """
         if self.use_numba:

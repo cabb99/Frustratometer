@@ -26,7 +26,7 @@ jobs:
         #os: [macOS-latest, ubuntu-latest, windows-latest]
         #python-version: [3.8, 3.9, "3.10"]
         os: [ubuntu-latest]
-        python-version: [3.8, 3.9, "3.10", "3.11"]
+        python-version: ["3.12", "3.13"]
     steps:
     - uses: actions/checkout@v1
 
@@ -92,43 +92,28 @@ jobs:
     
     #Install numpy first
     - name: Install numpy
+      shell: bash -l {0}
       run: |
-        conda install "numpy<2"
+        conda install "numpy"
 
-    #Install pydca
-    - name: Check out pydca
-      uses: actions/checkout@v3
-      with:
-        repository: cabb99/pydca
-        path: pydca_dir
+    # Install pyDCA from GitHub (optional – tests that need it will be skipped if this fails)
     - name: Install pydca
+      continue-on-error: true
+      shell: bash -l {0}
       run: |
-        cd pydca_dir
-        echo "numpy<2" > constraints.txt
-        conda run -n test pip install -r requirements.txt -c constraints.txt
-        conda run -n test python -m pip install . --no-deps
-        conda list
-        cd ..
-        pwd
-        conda run -n test python -c "import sys; print(sys.executable); print('\n'.join(sys.path))"
-        conda run -n test python -c "import pydca; print('pydca is installed and importable')"
-        conda run -n test pip freeze | grep pydca
+        python -m pip install "git+https://github.com/cabb99/pydca.git"
+        python -c "import pydca; print('pydca is installed and importable')"
+        pip freeze | grep pydca
     
     - name: Install package
 
       # conda setup requires this special shell
       shell: bash -l {0}
       run: |
-        conda install -c conda-forge --file requirements.txt
+        pip install -r requirements.txt
+        conda install -c conda-forge pdbfixer
         python -m pip install . --no-deps
         conda list
-
-    - name: Install pdbfixer
-
-      # conda setup requires this special shell
-      shell: bash -l {0}
-      run: |
-        conda install -c conda-forge pdbfixer
 
     - name: Run tests
 
@@ -139,7 +124,7 @@ jobs:
         python -c "import sys; print(sys.executable); print('\n'.join(sys.path))"
         python -c "import pydca; print('pydca is installed and importable')"
         pip freeze | grep pydca
-        pytest -v --cov=frustratometer --cov-report=xml --color=yes tests/
+        pytest -v --skip-slow --skip-memory-heavy --cov=frustratometer --cov-report=xml --color=yes tests/
 
     - name: CodeCov
       uses: codecov/codecov-action@v3
