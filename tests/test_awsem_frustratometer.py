@@ -8,9 +8,17 @@ from pathlib import Path
 test_path=Path('tests')
 test_data_path=Path('tests/data')
 
-# Assuming you have a function to load your tests configurations
+
 tests_config = pd.read_csv(test_path/"test_awsem_config.csv",comment='#')
-#tests_config = pd.read_csv(test_path/"test_awsem_config.csv")
+
+# Build parametrize list, marking 1jge rows as memory_heavy (~7.5 GB peak RSS)
+_MEMORY_HEAVY_PDBS = {"1jge"}
+_test_params = []
+for _rec in tests_config.to_dict(orient="records"):
+    if _rec["pdb"] in _MEMORY_HEAVY_PDBS:
+        _test_params.append(pytest.param(_rec, marks=pytest.mark.memory_heavy))
+    else:
+        _test_params.append(_rec)
 
 @pytest.fixture(scope="module")
 def test_structure():
@@ -66,7 +74,7 @@ def test_prody_expected_error():
             raise
 
 
-@pytest.mark.parametrize("test_data", tests_config.to_dict(orient="records"))
+@pytest.mark.parametrize("test_data", _test_params)
 def test_density_residues(test_data, test_structure):
     #structure = frustratometer.Structure(test_data_path/f"{test_data['pdb']}.pdb")
     structure = test_structure[test_data['pdb']]
@@ -84,7 +92,7 @@ def test_density_residues(test_data, test_structure):
         print(f"Assertion failed: Maximum absolute tolerance found was {max_atol}, which exceeds the allowed tolerance.")
         raise AssertionError(f"Maximum absolute tolerance found was {max_atol}, which exceeds the allowed tolerance of 1E-3.")
 
-@pytest.mark.parametrize("test_data", tests_config.to_dict(orient="records"))
+@pytest.mark.parametrize("test_data", _test_params)
 def test_single_residue_frustration(test_data,test_structure):
     #structure = frustratometer.Structure(test_data_path/f"{test_data['pdb']}.pdb")
     structure = test_structure[test_data['pdb']]
@@ -100,7 +108,7 @@ def test_single_residue_frustration(test_data,test_structure):
         print(f"Assertion failed: Maximum absolute tolerance found was {max_atol}, which exceeds the allowed tolerance.")
         raise AssertionError(f"Maximum absolute tolerance found was {max_atol}, which exceeds the allowed tolerance of 3E-1.")
 
-@pytest.mark.parametrize("test_data", tests_config.to_dict(orient="records"))
+@pytest.mark.parametrize("test_data", _test_params)
 def test_mutational_frustration(test_data,test_structure):
     #structure = frustratometer.Structure(test_data_path/f"{test_data['pdb']}.pdb")
     structure = test_structure[test_data['pdb']]
@@ -137,7 +145,7 @@ def test_mutational_frustration(test_data,test_structure):
 
 @pytest.mark.slow
 @pytest.mark.stochastic
-@pytest.mark.parametrize("test_data", tests_config.to_dict(orient="records"))
+@pytest.mark.parametrize("test_data", _test_params)
 def test_configurational_frustration(test_data,test_structure):
     #This test may fail due to the randomness of the decoy generation
 
