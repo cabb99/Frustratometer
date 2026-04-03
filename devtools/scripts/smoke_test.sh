@@ -24,9 +24,11 @@ TEST_FLAGS="${TEST_FLAGS:---skip-slow --skip-stochastic --skip-network}"
 LOG_DIR="${LOG_DIR:-$REPO_ROOT/devtools/logs}"
 PARALLEL="${PARALLEL:-1}"
 
-VERSIONS=("${@:-3.12 3.13}")
-if [ $# -eq 0 ]; then
-    read -r -a VERSIONS <<< "3.12 3.13"
+# Default to testing Python 3.7 through 3.14, but allow overriding via command-line args
+if [ $# -gt 0 ]; then
+    VERSIONS=("$@")
+else
+    VERSIONS=(3.7 3.8 3.9 3.10 3.11 3.12 3.13 3.14)
 fi
 
 mkdir -p "$LOG_DIR"
