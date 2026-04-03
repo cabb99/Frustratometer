@@ -273,16 +273,23 @@ def test_diff_mean_inner_product_1_by_2(n_elements = 10):
         matrix2d_1 = np.random.rand(n_elements, n_elements)
         repetitions = np.random.randint(0, 1000, size=n_elements)
         r0, r1 = np.random.choice(n_elements, 2, replace=False)
-        
+
         region_mean = compute_region_means_1_by_2(matrix1d_0, matrix2d_1)
-        
+        result_adjusted = diff_mean_inner_product_1_by_2(r0, r1, repetitions, region_mean)
+
+        if repetitions[r0] == 0:
+            # Moving from an empty bin is invalid; the diff must be zero
+            if not np.allclose(result_adjusted, 0):
+                failed = True
+                print(f"rep[r0]==0 case: expected zero diff but got non-zero for r0={r0}, r1={r1}")
+            continue
+
         # Original function with adjusted repetitions
         m = repetitions.copy()
         n = m.copy()
         n[r0] -= 1
         n[r1] += 1
-        result_adjusted = diff_mean_inner_product_1_by_2(r0, r1, repetitions, region_mean)
-        
+
         # Recompute the functions for new and original repetitions directly
         result_new_reps = mean_inner_product_1_by_2(n, region_mean)
         result_original_reps = mean_inner_product_1_by_2(repetitions, region_mean)
@@ -312,16 +319,23 @@ def test_diff_mean_inner_product_1_by_1(n_elements = 10):
         matrix1d_1 = np.random.rand(n_elements)
         repetitions = np.random.randint(0, 1000, size=n_elements)
         r0, r1 = np.random.choice(n_elements, 2, replace=False)
-        
+
         region_mean = compute_region_means_1_by_1(matrix1d_0, matrix1d_1)
-        
+        result_adjusted = diff_mean_inner_product_1_by_1(r0, r1, repetitions, region_mean)
+
+        if repetitions[r0] == 0:
+            # Moving from an empty bin is invalid; the diff must be zero
+            if not np.allclose(result_adjusted, 0):
+                failed = True
+                print(f"rep[r0]==0 case: expected zero diff but got non-zero for r0={r0}, r1={r1}")
+            continue
+
         # Original function with adjusted repetitions
         m = repetitions.copy()
         n = m.copy()
         n[r0] -= 1
         n[r1] += 1
-        result_adjusted = diff_mean_inner_product_1_by_1(r0, r1, repetitions, region_mean)
-        
+
         # Recompute the functions for new and original repetitions directly
         result_new_reps = mean_inner_product_1_by_1(n, region_mean)
         result_original_reps = mean_inner_product_1_by_1(repetitions, region_mean)
