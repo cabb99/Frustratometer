@@ -14,7 +14,7 @@ If you want to map the full sequence residue positions to the aligned sequence r
 
 from .pdb import *
 try:
-    from .fix import repair_pdb
+    from .fix import repair_pdb, repair_pdbs
 except ImportError as e:
     error_message=str(e)
     if 'pdbfixer' in str(e):
@@ -33,4 +33,4 @@ except ImportError as e:
     else:
         raise e
     
-__all__ = ['download', 'get_sequence', 'get_distance_matrix', 'full_to_filtered_aligned_mapping', 'repair_pdb']
+__all__ = ['download', 'get_sequence', 'get_distance_matrix', 'full_to_filtered_aligned_mapping', 'repair_pdb', 'repair_pdbs']

@@ -89,3 +89,40 @@ def repair_pdb(pdb_file: str, chain: str, pdb_directory: Path = None) -> Path:
         )
 
     return cleaned_path
+
+
+def repair_pdbs(jobs, pdb_directory: Path = None) -> list:
+    """
+    Repair multiple PDB files in parallel.
+
+    Each repair runs in its own process, so OpenMM memory is fully
+    reclaimed after each one.
+
+    Parameters
+    ----------
+    jobs : list of (pdb_file, chain) tuples
+        Each element is ``(pdb_file, chain)`` where *chain* can be None.
+    pdb_directory : Path, optional
+        Directory for cleaned output files.  Defaults to the system temp dir.
+
+    Returns
+    -------
+    list[Path]
+        Paths to the repaired PDB files, in the same order as *jobs*.
+    """
+    if pdb_directory is None:
+        pdb_directory = Path(tempfile.gettempdir())
+    pdb_directory = Path(pdb_directory)
+
+    worker_args = []
+    cleaned_paths = []
+    for pdb_file, chain in jobs:
+        pdb_file = Path(pdb_file)
+        cleaned = pdb_directory / f"{pdb_file.stem}_cleaned.pdb"
+        cleaned_paths.append(cleaned)
+        worker_args.append((str(pdb_file), chain, str(cleaned)))
+
+    with multiprocessing.Pool() as pool:
+        pool.starmap(_repair_worker, worker_args)
+
+    return cleaned_paths

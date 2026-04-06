@@ -225,6 +225,56 @@ class Structure:
                 self.mapped_distance_matrix=self.distance_matrix
 
     @classmethod
+    def from_pdb_list(cls, pdb_files, chain=None, pdb_directory=None, repair_pdb=None, **kwargs):
+        """Build multiple Structures, repairing PDBs in parallel when needed.
+
+        Parameters
+        ----------
+        pdb_files : list of str or Path
+            PDB/CIF file paths.
+        chain : str or None
+            Chain to use for all structures.
+        pdb_directory : Path, optional
+            Directory for repaired files.
+        repair_pdb : bool or None
+            True → repair all in parallel, then build.
+            False → build all without repair.
+            None (default) → build without repair first; batch-repair
+            only the ones that fail validation, then rebuild those.
+        **kwargs
+            Extra keyword arguments passed to each Structure().
+
+        Returns
+        -------
+        list[Structure]
+        """
+        if pdb_directory is None:
+            pdb_directory = Path(tempfile.gettempdir())
+
+        if repair_pdb is True:
+            cleaned = pdb.repair_pdbs([(f, chain) for f in pdb_files], pdb_directory)
+            return [cls(p, chain, repair_pdb=False, **kwargs) for p in cleaned]
+
+        if repair_pdb is False:
+            return [cls(f, chain, repair_pdb=False, **kwargs) for f in pdb_files]
+
+        # Auto-detect: try without repair, batch-repair failures
+        structures = {}
+        needs_repair = []
+        for f in pdb_files:
+            try:
+                structures[str(f)] = cls(f, chain, repair_pdb=False, **kwargs)
+            except ValueError:
+                needs_repair.append(f)
+
+        if needs_repair:
+            cleaned = pdb.repair_pdbs([(f, chain) for f in needs_repair], pdb_directory)
+            for f, p in zip(needs_repair, cleaned):
+                structures[str(f)] = cls(p, chain, repair_pdb=False, **kwargs)
+
+        return [structures[str(f)] for f in pdb_files]
+
+    @classmethod
     def full_pdb(cls,pdb_file: Union[Path,str], chain: Union[str,None]=None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
                 distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None):
         warnings.warn("The class method 'full_pdb' is now depreciated. You can now simply call the Structure class to create a full pdb or spliced pdb object.")

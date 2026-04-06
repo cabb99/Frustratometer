@@ -35,6 +35,25 @@ def test_incomplete_pdb_no_repair_raises():
         frustratometer.Structure(test_data_path / '2GHY.pdb', 'A', repair_pdb=False)
 
 
+@pytest.mark.parametrize("repair_pdb", [None, True, False])
+def test_from_pdb_list(repair_pdb, tmp_path):
+    """Load multiple PDBs via from_pdb_list with different repair modes."""
+    pdb_files = [test_data_path / '6u5e.pdb', test_data_path / '2GHY.pdb']
+    if repair_pdb is False:
+        # 2GHY is incomplete → False should fail
+        with pytest.raises(ValueError, match="repair_pdb=True"):
+            frustratometer.Structure.from_pdb_list(pdb_files, 'A',
+                                                   pdb_directory=tmp_path,
+                                                   repair_pdb=False)
+    else:
+        structures = frustratometer.Structure.from_pdb_list(pdb_files, 'A',
+                                                            pdb_directory=tmp_path,
+                                                            repair_pdb=repair_pdb)
+        assert len(structures) == 2
+        for s in structures:
+            assert len(s.sequence) == s.distance_matrix.shape[0]
+
+
 def test_repair_pdb_no_memory_leak(tmp_path):
     """Repairing multiple PDBs should not leak memory significantly."""
     import resource
