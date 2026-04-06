@@ -6,16 +6,19 @@ import numpy as np
 from typing import Union
 from pathlib import Path
 import tempfile
+import logging
 import warnings
 
 __all__ = ['Structure']
+
+logger = logging.getLogger(__name__)
 
 residue_names=[]
 
 class Structure:
 
     def __init__(self, pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb:bool = True)->object:
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None)->object:
         
         """
         Generates structure object. Both PDB and CIF format files are accepted as input.
@@ -52,8 +55,12 @@ class Structure:
         pdb_directory: str
             Directory where repaired pdb will be stored. Defaults to the system temporary directory.
 
-        repair_pdb: bool
-            If True, provided pdb file will be repaired with missing residues inserted and heteroatoms removed.
+        repair_pdb: bool or None
+            If True, the PDB file is always repaired (missing residues filled, heteroatoms removed).
+            If False, no repair is attempted.
+            If None (default), the structure is built without repair first; if the
+            sequence length does not match the distance matrix, repair is attempted
+            automatically.
             Note that a pdb file will be produced, regardless of input file format.
 
         Returns
@@ -62,6 +69,39 @@ class Structure:
         """        
         if pdb_directory is None:
             pdb_directory = Path(tempfile.gettempdir())
+
+        if repair_pdb is None:
+            # Auto-detect: try without repair, retry with repair on validation failure
+            try:
+                self._init_structure(pdb_file, chain, seq_selection, aligned_sequence,
+                                     filtered_aligned_sequence, distance_matrix_method,
+                                     pdb_directory, repair_pdb=False)
+                self._validate_structure()
+            except Exception as e:
+                logger.info("Structure validation failed without repair (%s), retrying with repair_pdb=True", e)
+                self._init_structure(pdb_file, chain, seq_selection, aligned_sequence,
+                                     filtered_aligned_sequence, distance_matrix_method,
+                                     pdb_directory, repair_pdb=True)
+                self._validate_structure()
+        else:
+            self._init_structure(pdb_file, chain, seq_selection, aligned_sequence,
+                                 filtered_aligned_sequence, distance_matrix_method,
+                                 pdb_directory, repair_pdb=repair_pdb)
+            self._validate_structure()
+
+    def _validate_structure(self):
+        """Check that the structure is internally consistent."""
+        L_seq = len(self.sequence)
+        L_dm = self.distance_matrix.shape[0]
+        if L_seq != L_dm:
+            raise ValueError(
+                f"Sequence length ({L_seq}) does not match distance matrix "
+                f"shape ({L_dm}x{L_dm}). The PDB may have missing residues. "
+                f"Try setting repair_pdb=True.")
+
+    def _init_structure(self, pdb_file, chain, seq_selection, aligned_sequence,
+                        filtered_aligned_sequence, distance_matrix_method,
+                        pdb_directory, repair_pdb):
 
         try:
             #Check if file exists
@@ -91,7 +131,7 @@ class Structure:
             self.init_index_shift=0
 
             if repair_pdb:
-                fixer=pdb.repair_pdb(pdb_file, chain, pdb_directory)
+                pdb.repair_pdb(pdb_file, chain, pdb_directory)
                 self.pdb_file=str(pdb_directory/f"{self.pdbID}_cleaned.pdb")
 
             if ".pdb" in str(pdb_file) or repair_pdb==True:
@@ -136,7 +176,7 @@ class Structure:
                 self.init_index_shift=self.init_index-self.pdb_init_index
                 self.fin_index_shift=self.fin_index-self.pdb_init_index+1
                 if repair_pdb:
-                    fixer=pdb.repair_pdb(pdb_file, chain, pdb_directory)
+                    pdb.repair_pdb(pdb_file, chain, pdb_directory)
                     self.pdb_file=f"{pdb_directory}/{self.pdbID}_cleaned.pdb"
                     self.select_gap_indices=[i for i in gap_indices if self.init_index<=i<=self.fin_index]
                     self.fin_index_shift-=len(self.select_gap_indices)
@@ -145,7 +185,7 @@ class Structure:
                 self.init_index_shift=self.init_index
                 self.fin_index_shift=self.fin_index+1
                 if repair_pdb:
-                    fixer=pdb.repair_pdb(pdb_file, chain, pdb_directory)
+                    pdb.repair_pdb(pdb_file, chain, pdb_directory)
                     self.pdb_file=f"{pdb_directory}/{self.pdbID}_cleaned.pdb"
                     self.chain="A"
 
@@ -186,7 +226,7 @@ class Structure:
 
     @classmethod
     def full_pdb(cls,pdb_file: Union[Path,str], chain: Union[str,None]=None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb:bool = True):
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None):
         warnings.warn("The class method 'full_pdb' is now depreciated. You can now simply call the Structure class to create a full pdb or spliced pdb object.")
         return cls(pdb_file=pdb_file,
                    chain=chain,
@@ -199,7 +239,7 @@ class Structure:
 
     @classmethod
     def spliced_pdb(cls,pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb:bool = True):
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None):
         warnings.warn("The class method 'spliced_pdb' is now depreciated. You can now simply call the Structure class to create a full pdb or spliced pdb object.")
         return cls(pdb_file=pdb_file,
                     chain=chain,
