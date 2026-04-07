@@ -114,6 +114,7 @@ class AWSEM(Frustratometer):
         self.init_index_shift=pdb_structure.init_index_shift
         self.distance_matrix=pdb_structure.distance_matrix
         self.full_pdb_distance_matrix=pdb_structure.full_pdb_distance_matrix
+        self.chain_breaks=pdb_structure.chain_breaks
         selection_CB = self.structure.select('name CB or (resname GLY IGL and name CA)')
 
         resid = selection_CB.getResindices()
@@ -127,10 +128,12 @@ class AWSEM(Frustratometer):
             selected_matrix=self.distance_matrix
         sequence_mask_rho = frustration.compute_mask(selected_matrix, 
                                                      maximum_contact_distance=None, 
-                                                     minimum_sequence_separation = p.min_sequence_separation_rho)
+                                                     minimum_sequence_separation = p.min_sequence_separation_rho,
+                                                     chain_breaks=self.chain_breaks)
         sequence_mask_contact = frustration.compute_mask(self.distance_matrix, 
                                                      maximum_contact_distance=p.distance_cutoff_contact, 
-                                                     minimum_sequence_separation = p.min_sequence_separation_contact)
+                                                     minimum_sequence_separation = p.min_sequence_separation_contact,
+                                                     chain_breaks=self.chain_breaks)
         
         self._decoy_fluctuation = {}
         self.minimally_frustrated_threshold=.78
@@ -214,7 +217,7 @@ class AWSEM(Frustratometer):
             self.distance_cutoff=None
             
             
-            electrostatics_mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=p.min_sequence_separation_electrostatics)
+            electrostatics_mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=p.min_sequence_separation_electrostatics, chain_breaks=self.chain_breaks)
             # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
             charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
             charges2 = charges[:,np.newaxis]*charges[np.newaxis,:]
@@ -232,7 +235,7 @@ class AWSEM(Frustratometer):
         else:
             self.sequence_cutoff=p.min_sequence_separation_contact
             self.distance_cutoff=p.distance_cutoff_contact
-        self.mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=self.distance_cutoff, minimum_sequence_separation = self.sequence_cutoff)
+        self.mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=self.distance_cutoff, minimum_sequence_separation = self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
         self.contact_energy = contact_energy
 

@@ -147,13 +147,14 @@ class DCA(Frustratometer):
 
         self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
         self.distance_matrix=self.mapped_distance_matrix
+        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
 
         
         if self.distance_cutoff==None:
             example_matrix=np.ones((len(self.filtered_aligned_sequence),len(self.filtered_aligned_sequence)))
-            self.mask = frustration.compute_mask(example_matrix, self.distance_cutoff, self.sequence_cutoff)
+            self.mask = frustration.compute_mask(example_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
         else:
-            self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff)
+            self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
         self.minimally_frustrated_threshold=1
 
@@ -225,12 +226,13 @@ class DCA(Frustratometer):
 
         self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
         self.distance_matrix=self.mapped_distance_matrix
+        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
 
         if self.distance_cutoff==None:
             example_matrix=np.ones((len(self.filtered_aligned_sequence),len(self.filtered_aligned_sequence)))
-            self.mask = frustration.compute_mask(example_matrix, self.distance_cutoff, self.sequence_cutoff)
+            self.mask = frustration.compute_mask(example_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
         else:
-            self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff)
+            self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
         self.minimally_frustrated_threshold=1
 
@@ -300,7 +302,8 @@ class DCA(Frustratometer):
         
         self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
         self.distance_matrix=self.mapped_distance_matrix
-        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff)
+        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
+        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
         self.minimally_frustrated_threshold=1
 
@@ -376,7 +379,8 @@ class DCA(Frustratometer):
         
         self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
         self.distance_matrix=self.mapped_distance_matrix
-        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff)
+        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
+        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
         self.minimally_frustrated_threshold=1
 
@@ -504,7 +508,7 @@ class DCA(Frustratometer):
 
     @sequence_cutoff.setter
     def sequence_cutoff(self, value):
-        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff)
+        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=getattr(self, 'chain_breaks', None))
         self._sequence_cutoff = value
         self._native_energy = None
         self._decoy_fluctuation = {}
@@ -515,7 +519,7 @@ class DCA(Frustratometer):
 
     @distance_cutoff.setter
     def distance_cutoff(self, value):
-        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff)
+        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=getattr(self, 'chain_breaks', None))
         self._distance_cutoff = value
         self._native_energy = None
         self._decoy_fluctuation = {}
@@ -527,7 +531,7 @@ class DCA(Frustratometer):
     @distance_matrix_method.setter
     def distance_matrix_method(self, value):
         self.distance_matrix = pdb.get_dense_distance_matrix(self._pdb_file, self._chain, value)
-        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff)
+        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=getattr(self, 'chain_breaks', None))
         self._distance_matrix_method = value
         self._native_energy = None
         self._decoy_fluctuation = {}

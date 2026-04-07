@@ -104,3 +104,15 @@ def test_pdbfixer_leaks_without_isolation(tmp_path):
         f"Memory only grew {growth_mb:.0f} MB. PDBFixer leak may have been fixed. "
         f"Consider removing multiprocessing isolation in fix.py."
     )
+
+def test_structure_detects_chain_breaks():
+    """Structure must detect chain boundaries from a multi-chain CIF file."""
+
+    cif_path = Path(__file__).parent / "data" / "5msm.cif"
+    if not cif_path.exists():
+        pytest.skip("5msm.cif not available")
+
+    s = frustratometer.Structure(cif_path, chain=None)
+    # 5msm has 6 chains (A,B,C,D,E,F) → 5 break points
+    assert s.chain_breaks is not None
+    assert len(s.chain_breaks) == 5

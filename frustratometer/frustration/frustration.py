@@ -26,7 +26,8 @@ _AA = '-ACDEFGHIKLMNPQRSTVWY'
 
 def compute_mask(distance_matrix: np.array,
                  maximum_contact_distance: Union[float, None] = None,
-                 minimum_sequence_separation: Union[int, None] = None) -> np.array:
+                 minimum_sequence_separation: Union[int, None] = None,
+                 chain_breaks: Union[list, None] = None) -> np.array:
     """
     Computes a 2D Boolean mask (L, L) for pairwise interactions from a given distance matrix using a distance cutoff and/or a minimum sequence-separation cutoff.
     Both cutoffs are inclusive. True indicates that the residue pair meets the criteria.
@@ -42,6 +43,11 @@ def compute_mask(distance_matrix: np.array,
     minimum_sequence_separation : int, optional
         A minimum sequence separation threshold. Include i,j if |i-j| >= minimum_sequence_separation.
         If None, no sequence separation is applied . Default is None.
+    chain_breaks : list of int, optional
+        Indices where new chains begin (excluding the implicit 0). For example, [50, 80]
+        means three chains: residues 0-49, 50-79, 80-end. Cross-chain pairs always satisfy
+        the minimum sequence separation, since they are not bonded in sequence.
+        If None, all residues are treated as a single chain. Default is None.
 
     Returns
     -------
@@ -58,13 +64,15 @@ def compute_mask(distance_matrix: np.array,
     [[False  True False]
      [ True False  True]
      [False  True False]]
-
-    .. todo:: Add chain information for sequence separation
     """
     seq_len = len(distance_matrix)
     mask = np.ones([seq_len, seq_len])
     if minimum_sequence_separation is not None:
-        sequence_distance = sdist.squareform(sdist.pdist(np.arange(seq_len)[:, np.newaxis]))
+        positions = np.arange(seq_len, dtype=np.float64)
+        if chain_breaks is not None:
+            for brk in chain_breaks:
+                positions[brk:] += minimum_sequence_separation
+        sequence_distance = sdist.squareform(sdist.pdist(positions[:, np.newaxis]))
         mask *= sequence_distance >= minimum_sequence_separation
     if maximum_contact_distance is not None:
         mask *= distance_matrix <= maximum_contact_distance
@@ -1609,7 +1617,8 @@ def compute_mask_sparse(contact_i: np.ndarray,
                         contact_distances: np.ndarray,
                         L: int,
                         maximum_contact_distance: Union[float, None] = None,
-                        minimum_sequence_separation: Union[int, None] = None):
+                        minimum_sequence_separation: Union[int, None] = None,
+                        chain_breaks: Union[list, None] = None):
     """
     Compute a sparse mask from sparse distance data.
 
@@ -1627,6 +1636,9 @@ def compute_mask_sparse(contact_i: np.ndarray,
         Include pair if distance <= this value. If None, no distance filtering.
     minimum_sequence_separation : int, optional
         Include pair if |i - j| >= this value. If None, no sequence separation filtering.
+    chain_breaks : list of int, optional
+        Indices where new chains begin (excluding the implicit 0). Cross-chain pairs
+        always satisfy the minimum sequence separation. Default is None.
 
     Returns
     -------
@@ -1641,7 +1653,13 @@ def compute_mask_sparse(contact_i: np.ndarray,
         keep &= contact_distances <= maximum_contact_distance
 
     if minimum_sequence_separation is not None:
-        keep &= np.abs(contact_i.astype(np.int64) - contact_j.astype(np.int64)) >= minimum_sequence_separation
+        pos_i = contact_i.astype(np.float64)
+        pos_j = contact_j.astype(np.float64)
+        if chain_breaks is not None:
+            for brk in chain_breaks:
+                pos_i = np.where(contact_i >= brk, pos_i + minimum_sequence_separation, pos_i)
+                pos_j = np.where(contact_j >= brk, pos_j + minimum_sequence_separation, pos_j)
+        keep &= np.abs(pos_i - pos_j) >= minimum_sequence_separation
 
     return contact_i[keep], contact_j[keep]
 

@@ -209,6 +209,12 @@ class Structure:
 
         self.z_coordinates=self.structure.select('((name CB) or (resname GLY and name CA))').getCoords()
 
+        # Detect chain breaks from per-residue chain IDs
+        ca_sel = self.structure.select('name CA')
+        chids = ca_sel.getChids()
+        breaks = np.where(chids[:-1] != chids[1:])[0] + 1
+        self.chain_breaks = breaks.tolist() if len(breaks) > 0 else None
+
         if self.seq_selection!=None:
             self.distance_matrix=self.distance_matrix[self.init_index_shift:self.fin_index_shift,
                                                     self.init_index_shift:self.fin_index_shift]
