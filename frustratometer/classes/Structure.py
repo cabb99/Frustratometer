@@ -18,7 +18,7 @@ residue_names=[]
 class Structure:
 
     def __init__(self, pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None)->object:
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None, sparse: bool = True)->object:
         
         """
         Generates structure object. Both PDB and CIF format files are accepted as input.
@@ -75,18 +75,18 @@ class Structure:
             try:
                 self._init_structure(pdb_file, chain, seq_selection, aligned_sequence,
                                      filtered_aligned_sequence, distance_matrix_method,
-                                     pdb_directory, repair_pdb=False)
+                                     pdb_directory, repair_pdb=False, sparse=sparse)
                 self._validate_structure()
             except Exception as e:
                 logger.info("Structure validation failed without repair (%s), retrying with repair_pdb=True", e)
                 self._init_structure(pdb_file, chain, seq_selection, aligned_sequence,
                                      filtered_aligned_sequence, distance_matrix_method,
-                                     pdb_directory, repair_pdb=True)
+                                     pdb_directory, repair_pdb=True, sparse=sparse)
                 self._validate_structure()
         else:
             self._init_structure(pdb_file, chain, seq_selection, aligned_sequence,
                                  filtered_aligned_sequence, distance_matrix_method,
-                                 pdb_directory, repair_pdb=repair_pdb)
+                                 pdb_directory, repair_pdb=repair_pdb, sparse=sparse)
             self._validate_structure()
 
     def _validate_structure(self):
@@ -101,7 +101,7 @@ class Structure:
 
     def _init_structure(self, pdb_file, chain, seq_selection, aligned_sequence,
                         filtered_aligned_sequence, distance_matrix_method,
-                        pdb_directory, repair_pdb):
+                        pdb_directory, repair_pdb, sparse):
 
         try:
             #Check if file exists
@@ -195,9 +195,17 @@ class Structure:
                 self.structure=prody.parseMMCIF(str(self.pdb_file),chain=self.chain).select(f"protein and {self.seq_selection}")
 
         self.sequence=pdb.get_sequence(self.pdb_file,self.chain)
-        self.distance_matrix=pdb.get_distance_matrix(pdb_file=self.pdb_file,chain=self.chain,
-                                                     method=self.distance_matrix_method)
+        self.distance_matrix=pdb.get_full_distance_matrix(pdb_file=self.pdb_file,chain=self.chain,
+                                                          method=self.distance_matrix_method)
         self.full_pdb_distance_matrix=self.distance_matrix
+
+        # Compute sparse distance data if requested
+        if sparse:
+            self.sparse_distance_data = pdb.get_sparse_distance_matrix(
+                pdb_file=self.pdb_file, chain=self.chain,
+                method=self.distance_matrix_method, max_distance=15.0)
+        else:
+            self.sparse_distance_data = None
 
         self.z_coordinates=self.structure.select('((name CB) or (resname GLY and name CA))').getCoords()
 
