@@ -77,11 +77,16 @@ class Frustratometer:
             sequence=self.sequence
         else:
             if getattr(self, 'sparse_potts_model', None) is not None:
-                return frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
+                energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
+                if getattr(self, '_elec_data', None) is not None:
+                    energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
+                return energy
             return frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
         if not self._native_energy:
             if getattr(self, 'sparse_potts_model', None) is not None:
                 self._native_energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
+                if getattr(self, '_elec_data', None) is not None:
+                    self._native_energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
             else:
                 self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
         energy_value=self._native_energy
@@ -164,6 +169,8 @@ class Frustratometer:
             sequence=self.sequence
         if getattr(self, 'sparse_potts_model', None) is not None:
             couplings_energy=frustration.compute_couplings_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps)
+            if getattr(self, '_elec_data', None) is not None:
+                couplings_energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
         else:
             couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps)
         return couplings_energy
@@ -177,7 +184,7 @@ class Frustratometer:
         sequence : str
             The amino acid sequence of the protein. If no sequence is provided as input, the original protein sequence of the protein structure object is used for the energy calculation.
         kind : str
-            Kind of decoys generated. Options: "singleresidue," "mutational," "configurational," and "contact." 
+            Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," and "contact." 
         mask : np.array
             A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
 
@@ -194,16 +201,25 @@ class Frustratometer:
             mask=self.mask
         # Use sparse path when available
         _use_sparse = getattr(self, 'sparse_potts_model', None) is not None
+        _elec_data = getattr(self, '_elec_data', None)
         if _use_sparse:
             if kind == 'singleresidue':
                 fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
+                if _elec_data is not None:
+                    fluctuation = frustration.apply_elec_correction_singleresidue(fluctuation, _elec_data)
             elif kind == 'mutational':
                 fluctuation = frustration.compute_mutational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
-            elif kind == 'configurational':
+                if _elec_data is not None:
+                    fluctuation = frustration.apply_elec_correction_mutational(fluctuation, self.sparse_potts_model, _elec_data)
+            elif kind == 'pseudoconfigurational':
                 mask_mean = self.mask.mean()
-                fluctuation = frustration.compute_configurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, mask_mean)
+                fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, mask_mean)
+                if _elec_data is not None:
+                    fluctuation = frustration.apply_elec_correction_pseudoconfigurational(fluctuation, self.sparse_potts_model, _elec_data)
             elif kind == 'contact':
                 fluctuation = frustration.compute_contact_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
+                if _elec_data is not None:
+                    fluctuation = frustration.apply_elec_correction_contact(fluctuation, self.sparse_potts_model, _elec_data)
             else:
                 raise Exception("Wrong kind of decoy generation selected")
         else:
@@ -211,8 +227,8 @@ class Frustratometer:
                 fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation(sequence, self.potts_model, mask)
             elif kind == 'mutational':
                 fluctuation = frustration.compute_mutational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-            elif kind == 'configurational':
-                fluctuation = frustration.compute_configurational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            elif kind == 'pseudoconfigurational':
+                fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
             elif kind == 'contact':
                 fluctuation = frustration.compute_contact_decoy_energy_fluctuation(sequence, self.potts_model, mask)
             else:
@@ -229,7 +245,7 @@ class Frustratometer:
         sequence : str
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'. The length of the sequence (L) should match the dimensions of the Potts model.
         kind : str
-            Kind of decoys generated. Options: "singleresidue," "mutational," "configurational," and "contact." 
+            Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," and "contact." 
 
         Returns
         -------
@@ -272,7 +288,7 @@ class Frustratometer:
         sequence : str
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'. The length of the sequence (L) should match the dimensions of the Potts model.
         kind : str
-            Kind of decoys generated. Options: "singleresidue," "mutational," "configurational," and "contact." 
+            Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," "configurational," and "contact." 
         mask : np.array
             A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
         aa_freq: np.array
@@ -293,10 +309,10 @@ class Frustratometer:
                 aa_freq = self.aa_freq
             frustration_values=frustration.compute_single_frustration(decoy_fluctuation, aa_freq, correction)
             return frustration_values
-        elif kind in ['mutational', 'configurational', 'contact']:
-            if kind == 'configurational' and 'configurational_frustration' in dir(self):
-                #TODO: Correct this function for different aa_freq than WT
-                return self.configurational_frustration(None, correction)
+        elif kind == 'configurational' and 'configurational_frustration' in dir(self):
+            #TODO: Correct this function for different aa_freq than WT
+            return self.configurational_frustration(None, correction)
+        elif kind in ['mutational', 'pseudoconfigurational', 'contact']:
             if aa_freq is None:
                 aa_freq = self.contact_freq
             # Sparse decoy fluctuation has shape (N_contacts, 21, 21) — use sparse pair frustration, then densify
@@ -322,7 +338,7 @@ class Frustratometer:
         sequence : str
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'. The length of the sequence (L) should match the dimensions of the Potts model.
         kind : str
-            Kind of decoys generated. Options: "singleresidue," "mutational," "configurational," and "contact." 
+            Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," and "contact." 
         method : str
             Options: "clustermap", "heatmap"
         """
@@ -364,7 +380,7 @@ class Frustratometer:
         sequence : str
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'. The length of the sequence (L) should match the dimensions of the Potts model.
         pair : str
-            Kind of pair frustration calculated. Options: "mutational," "configurational," and "contact." 
+            Kind of pair frustration calculated. Options: "mutational," "pseudoconfigurational," "configurational," and "contact." 
         aa_freq: np.array
             Array of frequencies of all 21 possible amino acids within sequence
         max_connections : int
@@ -397,7 +413,7 @@ class Frustratometer:
         sequence : str
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'. The length of the sequence (L) should match the dimensions of the Potts model.
         pair : str
-            Kind of pair frustration calculated. Options: "mutational," "configurational," and "contact." 
+            Kind of pair frustration calculated. Options: "mutational," "pseudoconfigurational," "configurational," and "contact." 
         aa_freq: np.array
             Array of frequencies of all 21 possible amino acids within sequence
         """
@@ -484,7 +500,7 @@ class Frustratometer:
         """
         Calculates frustration pair distributions. This helps identify spatial proximity of similarly frustrated residues or contacts from one another.
         
-        For mutational, configurational, and contact frustration pair distributions, the distances between midpoints of Cb-Cb (or Ca in the case of glycine) 
+        For mutational, pseudoconfigurational, configurational, and contact frustration pair distributions, the distances between midpoints of Cb-Cb (or Ca in the case of glycine) 
         atom pairs are measured. 
         For single residue frustration, the distances of Cb (or Ca in the case of glycine) atoms are measured.  
 
@@ -495,7 +511,7 @@ class Frustratometer:
         aa_freq : np.array
             Array of frequencies of all 21 possible amino acids within sequence
         kind : str
-            Kind of decoys generated. Options: "singleresidue," "mutational," "configurational," and "contact." 
+            Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," "configurational," and "contact." 
         bins : int 
             Number of bins
         maximum_shell_radius : int
@@ -526,7 +542,7 @@ class Frustratometer:
         if kind=="singleresidue":
             sel_frustration = np.column_stack((residue_cb_coordinates,np.expand_dims(frustration_values, axis=1)))
             
-        elif kind in ["configurational","mutational"]:
+        elif kind in ["configurational","pseudoconfigurational","mutational"]:
             i,j=np.meshgrid(range(0,len(self.sequence)),range(0,len(self.sequence)))
             midpoint_coordinates=(residue_cb_coordinates[i.flatten(),:]+ residue_cb_coordinates[j.flatten(),:])/2
             sel_frustration = np.column_stack((midpoint_coordinates, frustration_values.ravel()))
@@ -580,7 +596,7 @@ class Frustratometer:
         n_decoys: int
             Number of sequence decoys to create
         config_decoys: bool
-            If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+            If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
         msa_mask: np.array
             Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB
         fragment_pos: np.array

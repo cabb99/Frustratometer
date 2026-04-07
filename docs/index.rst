@@ -14,6 +14,7 @@ Welcome to Frustratometer's documentation!
    installation
    examples_awsem
    examples_dca
+   sparse
    api_classes
    api_modules
 

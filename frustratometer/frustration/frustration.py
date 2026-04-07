@@ -490,12 +490,12 @@ def compute_mutational_decoy_energy_fluctuation(seq: str,
     return decoy_energy2
 
 
-def compute_configurational_decoy_energy_fluctuation(seq: str,
+def compute_pseudoconfigurational_decoy_energy_fluctuation(seq: str,
                                                      potts_model: dict,
                                                      mask: np.array, ) -> np.array:
     r"""
     Computes a (LxLx21x21) matrix for a sequence of length L. Matrix[i,j] describes all possible changes in energy upon mutating and altering the 
-    local densities of residue i and j simultaneously.
+    local densities of residue i and j simultaneously (pseudo-configurational approximation).
     
     .. math::
         \Delta H_{ij} = H_i - H_{i'} + H_{j}-H_{j'} + J_{ij} -J_{ij'} + J_{i'j'} - J_{i'j} + \\sum_k {J_{ik} - J_{i'k} + J_{jk} -J_{j'k}}
@@ -522,8 +522,8 @@ def compute_configurational_decoy_energy_fluctuation(seq: str,
         'J': np.random.rand(20, 20, 20, 20)  # Random couplings
     }
     >>> mask = np.ones((len(seq), len(seq)), dtype=bool) # Include all pairs
-    >>> decoy_energy2 = compute_configurational_decoy_energy_fluctuation(seq, potts_model, mask)
-    >>> print(f"Matrix of Contact Configurational Decoy Energy Fluctuations: "); print(decoy_energy2)
+    >>> decoy_energy2 = compute_pseudoconfigurational_decoy_energy_fluctuation(seq, potts_model, mask)
+    >>> print(f"Matrix of Pseudo-configurational Decoy Energy Fluctuations: "); print(decoy_energy2)
     >>> print(f"Matrix Size: "); print(shape(decoy_energy2))
 
     Notes
@@ -608,7 +608,7 @@ def compute_decoy_energy(seq: str, potts_model: dict, mask: np.array, kind='sing
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
     kind : str
-        Kind of decoys generated. Options: "singleresidue," "mutational," "configurational," and "contact." 
+        Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," and "contact." 
     Returns
     -------
     decoy_energy: np.array
@@ -641,8 +641,8 @@ def compute_decoy_energy(seq: str, potts_model: dict, mask: np.array, kind='sing
         decoy_energy=native_energy + compute_singleresidue_decoy_energy_fluctuation(seq, potts_model, mask)
     elif kind == 'mutational':
         decoy_energy=native_energy + compute_mutational_decoy_energy_fluctuation(seq, potts_model, mask)
-    elif kind == 'configurational':
-        decoy_energy=native_energy + compute_configurational_decoy_energy_fluctuation(seq, potts_model, mask)
+    elif kind == 'pseudoconfigurational':
+        decoy_energy=native_energy + compute_pseudoconfigurational_decoy_energy_fluctuation(seq, potts_model, mask)
     elif kind == 'contact':
         decoy_energy=native_energy + compute_contact_decoy_energy_fluctuation(seq, potts_model, mask)
     return decoy_energy
@@ -737,7 +737,7 @@ def compute_pair_frustration(decoy_fluctuation,
     Returns
     -------
     contact_frustration: np.array
-        LxL array featuring pair frustration indices (mutational or configurational frustration, depending on 
+        LxL array featuring pair frustration indices (mutational or pseudoconfigurational frustration, depending on 
         decoy_fluctuation matrix provided)
     """
     if contact_freq is None:
@@ -910,7 +910,7 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     single_frustration : np.array
         Array containing single residue frustration index values
     pair_frustration : np.array
-        Array containing pair (ex. configurational, mutational, contact) frustration index values
+        Array containing pair (ex. pseudoconfigurational, mutational, contact) frustration index values
     tcl_script : Path or str
         Output tcl script file with static structure
     max_connections : int
@@ -1246,7 +1246,7 @@ def compute_fragment_total_decoy_energy(decoy_seqs: list,
     split_couplings_and_fields: bool
         Separate output into coupling and local fields contribution to energy.
     config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
     msa_mask: np.array
         Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB
     
@@ -1322,7 +1322,7 @@ def compute_total_frustration(seq,
     n_decoys: int
         Number of sequence decoys to create
     config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
     msa_mask: np.array
         Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB
     fragment_pos: np.array
@@ -1428,7 +1428,7 @@ def compute_decoy_h_J(decoy_seqs: list,
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
     config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
     
     Returns
     -------
@@ -1559,7 +1559,7 @@ def compute_energy_sliding_window(seq: str,
     ndecoys: int
         Number of decoy sequences to use
     config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
 
     Returns
     -------
@@ -1990,7 +1990,7 @@ def compute_mutational_decoy_energy_fluctuation_sparse(seq: str,
     return decoy_energy
 
 
-def compute_configurational_decoy_energy_fluctuation_sparse(seq: str,
+def compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(seq: str,
                                                             sparse_potts_model: dict,
                                                             mask_mean: float) -> np.ndarray:
     """
@@ -2005,7 +2005,7 @@ def compute_configurational_decoy_energy_fluctuation_sparse(seq: str,
     sparse_potts_model : dict
         Sparse Potts model.
     mask_mean : float
-        Mean of the original dense mask, used as weight for configurational decoys.
+        Mean of the original dense mask, used as weight for pseudoconfigurational decoys.
 
     Returns
     -------
@@ -2142,5 +2142,306 @@ def sparse_frustration_to_dense(frustration_values: np.ndarray,
     dense = np.zeros((L, L))
     dense[contact_i, contact_j] = frustration_values
     return dense
+
+
+def _build_charges_array():
+    """
+    Build the (21,) charge vector in the DCA alphabet order.
+
+    Returns
+    -------
+    charges : np.ndarray (21,)
+        Charge of each amino acid in ``_AA`` order. D, E = -1; K, R = +1.
+    """
+    charges = np.zeros(21)
+    for idx, aa in enumerate(_AA):
+        if aa in 'DE':
+            charges[idx] = -1.0
+        elif aa in 'KR':
+            charges[idx] = 1.0
+    return charges
+
+
+# Module-level constant
+_CHARGES = _build_charges_array()
+_Q_VAR = (_CHARGES ** 2).sum() / 21  # Var(q) under uniform freq = 4/21
+
+
+def compute_elec_indicator(distance_matrix: np.ndarray,
+                           k_electrostatics: float = 17.3636,
+                           screening_length: float = 10.0) -> np.ndarray:
+    """
+    Compute the electrostatic indicator matrix (Debye-Hückel screening).
+
+    .. math::
+        \\text{indicator}(i,j) = -k_{\\text{elec}} \\frac{\\exp(-d_{ij}/\\lambda)}{d_{ij}}
+
+    Parameters
+    ----------
+    distance_matrix : np.ndarray (L, L)
+        Distance matrix between residues.
+    k_electrostatics : float
+        Electrostatic coupling coefficient (kJ/mol). Default 17.3636.
+    screening_length : float
+        Debye-Hückel screening length (Angstrom). Default 10.0.
+
+    Returns
+    -------
+    indicator : np.ndarray (L, L)
+        Electrostatic indicator. Negative for all pair distances > 0.
+    """
+    with np.errstate(divide='ignore', invalid='ignore'):
+        indicator = -k_electrostatics * np.exp(-distance_matrix / screening_length) / distance_matrix
+        indicator[np.isnan(indicator)] = 0.0
+        indicator[np.isinf(indicator)] = 0.0
+    return indicator
+
+
+def build_elec_data(distance_matrix: np.ndarray,
+                    mask: np.ndarray,
+                    sequence: str,
+                    sparse_potts_model: dict,
+                    k_electrostatics: float = 17.3636,
+                    screening_length: float = 10.0,
+                    min_sequence_separation_electrostatics: int = 1) -> dict:
+    """
+    Precompute all electrostatic data needed for sparse corrections.
+
+    Parameters
+    ----------
+    distance_matrix : np.ndarray (L, L)
+        Distance matrix between residues.
+    mask : np.ndarray (L, L)
+        Contact mask (the mask used for frustration, may differ from
+        the electrostatic mask).
+    sequence : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    k_electrostatics : float
+        Electrostatic coupling coefficient.
+    screening_length : float
+        Screening length (Angstrom).
+    min_sequence_separation_electrostatics : int
+        Minimum sequence separation for electrostatic interactions.
+
+    Returns
+    -------
+    elec_data : dict
+        Dictionary with keys:
+        - 'charges': (21,) charge array
+        - 'q_var': scalar, Var(q) under uniform frequency
+        - 'q_native': (L,) native charges
+        - 'indicator': (L, L) full indicator matrix
+        - 'indicator_at_contacts': (N_contacts,) indicator values
+        - 'phi': (L,) indicator * mask @ q_native
+        - 'phi_raw': (L,) indicator @ q_native (unmasked, for pseudoconfigurational)
+        - 'mask_at_contacts': (N_contacts,) mask values at contacts
+        - 'mask_mean': scalar, mean of mask
+    """
+    seq_index = np.array([_AA.find(aa) for aa in sequence])
+    L = len(seq_index)
+    charges = _CHARGES
+    q_native = charges[seq_index]
+
+    # Full indicator matrix
+    indicator = compute_elec_indicator(distance_matrix, k_electrostatics, screening_length)
+
+    # Apply electrostatic sequence separation
+    elec_mask = compute_mask(distance_matrix,
+                             maximum_contact_distance=None,
+                             minimum_sequence_separation=min_sequence_separation_electrostatics)
+    indicator = indicator * elec_mask
+
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    # phi vectors
+    indicator_masked = indicator * mask
+    phi = indicator_masked @ q_native          # (L,)
+    phi_raw = indicator @ q_native             # (L,) — unmasked
+
+    return {
+        'charges': charges,
+        'q_var': _Q_VAR,
+        'q_native': q_native,
+        'indicator': indicator,
+        'indicator_at_contacts': indicator[ci, cj],
+        'phi': phi,
+        'phi_raw': phi_raw,
+        'mask_at_contacts': mask[ci, cj].astype(float),
+        'mask_mean': float(mask.mean()),
+    }
+
+
+def compute_native_energy_elec(sequence: str,
+                               elec_data: dict,
+                               mask: np.ndarray) -> float:
+    """
+    Compute the electrostatic contribution to the native energy.
+
+    Parameters
+    ----------
+    sequence : str
+        Amino acid sequence.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+    mask : np.ndarray (L, L)
+        Contact mask.
+
+    Returns
+    -------
+    energy : float
+    """
+    q_native = elec_data['q_native']
+    indicator = elec_data['indicator']
+    energy = -0.5 * (indicator * mask * np.outer(q_native, q_native)).sum()
+    return energy
+
+
+def apply_elec_correction_singleresidue(decoy_fluctuation: np.ndarray,
+                                        elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to single-residue decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (L, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (L, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+
+    correction = -(charges[np.newaxis, :] - q_native[:, np.newaxis]) * phi[:, np.newaxis]
+    return decoy_fluctuation + correction
+
+
+def apply_elec_correction_mutational(decoy_fluctuation: np.ndarray,
+                                     sparse_potts_model: dict,
+                                     elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to mutational decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    sparse_potts_model : dict
+        Sparse Potts model.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (N_contacts, 21, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+    ind_vals = elec_data['indicator_at_contacts']
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    qn1 = q_native[ci]
+    qn2 = q_native[cj]
+
+    dq_a = charges[np.newaxis, :] - qn1[:, np.newaxis]   # (N, 21)
+    dq_b = charges[np.newaxis, :] - qn2[:, np.newaxis]   # (N, 21)
+
+    correction = -(dq_a * phi[ci][:, np.newaxis])[:, :, np.newaxis]
+    correction = correction - (dq_b * phi[cj][:, np.newaxis])[:, np.newaxis, :]
+    correction = correction - ind_vals[:, np.newaxis, np.newaxis] * dq_a[:, :, np.newaxis] * dq_b[:, np.newaxis, :]
+
+    return decoy_fluctuation + correction
+
+
+def apply_elec_correction_contact(decoy_fluctuation: np.ndarray,
+                                  sparse_potts_model: dict,
+                                  elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to contact decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    sparse_potts_model : dict
+        Sparse Potts model.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (N_contacts, 21, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    ind_vals = elec_data['indicator_at_contacts']
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    qn1 = q_native[ci]
+    qn2 = q_native[cj]
+
+    correction = ind_vals[:, np.newaxis, np.newaxis] * (
+        (qn1 * qn2)[:, np.newaxis, np.newaxis]
+        - charges[np.newaxis, :, np.newaxis] * charges[np.newaxis, np.newaxis, :]
+    )
+
+    return decoy_fluctuation + correction
+
+
+def apply_elec_correction_pseudoconfigurational(decoy_fluctuation: np.ndarray,
+                                          sparse_potts_model: dict,
+                                          elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to pseudo-configurational decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    sparse_potts_model : dict
+        Sparse Potts model.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (N_contacts, 21, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+    phi_raw = elec_data['phi_raw']
+    ind_vals = elec_data['indicator_at_contacts']
+    mask_vals = elec_data['mask_at_contacts']
+    mask_mean = elec_data['mask_mean']
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    qn1 = q_native[ci]
+    qn2 = q_native[cj]
+
+    c00 = qn1 * phi[ci] + qn2 * phi[cj] - ind_vals * qn1 * qn2 * mask_vals
+    c10 = mask_mean * (ind_vals * qn2 - phi_raw[ci])
+    c01 = mask_mean * (ind_vals * qn1 - phi_raw[cj])
+    c11 = -ind_vals * mask_mean
+
+    qa = charges[np.newaxis, :, np.newaxis]   # (1, 21, 1)
+    qb = charges[np.newaxis, np.newaxis, :]   # (1, 1, 21)
+    correction = (c00[:, np.newaxis, np.newaxis]
+                  + c10[:, np.newaxis, np.newaxis] * qa
+                  + c01[:, np.newaxis, np.newaxis] * qb
+                  + c11[:, np.newaxis, np.newaxis] * qa * qb)
+
+    return decoy_fluctuation + correction
 
     

@@ -422,15 +422,29 @@ def test_expose_indicators(structure, k_electrostatics, min_sequence_separation_
 
 from frustratometer.frustration.frustration import (
     potts_model_dense_to_sparse,
+    compute_native_energy,
     compute_native_energy_sparse,
     compute_couplings_energy_sparse,
+    compute_singleresidue_decoy_energy_fluctuation,
     compute_singleresidue_decoy_energy_fluctuation_sparse,
+    compute_mutational_decoy_energy_fluctuation,
     compute_mutational_decoy_energy_fluctuation_sparse,
-    compute_configurational_decoy_energy_fluctuation_sparse,
+    compute_pseudoconfigurational_decoy_energy_fluctuation,
+    compute_pseudoconfigurational_decoy_energy_fluctuation_sparse,
+    compute_contact_decoy_energy_fluctuation,
     compute_contact_decoy_energy_fluctuation_sparse,
     compute_pair_frustration,
     compute_pair_frustration_sparse,
     sparse_frustration_to_dense,
+    compute_mask,
+    compute_elec_indicator,
+    build_elec_data,
+    compute_native_energy_elec,
+    apply_elec_correction_singleresidue,
+    apply_elec_correction_mutational,
+    apply_elec_correction_contact,
+    apply_elec_correction_pseudoconfigurational,
+    _CHARGES,
 )
 
 # --- Sparse cross-validation fixtures (module-scoped, computed once) ---
@@ -451,7 +465,7 @@ def dense_decoys_6u5e_density(awsem_6u5e_density):
         'singleresidue': m.decoy_fluctuation(kind='singleresidue'),
         'mutational': m.decoy_fluctuation(kind='mutational'),
         'contact': m.decoy_fluctuation(kind='contact'),
-        'configurational': m.decoy_fluctuation(kind='configurational'),
+        'pseudoconfigurational': m.decoy_fluctuation(kind='pseudoconfigurational'),
     }
 
 # --- Sparse cross-validation tests ---
@@ -473,7 +487,7 @@ def test_sparse_energy_matches_dense(fixture_name, awsem_6u5e, awsem_6u5e_densit
     np.testing.assert_allclose(dense_fields + compute_couplings_energy_sparse(model.sequence, spm), dense_native, rtol=1e-10)
 
 
-@pytest.mark.parametrize("kind", ["singleresidue", "mutational", "contact", "configurational"])
+@pytest.mark.parametrize("kind", ["singleresidue", "mutational", "contact", "pseudoconfigurational"])
 def test_sparse_decoy_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_density, dense_decoys_6u5e_density):
     """Sparse decoy fluctuation must match dense for all four kinds."""
     model = awsem_6u5e_density
@@ -483,8 +497,8 @@ def test_sparse_decoy_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_densit
     if kind == 'singleresidue':
         sparse = compute_singleresidue_decoy_energy_fluctuation_sparse(model.sequence, spm)
         np.testing.assert_allclose(sparse, dense, atol=1e-4)
-    elif kind == 'configurational':
-        sparse = compute_configurational_decoy_energy_fluctuation_sparse(model.sequence, spm, model.mask.mean())
+    elif kind == 'pseudoconfigurational':
+        sparse = compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(model.sequence, spm, model.mask.mean())
         ci, cj = spm['contact_i'], spm['contact_j']
         np.testing.assert_allclose(sparse, dense[ci, cj], atol=1e-4)
     else:
@@ -513,6 +527,100 @@ def test_sparse_frustration_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_
 
     ci, cj = spm['contact_i'], spm['contact_j']
     np.testing.assert_allclose(dense_from_sparse[ci, cj], dense_frust[ci, cj], atol=1e-4)
+
+
+@pytest.fixture(scope="module")
+def elec_setup(awsem_6u5e_density, sparse_6u5e_density):
+    """
+    Build electrostatics test data from the real 6u5e model.
+
+    Takes the k_elec=0 model, constructs J_elec using compute_elec_indicator
+    (same formula as build_elec_data), adds it to J to create 'combined' dense
+    Potts model.  Then builds elec_data for the sparse path.
+
+    Returns dict with: model, spm, elec_data, combined_potts, mask, k_elec.
+    """
+    model = awsem_6u5e_density
+    spm = sparse_6u5e_density
+    mask = model.mask
+    k_elec = 4 * 4.184  # same value used in AWSEM test configs
+    screening_length = 10.0
+    min_sep_elec = 1
+
+    # Build indicator (includes -k factor and elec_mask)
+    indicator = compute_elec_indicator(model.distance_matrix, k_elec, screening_length)
+    elec_mask = compute_mask(model.distance_matrix,
+                             maximum_contact_distance=None,
+                             minimum_sequence_separation=min_sep_elec)
+    indicator = indicator * elec_mask
+
+    # Construct J_elec: indicator[i,j] * q_a * q_b
+    charges = _CHARGES
+    J_elec = indicator[:, :, np.newaxis, np.newaxis] * charges[np.newaxis, np.newaxis, :, np.newaxis] * charges[np.newaxis, np.newaxis, np.newaxis, :]
+
+    # Combined dense Potts model (contact + electrostatics)
+    combined_potts = {
+        'h': model.potts_model['h'].copy(),
+        'J': model.potts_model['J'] + J_elec,
+    }
+
+    # Build elec_data for sparse path
+    elec_data = build_elec_data(model.distance_matrix, mask, model.sequence, spm,
+                                k_elec, screening_length, min_sep_elec)
+
+    return {
+        'model': model,
+        'spm': spm,
+        'elec_data': elec_data,
+        'combined_potts': combined_potts,
+        'mask': mask,
+    }
+
+
+def test_elec_native_energy(elec_setup):
+    """Sparse native energy + electrostatic energy must match dense combined model."""
+    s = elec_setup
+    model, spm, elec_data, mask = s['model'], s['spm'], s['elec_data'], s['mask']
+
+    dense_energy = compute_native_energy(model.sequence, s['combined_potts'], mask)
+    sparse_energy = compute_native_energy_sparse(model.sequence, spm)
+    elec_energy = compute_native_energy_elec(model.sequence, elec_data, mask)
+
+    np.testing.assert_allclose(sparse_energy + elec_energy, dense_energy, rtol=1e-10)
+
+
+@pytest.mark.parametrize("kind", ["singleresidue", "mutational", "contact", "pseudoconfigurational"])
+def test_elec_decoy_correction(kind, elec_setup):
+    """Sparse decoy + electrostatic correction must match dense combined decoy."""
+    s = elec_setup
+    model, spm, elec_data, mask = s['model'], s['spm'], s['elec_data'], s['mask']
+    combined_potts = s['combined_potts']
+    seq = model.sequence
+
+    # Dense decoy from combined (contact + elec) Potts model
+    if kind == 'singleresidue':
+        dense_decoy = compute_singleresidue_decoy_energy_fluctuation(seq, combined_potts, mask)
+        sparse_decoy = compute_singleresidue_decoy_energy_fluctuation_sparse(seq, spm)
+        corrected = apply_elec_correction_singleresidue(sparse_decoy, elec_data)
+        np.testing.assert_allclose(corrected, dense_decoy, atol=1e-4)
+    elif kind == 'mutational':
+        dense_decoy = compute_mutational_decoy_energy_fluctuation(seq, combined_potts, mask)
+        sparse_decoy = compute_mutational_decoy_energy_fluctuation_sparse(seq, spm)
+        corrected = apply_elec_correction_mutational(sparse_decoy, spm, elec_data)
+        ci, cj = spm['contact_i'], spm['contact_j']
+        np.testing.assert_allclose(corrected, dense_decoy[ci, cj], atol=1e-4)
+    elif kind == 'contact':
+        dense_decoy = compute_contact_decoy_energy_fluctuation(seq, combined_potts, mask)
+        sparse_decoy = compute_contact_decoy_energy_fluctuation_sparse(seq, spm)
+        corrected = apply_elec_correction_contact(sparse_decoy, spm, elec_data)
+        ci, cj = spm['contact_i'], spm['contact_j']
+        np.testing.assert_allclose(corrected, dense_decoy[ci, cj], atol=1e-4)
+    elif kind == 'pseudoconfigurational':
+        dense_decoy = compute_pseudoconfigurational_decoy_energy_fluctuation(seq, combined_potts, mask)
+        sparse_decoy = compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(seq, spm, mask.mean())
+        corrected = apply_elec_correction_pseudoconfigurational(sparse_decoy, spm, elec_data)
+        ci, cj = spm['contact_i'], spm['contact_j']
+        np.testing.assert_allclose(corrected, dense_decoy[ci, cj], atol=1e-4)
 
 
 if __name__ == "__main__":

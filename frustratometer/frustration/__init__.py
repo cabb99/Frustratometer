@@ -10,7 +10,7 @@ from .frustration import *
 
 __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'compute_couplings_energy',
            'compute_sequences_energy', 'compute_singleresidue_decoy_energy_fluctuation',
-           'compute_mutational_decoy_energy_fluctuation', 'compute_configurational_decoy_energy_fluctuation',
+           'compute_mutational_decoy_energy_fluctuation', 'compute_pseudoconfigurational_decoy_energy_fluctuation',
            'compute_contact_decoy_energy_fluctuation', 'compute_decoy_energy', 'compute_aa_freq',
            'compute_contact_freq', 'compute_single_frustration', 'compute_pair_frustration', 'compute_scores',
            'compute_roc', 'compute_auc', 'plot_roc', 'plot_singleresidue_decoy_energy', 'write_tcl_script',
@@ -30,7 +30,15 @@ __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'co
           'compute_sequences_energy_sparse',
           'compute_singleresidue_decoy_energy_fluctuation_sparse',
           'compute_mutational_decoy_energy_fluctuation_sparse',
-          'compute_configurational_decoy_energy_fluctuation_sparse',
+          'compute_pseudoconfigurational_decoy_energy_fluctuation_sparse',
           'compute_contact_decoy_energy_fluctuation_sparse',
           'compute_pair_frustration_sparse',
-          'sparse_frustration_to_dense']
+          'sparse_frustration_to_dense',
+          'compute_elec_indicator',
+          'build_elec_data',
+          'compute_native_energy_elec',
+          'apply_elec_correction_singleresidue',
+          'apply_elec_correction_mutational',
+          'apply_elec_correction_contact',
+          'apply_elec_correction_pseudoconfigurational',
+          ]
