@@ -1602,3 +1602,156 @@ def compute_energy_sliding_window(seq: str,
     }
 
     return results
+
+
+def compute_mask_sparse(contact_i: np.ndarray,
+                        contact_j: np.ndarray,
+                        contact_distances: np.ndarray,
+                        L: int,
+                        maximum_contact_distance: Union[float, None] = None,
+                        minimum_sequence_separation: Union[int, None] = None):
+    """
+    Compute a sparse mask from sparse distance data.
+
+    Parameters
+    ----------
+    contact_i : np.ndarray (N,)
+        Row indices of distance pairs (from sparse distance matrix).
+    contact_j : np.ndarray (N,)
+        Column indices of distance pairs.
+    contact_distances : np.ndarray (N,)
+        Distances for each (i, j) pair.
+    L : int
+        Sequence length (number of residues).
+    maximum_contact_distance : float, optional
+        Include pair if distance <= this value. If None, no distance filtering.
+    minimum_sequence_separation : int, optional
+        Include pair if |i - j| >= this value. If None, no sequence separation filtering.
+
+    Returns
+    -------
+    mask_i : np.ndarray
+        Row indices of pairs that pass the mask criteria.
+    mask_j : np.ndarray
+        Column indices of pairs that pass the mask criteria.
+    """
+    keep = np.ones(len(contact_i), dtype=bool)
+
+    if maximum_contact_distance is not None:
+        keep &= contact_distances <= maximum_contact_distance
+
+    if minimum_sequence_separation is not None:
+        keep &= np.abs(contact_i.astype(np.int64) - contact_j.astype(np.int64)) >= minimum_sequence_separation
+
+    return contact_i[keep], contact_j[keep]
+
+
+def potts_model_dense_to_sparse(potts_model: dict, mask: np.ndarray) -> dict:
+    """
+    Convert a dense Potts model to sparse format, keeping only couplings at masked positions.
+
+    Both (i,j) and (j,i) entries are stored to preserve the existing ``sum / 2``
+    energy summation pattern.
+
+    Parameters
+    ----------
+    potts_model : dict
+        Dense Potts model with 'h' (L, Q) and 'J' (L, L, Q, Q).
+    mask : np.ndarray
+        Boolean mask (L, L). True means the pair is a contact.
+
+    Returns
+    -------
+    sparse_potts_model : dict
+        Dictionary with keys:
+        - 'h': np.ndarray (L, Q) — unchanged
+        - 'J': np.ndarray (N_contacts, Q, Q) — couplings at contact positions
+        - 'contact_i': np.ndarray (N_contacts,) — row indices
+        - 'contact_j': np.ndarray (N_contacts,) — column indices
+        - 'L': int — sequence length
+    """
+    contact_i, contact_j = np.where(mask)
+    J_sparse = potts_model['J'][contact_i, contact_j, :, :]
+    return {
+        'h': potts_model['h'],
+        'J': J_sparse,
+        'contact_i': contact_i.astype(np.intp),
+        'contact_j': contact_j.astype(np.intp),
+        'L': potts_model['h'].shape[0],
+    }
+
+
+def potts_model_sparse_to_dense(sparse_potts_model: dict) -> dict:
+    """
+    Convert a sparse Potts model back to dense format.
+
+    Couplings at positions not stored in the sparse model are set to zero.
+
+    Parameters
+    ----------
+    sparse_potts_model : dict
+        Sparse Potts model (see ``potts_model_dense_to_sparse``).
+
+    Returns
+    -------
+    potts_model : dict
+        Dense Potts model with 'h' (L, Q) and 'J' (L, L, Q, Q).
+    """
+    L = sparse_potts_model['L']
+    Q = sparse_potts_model['h'].shape[1]
+    J = np.zeros((L, L, Q, Q), dtype=sparse_potts_model['J'].dtype)
+    J[sparse_potts_model['contact_i'], sparse_potts_model['contact_j'], :, :] = sparse_potts_model['J']
+    return {
+        'h': sparse_potts_model['h'],
+        'J': J,
+    }
+
+
+def build_contact_lookup(contact_i: np.ndarray, contact_j: np.ndarray, L: int) -> tuple:
+    """
+    Build CSR-like flat arrays mapping each position to its contacts.
+
+    For position ``p``, contacts are at indices
+    ``lookup_data[lookup_offsets[p]:lookup_offsets[p+1]]`` in the sparse J array,
+    and the partner positions are
+    ``lookup_partners[lookup_offsets[p]:lookup_offsets[p+1]]``.
+
+    Parameters
+    ----------
+    contact_i : np.ndarray (N_contacts,)
+        Row indices of contacts.
+    contact_j : np.ndarray (N_contacts,)
+        Column indices of contacts.
+    L : int
+        Sequence length.
+
+    Returns
+    -------
+    lookup_offsets : np.ndarray (L+1,)
+        CSR-style offset array.
+    lookup_partners : np.ndarray (N_contacts,)
+        Partner position for each contact entry.
+    lookup_indices : np.ndarray (N_contacts,)
+        Index into sparse J array for each contact entry.
+    """
+    N = len(contact_i)
+    # Count contacts per position (using contact_i as the "row")
+    counts = np.zeros(L, dtype=np.intp)
+    for k in range(N):
+        counts[contact_i[k]] += 1
+
+    lookup_offsets = np.zeros(L + 1, dtype=np.intp)
+    np.cumsum(counts, out=lookup_offsets[1:])
+
+    # Fill partner and index arrays
+    lookup_partners = np.empty(N, dtype=np.intp)
+    lookup_indices = np.empty(N, dtype=np.intp)
+    current = lookup_offsets[:-1].copy()
+    for k in range(N):
+        p = contact_i[k]
+        pos = current[p]
+        lookup_partners[pos] = contact_j[k]
+        lookup_indices[pos] = k
+        current[p] += 1
+
+    return lookup_offsets, lookup_partners, lookup_indices

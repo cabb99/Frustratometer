@@ -20,4 +20,8 @@ __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'co
           'compute_decoy_h_J',
           'compute_native_fragment_energy_from_h_j',
           'compute_decoy_fragment_energy_from_h_j',
-          'compute_energy_sliding_window']
+          'compute_energy_sliding_window',
+          'compute_mask_sparse',
+          'potts_model_dense_to_sparse',
+          'potts_model_sparse_to_dense',
+          'build_contact_lookup']
