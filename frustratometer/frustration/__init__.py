@@ -27,4 +27,10 @@ __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'co
           'build_contact_lookup',
           'compute_native_energy_sparse',
           'compute_couplings_energy_sparse',
-          'compute_sequences_energy_sparse']
+          'compute_sequences_energy_sparse',
+          'compute_singleresidue_decoy_energy_fluctuation_sparse',
+          'compute_mutational_decoy_energy_fluctuation_sparse',
+          'compute_configurational_decoy_energy_fluctuation_sparse',
+          'compute_contact_decoy_energy_fluctuation_sparse',
+          'compute_pair_frustration_sparse',
+          'sparse_frustration_to_dense']

@@ -192,16 +192,31 @@ class Frustratometer:
                 return self._decoy_fluctuation[kind]
         if not isinstance(mask, np.ndarray):
             mask=self.mask
-        if kind == 'singleresidue':
-            fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-        elif kind == 'mutational':
-            fluctuation = frustration.compute_mutational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-        elif kind == 'configurational':
-            fluctuation = frustration.compute_configurational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-        elif kind == 'contact':
-            fluctuation = frustration.compute_contact_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+        # Use sparse path when available
+        _use_sparse = getattr(self, 'sparse_potts_model', None) is not None
+        if _use_sparse:
+            if kind == 'singleresidue':
+                fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
+            elif kind == 'mutational':
+                fluctuation = frustration.compute_mutational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
+            elif kind == 'configurational':
+                mask_mean = self.mask.mean()
+                fluctuation = frustration.compute_configurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, mask_mean)
+            elif kind == 'contact':
+                fluctuation = frustration.compute_contact_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
+            else:
+                raise Exception("Wrong kind of decoy generation selected")
         else:
-            raise Exception("Wrong kind of decoy generation selected")
+            if kind == 'singleresidue':
+                fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            elif kind == 'mutational':
+                fluctuation = frustration.compute_mutational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            elif kind == 'configurational':
+                fluctuation = frustration.compute_configurational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            elif kind == 'contact':
+                fluctuation = frustration.compute_contact_decoy_energy_fluctuation(sequence, self.potts_model, mask)
+            else:
+                raise Exception("Wrong kind of decoy generation selected")
         self._decoy_fluctuation[kind] = fluctuation
         return fluctuation
 
@@ -284,7 +299,18 @@ class Frustratometer:
                 return self.configurational_frustration(None, correction)
             if aa_freq is None:
                 aa_freq = self.contact_freq
-            frustration_values=frustration.compute_pair_frustration(decoy_fluctuation, aa_freq, correction)
+            # Sparse decoy fluctuation has shape (N_contacts, 21, 21) — use sparse pair frustration, then densify
+            _use_sparse = getattr(self, 'sparse_potts_model', None) is not None
+            if _use_sparse and decoy_fluctuation.ndim == 3:
+                sparse_frust = frustration.compute_pair_frustration_sparse(decoy_fluctuation, aa_freq, correction)
+                frustration_values = frustration.sparse_frustration_to_dense(
+                    sparse_frust,
+                    self.sparse_potts_model['contact_i'],
+                    self.sparse_potts_model['contact_j'],
+                    self.sparse_potts_model['L'],
+                )
+            else:
+                frustration_values=frustration.compute_pair_frustration(decoy_fluctuation, aa_freq, correction)
             return frustration_values
 
     def plot_decoy_energy(self, sequence:str = None, kind:str = 'singleresidue', method:str = 'clustermap'):

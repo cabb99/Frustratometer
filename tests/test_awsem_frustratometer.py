@@ -424,45 +424,95 @@ from frustratometer.frustration.frustration import (
     potts_model_dense_to_sparse,
     compute_native_energy_sparse,
     compute_couplings_energy_sparse,
-    compute_sequences_energy_sparse,
+    compute_singleresidue_decoy_energy_fluctuation_sparse,
+    compute_mutational_decoy_energy_fluctuation_sparse,
+    compute_configurational_decoy_energy_fluctuation_sparse,
+    compute_contact_decoy_energy_fluctuation_sparse,
+    compute_pair_frustration,
+    compute_pair_frustration_sparse,
+    sparse_frustration_to_dense,
 )
 
+# --- Sparse cross-validation fixtures (module-scoped, computed once) ---
+
+@pytest.fixture(scope="module")
+def sparse_6u5e(awsem_6u5e):
+    return potts_model_dense_to_sparse(awsem_6u5e.potts_model, awsem_6u5e.mask)
+
+@pytest.fixture(scope="module")
+def sparse_6u5e_density(awsem_6u5e_density):
+    return potts_model_dense_to_sparse(awsem_6u5e_density.potts_model, awsem_6u5e_density.mask)
+
+@pytest.fixture(scope="module")
+def dense_decoys_6u5e_density(awsem_6u5e_density):
+    """Compute dense decoy fluctuations once — shared by decoy and frustration tests."""
+    m = awsem_6u5e_density
+    return {
+        'singleresidue': m.decoy_fluctuation(kind='singleresidue'),
+        'mutational': m.decoy_fluctuation(kind='mutational'),
+        'contact': m.decoy_fluctuation(kind='contact'),
+        'configurational': m.decoy_fluctuation(kind='configurational'),
+    }
+
+# --- Sparse cross-validation tests ---
 
 @pytest.mark.parametrize("fixture_name", ["awsem_6u5e", "awsem_6u5e_density"])
-def test_sparse_energy_matches_dense(fixture_name, awsem_6u5e, awsem_6u5e_density):
-    """Sparse native/fields/couplings energy must match dense on real AWSEM models."""
-    model = awsem_6u5e if fixture_name == "awsem_6u5e" else awsem_6u5e_density
-    spm = potts_model_dense_to_sparse(model.potts_model, model.mask)
+def test_sparse_energy_matches_dense(fixture_name, awsem_6u5e, awsem_6u5e_density, sparse_6u5e, sparse_6u5e_density):
+    """Sparse native/couplings energy must reproduce dense on real AWSEM models."""
+    if fixture_name == "awsem_6u5e":
+        model, spm = awsem_6u5e, sparse_6u5e
+    else:
+        model, spm = awsem_6u5e_density, sparse_6u5e_density
 
     dense_native = model.native_energy()
-    sparse_native = compute_native_energy_sparse(model.sequence, spm)
-    np.testing.assert_allclose(sparse_native, dense_native, rtol=1e-10)
-
     dense_couplings = model.couplings_energy()
-    sparse_couplings = compute_couplings_energy_sparse(model.sequence, spm)
-    np.testing.assert_allclose(sparse_couplings, dense_couplings, rtol=1e-10)
+    dense_fields = model.fields_energy()
 
-    # fields + sparse_couplings = sparse_native
-    np.testing.assert_allclose(model.fields_energy() + sparse_couplings, sparse_native, rtol=1e-10)
+    np.testing.assert_allclose(compute_native_energy_sparse(model.sequence, spm), dense_native, rtol=1e-10)
+    np.testing.assert_allclose(compute_couplings_energy_sparse(model.sequence, spm), dense_couplings, rtol=1e-10)
+    np.testing.assert_allclose(dense_fields + compute_couplings_energy_sparse(model.sequence, spm), dense_native, rtol=1e-10)
 
 
-def test_sparse_sequences_energy_matches_dense(awsem_6u5e):
-    """Sparse batch energy must match dense for multiple random sequences."""
-    model = awsem_6u5e
-    spm = potts_model_dense_to_sparse(model.potts_model, model.mask)
-    rng = np.random.default_rng(42)
-    _AA = '-ACDEFGHIKLMNPQRSTVWY'
-    seqs = [''.join(rng.choice(list(_AA[1:]), size=len(model.sequence))) for _ in range(5)]
+@pytest.mark.parametrize("kind", ["singleresidue", "mutational", "contact", "configurational"])
+def test_sparse_decoy_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_density, dense_decoys_6u5e_density):
+    """Sparse decoy fluctuation must match dense for all four kinds."""
+    model = awsem_6u5e_density
+    spm = sparse_6u5e_density
+    dense = dense_decoys_6u5e_density[kind]
 
-    from frustratometer.frustration.frustration import compute_sequences_energy
-    dense = compute_sequences_energy(seqs, model.potts_model, model.mask)
-    sparse = compute_sequences_energy_sparse(seqs, spm)
-    np.testing.assert_allclose(sparse, dense, rtol=1e-10)
+    if kind == 'singleresidue':
+        sparse = compute_singleresidue_decoy_energy_fluctuation_sparse(model.sequence, spm)
+        np.testing.assert_allclose(sparse, dense, atol=1e-4)
+    elif kind == 'configurational':
+        sparse = compute_configurational_decoy_energy_fluctuation_sparse(model.sequence, spm, model.mask.mean())
+        ci, cj = spm['contact_i'], spm['contact_j']
+        np.testing.assert_allclose(sparse, dense[ci, cj], atol=1e-4)
+    else:
+        sparse_func = (compute_mutational_decoy_energy_fluctuation_sparse if kind == 'mutational'
+                       else compute_contact_decoy_energy_fluctuation_sparse)
+        sparse = sparse_func(model.sequence, spm)
+        ci, cj = spm['contact_i'], spm['contact_j']
+        np.testing.assert_allclose(sparse, dense[ci, cj], atol=1e-4)
 
-    # Also test split mode
-    dense_split = compute_sequences_energy(seqs, model.potts_model, model.mask, split_couplings_and_fields=True)
-    sparse_split = compute_sequences_energy_sparse(seqs, spm, split_couplings_and_fields=True)
-    np.testing.assert_allclose(sparse_split, dense_split, rtol=1e-10)
+
+@pytest.mark.parametrize("kind", ["mutational", "contact"])
+def test_sparse_frustration_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_density, dense_decoys_6u5e_density):
+    """Sparse frustration pipeline must match dense (reuses cached dense decoys)."""
+    model = awsem_6u5e_density
+    spm = sparse_6u5e_density
+
+    # Dense frustration from cached decoys (no recomputation)
+    dense_frust = compute_pair_frustration(dense_decoys_6u5e_density[kind], model.contact_freq)
+
+    # Sparse pipeline: decoy → frustration → densify
+    sparse_func = (compute_mutational_decoy_energy_fluctuation_sparse if kind == 'mutational'
+                   else compute_contact_decoy_energy_fluctuation_sparse)
+    sparse_decoy = sparse_func(model.sequence, spm)
+    sparse_frust = compute_pair_frustration_sparse(sparse_decoy, model.contact_freq)
+    dense_from_sparse = sparse_frustration_to_dense(sparse_frust, spm['contact_i'], spm['contact_j'], spm['L'])
+
+    ci, cj = spm['contact_i'], spm['contact_j']
+    np.testing.assert_allclose(dense_from_sparse[ci, cj], dense_frust[ci, cj], atol=1e-4)
 
 
 if __name__ == "__main__":

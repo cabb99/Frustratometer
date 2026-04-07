@@ -1754,23 +1754,15 @@ def build_contact_lookup(contact_i: np.ndarray, contact_j: np.ndarray, L: int) -
     """
     N = len(contact_i)
     # Count contacts per position (using contact_i as the "row")
-    counts = np.zeros(L, dtype=np.intp)
-    for k in range(N):
-        counts[contact_i[k]] += 1
+    counts = np.bincount(contact_i, minlength=L).astype(np.intp)
 
     lookup_offsets = np.zeros(L + 1, dtype=np.intp)
     np.cumsum(counts, out=lookup_offsets[1:])
 
-    # Fill partner and index arrays
-    lookup_partners = np.empty(N, dtype=np.intp)
-    lookup_indices = np.empty(N, dtype=np.intp)
-    current = lookup_offsets[:-1].copy()
-    for k in range(N):
-        p = contact_i[k]
-        pos = current[p]
-        lookup_partners[pos] = contact_j[k]
-        lookup_indices[pos] = k
-        current[p] += 1
+    # Sort by contact_i to group contacts by position, then fill partner/index arrays
+    order = np.argsort(contact_i, kind='stable')
+    lookup_partners = contact_j[order].astype(np.intp)
+    lookup_indices = order.astype(np.intp)
 
     return lookup_offsets, lookup_partners, lookup_indices
 
@@ -1816,8 +1808,7 @@ def compute_native_energy_sparse(seq: str,
         h[gap_indices] = 0.0
 
     if ignore_gap_couplings and len(gap_indices) > 0:
-        gap_set = set(gap_indices)
-        gap_mask = np.array([contact_i[k] in gap_set or contact_j[k] in gap_set for k in range(len(contact_i))])
+        gap_mask = np.isin(contact_i, gap_indices) | np.isin(contact_j, gap_indices)
         j_vals[gap_mask] = 0.0
 
     energy = h.sum() + j_vals.sum() / 2
@@ -1851,9 +1842,9 @@ def compute_couplings_energy_sparse(seq: str,
     j_vals = -J_sparse[np.arange(len(contact_i)), seq_index[contact_i], seq_index[contact_j]]
 
     if ignore_couplings_of_gaps:
-        gap_indices = set(i for i, aa in enumerate(seq) if aa == '-')
-        if gap_indices:
-            gap_mask = np.array([contact_i[k] in gap_indices or contact_j[k] in gap_indices for k in range(len(contact_i))])
+        gap_indices = np.array([i for i, aa in enumerate(seq) if aa == '-'])
+        if len(gap_indices) > 0:
+            gap_mask = np.isin(contact_i, gap_indices) | np.isin(contact_j, gap_indices)
             j_vals[gap_mask] = 0.0
 
     return j_vals.sum() / 2
@@ -1893,5 +1884,263 @@ def compute_sequences_energy_sparse(seqs: list,
         return np.array([h.sum(axis=1), j_vals.sum(axis=1) / 2])
     else:
         return h.sum(axis=1) + j_vals.sum(axis=1) / 2
-
+    
     return lookup_offsets, lookup_partners, lookup_indices
+
+
+def compute_singleresidue_decoy_energy_fluctuation_sparse(seq: str,
+                                                          sparse_potts_model: dict) -> np.ndarray:
+    """
+    Compute single-residue decoy energy fluctuation using a sparse Potts model.
+
+    Returns the same (L, 21) shape as the dense version.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (L, 21)
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+    h = sparse_potts_model['h']
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+
+    # Fields correction: -(h[i, aa_new] - h[i, aa_native])
+    decoy_energy = np.zeros((L, 21))
+    decoy_energy -= (h - h[np.arange(L), seq_index][:, np.newaxis])
+
+    # Couplings correction via V
+    # V[j, a] = sum_i J[i, j, seq[i], a] * mask[i, j]
+    # Dense formula: correction_i(a) = V[i, seq[i]] - V[i, a]
+    V = np.zeros((L, 21))
+    values = J_sparse[np.arange(N_contacts), seq_index[contact_i], :]  # (N_contacts, 21)
+    np.add.at(V, contact_j, values)
+
+    decoy_energy += V[np.arange(L), seq_index][:, np.newaxis] - V
+
+    return decoy_energy
+
+
+def compute_mutational_decoy_energy_fluctuation_sparse(seq: str,
+                                                       sparse_potts_model: dict) -> np.ndarray:
+    """
+    Compute mutational decoy energy fluctuation using a sparse Potts model.
+
+    Returns (N_contacts, 21, 21) instead of (L, L, 21, 21).
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (N_contacts, 21, 21)
+        Energy changes for each contact upon mutating both residues.
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+    h = sparse_potts_model['h']
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+
+    aa_range = np.arange(21)
+    idx = np.arange(N_contacts)
+    pos1 = contact_i
+    pos2 = contact_j
+
+    # Fields correction
+    decoy_energy = np.zeros((N_contacts, 21, 21))
+    dh1 = h[pos1[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos1, seq_index[pos1]][:, np.newaxis]  # (N, 21)
+    dh2 = h[pos2[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos2, seq_index[pos2]][:, np.newaxis]  # (N, 21)
+    decoy_energy -= dh1[:, :, np.newaxis]
+    decoy_energy -= dh2[:, np.newaxis, :]
+
+    # Environment coupling correction via V
+    V = np.zeros((L, 21))
+    values = J_sparse[np.arange(N_contacts), seq_index[contact_i], :]  # (N_contacts, 21)
+    np.add.at(V, contact_j, values)
+
+    decoy_energy += (V[pos1, seq_index[pos1]][:, np.newaxis, np.newaxis]
+                     - V[pos1][:, :, np.newaxis]
+                     + V[pos2, seq_index[pos2]][:, np.newaxis, np.newaxis]
+                     - V[pos2][:, np.newaxis, :])
+
+    # Self-interaction corrections (pair i,j was counted in V for both pos1 and pos2)
+    decoy_energy -= J_sparse[idx, seq_index[pos1], seq_index[pos2]][:, np.newaxis, np.newaxis]
+    term2 = J_sparse[idx[:, np.newaxis], aa_range[np.newaxis, :], seq_index[pos2][:, np.newaxis]]  # (N, 21)
+    decoy_energy += term2[:, :, np.newaxis]
+    term3 = J_sparse[idx[:, np.newaxis], seq_index[pos1][:, np.newaxis], aa_range[np.newaxis, :]]  # (N, 21)
+    decoy_energy += term3[:, np.newaxis, :]
+    decoy_energy -= J_sparse
+
+    return decoy_energy
+
+
+def compute_configurational_decoy_energy_fluctuation_sparse(seq: str,
+                                                            sparse_potts_model: dict,
+                                                            mask_mean: float) -> np.ndarray:
+    """
+    Compute pseudo-configurational decoy energy fluctuation using a sparse Potts model.
+
+    Uses ``mask_mean`` as a scalar weight for decoy interactions (shuffled densities).
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    mask_mean : float
+        Mean of the original dense mask, used as weight for configurational decoys.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (N_contacts, 21, 21)
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+    h = sparse_potts_model['h']
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+
+    aa_range = np.arange(21)
+    idx = np.arange(N_contacts)
+    pos1 = contact_i
+    pos2 = contact_j
+
+    # Fields correction
+    decoy_energy = np.zeros((N_contacts, 21, 21))
+    dh1 = h[pos1[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos1, seq_index[pos1]][:, np.newaxis]
+    dh2 = h[pos2[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos2, seq_index[pos2]][:, np.newaxis]
+    decoy_energy -= dh1[:, :, np.newaxis]
+    decoy_energy -= dh2[:, np.newaxis, :]
+
+    # Environment coupling correction
+    V = np.zeros((L, 21))
+    values = J_sparse[np.arange(N_contacts), seq_index[contact_i], :]  # (N_contacts, 21)
+    np.add.at(V, contact_j, values)
+
+    # Native environment uses actual mask (contacts), decoy uses mask_mean
+    decoy_energy += (V[pos1, seq_index[pos1]][:, np.newaxis, np.newaxis]
+                     - V[pos1][:, :, np.newaxis] * mask_mean
+                     + V[pos2, seq_index[pos2]][:, np.newaxis, np.newaxis]
+                     - V[pos2][:, np.newaxis, :] * mask_mean)
+
+    # Self-interaction corrections
+    decoy_energy -= J_sparse[idx, seq_index[pos1], seq_index[pos2]][:, np.newaxis, np.newaxis]
+    term2 = J_sparse[idx[:, np.newaxis], aa_range[np.newaxis, :], seq_index[pos2][:, np.newaxis]] * mask_mean
+    decoy_energy += term2[:, :, np.newaxis]
+    term3 = J_sparse[idx[:, np.newaxis], seq_index[pos1][:, np.newaxis], aa_range[np.newaxis, :]] * mask_mean
+    decoy_energy += term3[:, np.newaxis, :]
+    decoy_energy -= J_sparse * mask_mean
+
+    return decoy_energy
+
+
+def compute_contact_decoy_energy_fluctuation_sparse(seq: str,
+                                                    sparse_potts_model: dict) -> np.ndarray:
+    """
+    Compute contact decoy energy fluctuation using a sparse Potts model.
+
+    Only the coupling at the contact itself changes.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (N_contacts, 21, 21)
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+    idx = np.arange(N_contacts)
+
+    # Old coupling - new coupling (mask is implicit = 1 for all stored contacts)
+    decoy_energy = (J_sparse[idx, seq_index[contact_i], seq_index[contact_j]][:, np.newaxis, np.newaxis]
+                    - J_sparse)
+    return decoy_energy
+
+
+def compute_pair_frustration_sparse(decoy_fluctuation: np.ndarray,
+                                    contact_freq: Union[None, np.ndarray] = None,
+                                    correction: float = 0) -> np.ndarray:
+    """
+    Compute pair frustration indices from sparse decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation at each contact.
+    contact_freq : np.ndarray (21, 21) or None
+        Amino acid pair frequencies as weights. If None, uniform.
+    correction : float
+        Added to denominator to avoid division by zero. Default 0.
+
+    Returns
+    -------
+    frustration : np.ndarray (N_contacts,)
+        Frustration index for each contact.
+    """
+    if contact_freq is None:
+        contact_freq = np.ones((21, 21))
+    N_contacts = decoy_fluctuation.shape[0]
+    flat_fluct = decoy_fluctuation.reshape(N_contacts, 21 * 21)
+    flat_freq = contact_freq.flatten()
+    average = np.average(flat_fluct, weights=flat_freq, axis=1)
+    variance = np.average((flat_fluct - average[:, np.newaxis]) ** 2, weights=flat_freq, axis=1)
+    std_energy = np.sqrt(variance)
+    frustration = -(-average / (std_energy + correction))
+    return frustration
+
+
+def sparse_frustration_to_dense(frustration_values: np.ndarray,
+                                contact_i: np.ndarray,
+                                contact_j: np.ndarray,
+                                L: int) -> np.ndarray:
+    """
+    Convert sparse frustration values to a dense (L, L) matrix.
+
+    Parameters
+    ----------
+    frustration_values : np.ndarray (N_contacts,)
+        Frustration index for each contact.
+    contact_i : np.ndarray (N_contacts,)
+        Row indices.
+    contact_j : np.ndarray (N_contacts,)
+        Column indices.
+    L : int
+        Sequence length.
+
+    Returns
+    -------
+    dense : np.ndarray (L, L)
+        Dense frustration matrix (zero at non-contact positions).
+    """
+    dense = np.zeros((L, L))
+    dense[contact_i, contact_j] = frustration_values
+    return dense
+
+    
