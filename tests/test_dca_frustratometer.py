@@ -173,7 +173,7 @@ def test_distance_matrix():
     pdb_path = f'{data_path}/6JXX_A.pdb'
     chain_id = 'A'
 
-    distance_matrix = frustratometer.pdb.get_full_distance_matrix(pdb_path, chain_id, method='CB')
+    distance_matrix = frustratometer.pdb.get_dense_distance_matrix(pdb_path, chain_id, method='CB')
     original_distance_matrix=np.loadtxt(f"{data_path}/6JXX_A_CB_CB_Distance_Map.txt")
     assert (original_distance_matrix==distance_matrix).all()
 
@@ -225,7 +225,7 @@ def test_functional_compute_DCA_native_energy():
     expected_energy = -61.5248
 
     sequence = frustratometer.pdb.get_sequence(pdb_path, chain_id)
-    distance_matrix = frustratometer.pdb.get_full_distance_matrix(pdb_path, chain_id, method='minimum')
+    distance_matrix = frustratometer.pdb.get_dense_distance_matrix(pdb_path, chain_id, method='minimum')
     potts_model = frustratometer.dca.matlab.load_potts_model(potts_model_path)
     mask = frustratometer.frustration.compute_mask(distance_matrix, maximum_contact_distance=4, minimum_sequence_separation=0)
     energy = frustratometer.frustration.compute_native_energy(sequence, potts_model, mask)
@@ -401,7 +401,7 @@ def test_compute_singleresidue_DCA_decoy_energy():
     pos_x = 30
     distance_cutoff = 4
     sequence_cutoff = 0
-    distance_matrix = frustratometer.pdb.get_full_distance_matrix('examples/data/1cyo.pdb', 'A')
+    distance_matrix = frustratometer.pdb.get_dense_distance_matrix('examples/data/1cyo.pdb', 'A')
     potts_model = frustratometer.dca.matlab.load_potts_model('examples/data/PottsModel1cyoA.mat')
     seq = frustratometer.pdb.get_sequence('examples/data/1cyo.pdb', 'A')
     mask = frustratometer.frustration.compute_mask(distance_matrix, distance_cutoff, sequence_cutoff)
@@ -421,7 +421,7 @@ def test_compute_mutational_DCA_decoy_energy():
     pos_y = 69
     distance_cutoff = 4
     sequence_cutoff = 0
-    distance_matrix = frustratometer.pdb.get_full_distance_matrix('examples/data/1cyo.pdb', 'A')
+    distance_matrix = frustratometer.pdb.get_dense_distance_matrix('examples/data/1cyo.pdb', 'A')
     potts_model = frustratometer.dca.matlab.load_potts_model('examples/data/PottsModel1cyoA.mat')
     seq = frustratometer.pdb.get_sequence('examples/data/1cyo.pdb', 'A')
     mask = frustratometer.frustration.compute_mask(distance_matrix, distance_cutoff, sequence_cutoff)

@@ -173,7 +173,7 @@ def _coords_to_sparse(coords, max_distance):
 # Public API
 # ---------------------------------------------------------------------------
 
-def get_full_distance_matrix(
+def get_dense_distance_matrix(
     pdb_file: Union[Path, str],
     chain: Optional[str],
     method: str = 'CB',

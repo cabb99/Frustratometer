@@ -526,7 +526,7 @@ class DCA(Frustratometer):
 
     @distance_matrix_method.setter
     def distance_matrix_method(self, value):
-        self.distance_matrix = pdb.get_full_distance_matrix(self._pdb_file, self._chain, value)
+        self.distance_matrix = pdb.get_dense_distance_matrix(self._pdb_file, self._chain, value)
         self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff)
         self._distance_matrix_method = value
         self._native_energy = None

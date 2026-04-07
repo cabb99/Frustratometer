@@ -195,8 +195,8 @@ class Structure:
                 self.structure=prody.parseMMCIF(str(self.pdb_file),chain=self.chain).select(f"protein and {self.seq_selection}")
 
         self.sequence=pdb.get_sequence(self.pdb_file,self.chain)
-        self.distance_matrix=pdb.get_full_distance_matrix(pdb_file=self.pdb_file,chain=self.chain,
-                                                          method=self.distance_matrix_method)
+        self.distance_matrix=pdb.get_dense_distance_matrix(pdb_file=self.pdb_file,chain=self.chain,
+                                                           method=self.distance_matrix_method)
         self.full_pdb_distance_matrix=self.distance_matrix
 
         # Compute sparse distance data if requested
