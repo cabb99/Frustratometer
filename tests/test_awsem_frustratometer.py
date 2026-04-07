@@ -419,5 +419,51 @@ def test_expose_indicators(structure, k_electrostatics, min_sequence_separation_
     contact_energy_expected = model.couplings_energy()
     assert np.isclose(contact_energy_predicted,contact_energy_expected), f"Expected energy {contact_energy_expected} but got {contact_energy_predicted}"
 
+
+from frustratometer.frustration.frustration import (
+    potts_model_dense_to_sparse,
+    compute_native_energy_sparse,
+    compute_couplings_energy_sparse,
+    compute_sequences_energy_sparse,
+)
+
+
+@pytest.mark.parametrize("fixture_name", ["awsem_6u5e", "awsem_6u5e_density"])
+def test_sparse_energy_matches_dense(fixture_name, awsem_6u5e, awsem_6u5e_density):
+    """Sparse native/fields/couplings energy must match dense on real AWSEM models."""
+    model = awsem_6u5e if fixture_name == "awsem_6u5e" else awsem_6u5e_density
+    spm = potts_model_dense_to_sparse(model.potts_model, model.mask)
+
+    dense_native = model.native_energy()
+    sparse_native = compute_native_energy_sparse(model.sequence, spm)
+    np.testing.assert_allclose(sparse_native, dense_native, rtol=1e-10)
+
+    dense_couplings = model.couplings_energy()
+    sparse_couplings = compute_couplings_energy_sparse(model.sequence, spm)
+    np.testing.assert_allclose(sparse_couplings, dense_couplings, rtol=1e-10)
+
+    # fields + sparse_couplings = sparse_native
+    np.testing.assert_allclose(model.fields_energy() + sparse_couplings, sparse_native, rtol=1e-10)
+
+
+def test_sparse_sequences_energy_matches_dense(awsem_6u5e):
+    """Sparse batch energy must match dense for multiple random sequences."""
+    model = awsem_6u5e
+    spm = potts_model_dense_to_sparse(model.potts_model, model.mask)
+    rng = np.random.default_rng(42)
+    _AA = '-ACDEFGHIKLMNPQRSTVWY'
+    seqs = [''.join(rng.choice(list(_AA[1:]), size=len(model.sequence))) for _ in range(5)]
+
+    from frustratometer.frustration.frustration import compute_sequences_energy
+    dense = compute_sequences_energy(seqs, model.potts_model, model.mask)
+    sparse = compute_sequences_energy_sparse(seqs, spm)
+    np.testing.assert_allclose(sparse, dense, rtol=1e-10)
+
+    # Also test split mode
+    dense_split = compute_sequences_energy(seqs, model.potts_model, model.mask, split_couplings_and_fields=True)
+    sparse_split = compute_sequences_energy_sparse(seqs, spm, split_couplings_and_fields=True)
+    np.testing.assert_allclose(sparse_split, dense_split, rtol=1e-10)
+
+
 if __name__ == "__main__":
     pytest.main()

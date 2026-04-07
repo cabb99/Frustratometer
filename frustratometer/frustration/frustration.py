@@ -1773,3 +1773,125 @@ def build_contact_lookup(contact_i: np.ndarray, contact_j: np.ndarray, L: int) -
         current[p] += 1
 
     return lookup_offsets, lookup_partners, lookup_indices
+
+
+def compute_native_energy_sparse(seq: str,
+                                 sparse_potts_model: dict,
+                                 ignore_gap_couplings: bool = False,
+                                 ignore_gap_fields: bool = False) -> float:
+    """
+    Compute the native energy using a sparse Potts model.
+
+    Equivalent to ``compute_native_energy`` but avoids materializing the full
+    (L, L) coupling matrix.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model with keys 'h', 'J', 'contact_i', 'contact_j', 'L'.
+    ignore_gap_couplings : bool
+        Zero out couplings involving gap positions. Default False.
+    ignore_gap_fields : bool
+        Zero out fields at gap positions. Default False.
+
+    Returns
+    -------
+    energy : float
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+
+    h = -sparse_potts_model['h'][np.arange(L), seq_index].copy()
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    J_sparse = sparse_potts_model['J']
+
+    j_vals = -J_sparse[np.arange(len(contact_i)), seq_index[contact_i], seq_index[contact_j]]
+
+    gap_indices = np.array([i for i, aa in enumerate(seq) if aa == '-'])
+
+    if ignore_gap_fields and len(gap_indices) > 0:
+        h[gap_indices] = 0.0
+
+    if ignore_gap_couplings and len(gap_indices) > 0:
+        gap_set = set(gap_indices)
+        gap_mask = np.array([contact_i[k] in gap_set or contact_j[k] in gap_set for k in range(len(contact_i))])
+        j_vals[gap_mask] = 0.0
+
+    energy = h.sum() + j_vals.sum() / 2
+    return energy
+
+
+def compute_couplings_energy_sparse(seq: str,
+                                    sparse_potts_model: dict,
+                                    ignore_couplings_of_gaps: bool = False) -> float:
+    """
+    Compute the couplings energy using a sparse Potts model.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    ignore_couplings_of_gaps : bool
+        Zero out couplings involving gap positions. Default False.
+
+    Returns
+    -------
+    couplings_energy : float
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    J_sparse = sparse_potts_model['J']
+
+    j_vals = -J_sparse[np.arange(len(contact_i)), seq_index[contact_i], seq_index[contact_j]]
+
+    if ignore_couplings_of_gaps:
+        gap_indices = set(i for i, aa in enumerate(seq) if aa == '-')
+        if gap_indices:
+            gap_mask = np.array([contact_i[k] in gap_indices or contact_j[k] in gap_indices for k in range(len(contact_i))])
+            j_vals[gap_mask] = 0.0
+
+    return j_vals.sum() / 2
+
+
+def compute_sequences_energy_sparse(seqs: list,
+                                    sparse_potts_model: dict,
+                                    split_couplings_and_fields: bool = False) -> np.ndarray:
+    """
+    Compute energies for multiple sequences using a sparse Potts model.
+
+    Parameters
+    ----------
+    seqs : list of str
+        Amino acid sequences (all length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    split_couplings_and_fields : bool
+        If True, return (2, N_seqs) array of [fields, couplings]. Default False.
+
+    Returns
+    -------
+    energy : np.ndarray (N_seqs,) or (2, N_seqs)
+    """
+    seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in seqs])
+    N_seqs, L = seq_index.shape
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    J_sparse = sparse_potts_model['J']
+
+    h = -sparse_potts_model['h'][np.arange(L)[np.newaxis, :], seq_index]  # (N_seqs, L)
+    j_vals = -J_sparse[np.arange(len(contact_i)),
+                        seq_index[:, contact_i],
+                        seq_index[:, contact_j]]  # (N_seqs, N_contacts)
+
+    if split_couplings_and_fields:
+        return np.array([h.sum(axis=1), j_vals.sum(axis=1) / 2])
+    else:
+        return h.sum(axis=1) + j_vals.sum(axis=1) / 2
+
+    return lookup_offsets, lookup_partners, lookup_indices

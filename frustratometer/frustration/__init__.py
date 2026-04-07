@@ -24,4 +24,7 @@ __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'co
           'compute_mask_sparse',
           'potts_model_dense_to_sparse',
           'potts_model_sparse_to_dense',
-          'build_contact_lookup']
+          'build_contact_lookup',
+          'compute_native_energy_sparse',
+          'compute_couplings_energy_sparse',
+          'compute_sequences_energy_sparse']

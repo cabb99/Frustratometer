@@ -41,6 +41,21 @@ class Frustratometer:
     #     self._native_energy = None
     #     self._decoy_fluctuation = {}
 
+    def _ensure_dense_potts_model(self):
+        """Reconstruct dense J from sparse potts model if needed."""
+        if self._potts_model.get('J') is None and getattr(self, 'sparse_potts_model', None) is not None:
+            self._potts_model['J'] = frustration.potts_model_sparse_to_dense(self.sparse_potts_model)['J']
+
+    @property
+    def potts_model(self):
+        """Access the Potts model dict with auto-reconstruction of J from sparse if needed."""
+        self._ensure_dense_potts_model()
+        return self._potts_model
+
+    @potts_model.setter
+    def potts_model(self, value):
+        self._potts_model = value
+
     def native_energy(self,sequence:str = None,ignore_couplings_of_gaps:bool=False,ignore_fields_of_gaps:bool = False) -> float:
         """
         Calculates the native energy of the protein sequence.
@@ -61,9 +76,14 @@ class Frustratometer:
         if sequence is None:
             sequence=self.sequence
         else:
+            if getattr(self, 'sparse_potts_model', None) is not None:
+                return frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
             return frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
         if not self._native_energy:
-            self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
+            if getattr(self, 'sparse_potts_model', None) is not None:
+                self._native_energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
+            else:
+                self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
         energy_value=self._native_energy
         return energy_value
 
@@ -89,7 +109,10 @@ class Frustratometer:
         output (if split_couplings_and_fields==True): np.array
             Array containing computed fields and couplings energies of the protein sequences. 
         """
-        output=frustration.compute_sequences_energy(sequences, self.potts_model, self.mask, split_couplings_and_fields)
+        if getattr(self, 'sparse_potts_model', None) is not None:
+            output=frustration.compute_sequences_energy_sparse(sequences, self.sparse_potts_model, split_couplings_and_fields)
+        else:
+            output=frustration.compute_sequences_energy(sequences, self.potts_model, self.mask, split_couplings_and_fields)
         return output
 
     def fields_energy(self, sequence:str = None, ignore_fields_of_gaps:bool = False) -> float:
@@ -114,7 +137,7 @@ class Frustratometer:
         """
         if sequence is None:
             sequence=self.sequence
-        fields_energy=frustration.compute_fields_energy(sequence, self.potts_model,ignore_fields_of_gaps)
+        fields_energy=frustration.compute_fields_energy(sequence, self._potts_model,ignore_fields_of_gaps)
         return fields_energy
 
     def couplings_energy(self, sequence:str = None,ignore_couplings_of_gaps:bool = False) -> float:
@@ -139,7 +162,10 @@ class Frustratometer:
         """
         if sequence is None:
             sequence=self.sequence
-        couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps)
+        if getattr(self, 'sparse_potts_model', None) is not None:
+            couplings_energy=frustration.compute_couplings_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps)
+        else:
+            couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps)
         return couplings_energy
         
     def decoy_fluctuation(self, sequence:str = None,kind:str = 'singleresidue',mask:np.array = None) -> np.array:
@@ -202,13 +228,24 @@ class Frustratometer:
 
     def scores(self):
         """
-        Computes accuracy of DCA predicted contacts by calculating contact scores based on the Frobenius norm
+        Computes accuracy of DCA predicted contacts by calculating contact scores based on the Frobenius norm.
+
+        Note: In sparse mode, J is reconstructed from contacts only. Non-contact
+        couplings are zero, so scores at those positions will be zero. For full
+        DCA contact prediction, construct the model with ``sparse=False``.
 
         Returns
         -------
         corr_norm : np.array
             Contact score matrix (N x N)
         """
+        if getattr(self, 'sparse_potts_model', None) is not None:
+            logging.warning(
+                "scores() called on a sparse model: non-contact couplings are "
+                "zero in sparse mode, so scores may differ from the full model. "
+                "Use sparse=False for accurate DCA contact prediction scores."
+            )
+        self._ensure_dense_potts_model()
         return frustration.compute_scores(self.potts_model)
 
     def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0) -> np.array:
