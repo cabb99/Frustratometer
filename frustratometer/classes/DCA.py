@@ -31,6 +31,40 @@ class DCA(Frustratometer):
     or "from_hmmer_alignment" methods.
     """
 
+    def __init__(self):
+        self.structure = None
+        self._chain = None
+        self._sequence = None
+        self._pdb_file = None
+        self._sequence_cutoff = None
+        self._distance_cutoff = None
+        self._distance_matrix_method = None
+        self._potts_model_file = None
+        self._potts_model = {}
+        self.sparse_potts_model = None
+        self._elec_data = None
+        self.mapped_distance_matrix = None
+        self.distance_matrix = None
+        self.chain_breaks = None
+        self.mask = None
+        self.minimally_frustrated_threshold = 1
+        self.aa_freq = None
+        self.contact_freq = None
+        self._native_energy = None
+        self._decoy_fluctuation = {}
+        self.reformat_potts_model = False
+        self.init_index_shift = None
+        self.full_to_aligned_index_dict = None
+        self.filtered_aligned_sequence = None
+        self.aligned_sequence = None
+        self.alignment_output_file_name = None
+        self.filtered_alignment_output_file_name = None
+        self.DCA_format = None
+        self.alignment_file = None
+        self.filtered_alignment_file = None
+        self.query_sequence_database_file = None
+        self.PFAM_ID = None
+
     @staticmethod
     def _compute_potts_model_from_alignment(filtered_alignment_file: Union[Path, str], DCA_format: str) -> dict:
         """Compute a Potts model from a filtered alignment using pyDCA backends."""
@@ -47,6 +81,60 @@ class DCA(Frustratometer):
                 "Install it (for example: pip install \"git+https://github.com/cabb99/pydca.git\") or use from_potts_model_file/from_pottsmodel "
                 "with a precomputed Potts model."
             ) from exc
+
+    def _reformat_potts_model(self, potts_model: dict):
+        """Transpose h and reshape familycouplings into J if reformat_potts_model is set."""
+        if self.reformat_potts_model:
+            potts_model["h"] = potts_model["h"].T
+            potts_model["J"] = potts_model["familycouplings"].reshape(
+                int(len(self.filtered_aligned_sequence)), 21,
+                int(len(self.filtered_aligned_sequence)), 21
+            ).transpose(0, 2, 1, 3)
+
+    def _apply_sparse_potts_model(self, potts_model: dict, sparse: bool):
+        """Store potts_model in sparse or dense form. DCA has no electrostatics."""
+        can_sparse = (sparse
+                      and self._distance_cutoff is not None
+                      and 'J' in potts_model
+                      and potts_model['J'].shape[0] == self.mask.shape[0])
+        if can_sparse:
+            self.sparse_potts_model = frustration.potts_model_dense_to_sparse(potts_model, self.mask)
+            self._potts_model = {'h': potts_model['h'], 'J': None}
+        else:
+            self._potts_model = potts_model
+            self.sparse_potts_model = None
+        self._elec_data = None
+
+    def _init_attributes(self, pdb_structure, sequence_cutoff, distance_cutoff):
+        """Initialize attributes common to all factory methods."""
+        self.structure = pdb_structure.structure
+        self._chain = pdb_structure.chain
+        self._sequence = pdb_structure.sequence
+        self._pdb_file = pdb_structure.pdb_file
+        self._sequence_cutoff = sequence_cutoff
+        self._distance_cutoff = distance_cutoff
+        self.mapped_distance_matrix = pdb_structure.mapped_distance_matrix
+        self.distance_matrix = self.mapped_distance_matrix
+        self.chain_breaks = getattr(pdb_structure, 'chain_breaks', None)
+
+    def _init_from_alignment(self, pdb_structure, alignment_output_file_name,
+                             filtered_alignment_output_file_name, DCA_format,
+                             sequence_cutoff, distance_cutoff):
+        """Initialize for alignment-based factory methods (pfam/hmmer)."""
+        self._init_attributes(pdb_structure, sequence_cutoff, distance_cutoff)
+        self.alignment_output_file_name = alignment_output_file_name
+        self.filtered_alignment_output_file_name = filtered_alignment_output_file_name
+        self.DCA_format = DCA_format
+        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff,
+                                            self.sequence_cutoff, chain_breaks=self.chain_breaks)
+
+    def _finalize_from_alignment(self, sparse):
+        """Compute Potts model from alignment and apply sparse storage."""
+        raw_potts_model = self._compute_potts_model_from_alignment(
+            filtered_alignment_file=self.filtered_alignment_file,
+            DCA_format=self.DCA_format,
+        )
+        self._apply_sparse_potts_model(raw_potts_model, sparse)
 
     # @classmethod
     # def from_distance_matrix(cls,
@@ -101,7 +189,8 @@ class DCA(Frustratometer):
                               potts_model_file: Union[Path,str] = None,
                               reformat_potts_model: bool = False,
                               sequence_cutoff: Union[float, None] = None,
-                              distance_cutoff: Union[float, None] = None)->object:
+                              distance_cutoff: Union[float, None] = None,
+                              sparse: bool = True)->object:
 
         """
         Generate DCA object from previously generated potts model file.
@@ -126,54 +215,10 @@ class DCA(Frustratometer):
         -------
         DCA object
         """
-        self = cls()
-
-        # Set initialization variables
-        self.structure=pdb_structure.structure
-        self._chain=pdb_structure.chain
-        self._sequence=pdb_structure.sequence
-        self._pdb_file=pdb_structure.pdb_file
-        self._potts_model_file=potts_model_file
-        self._sequence_cutoff=sequence_cutoff
-        self._distance_cutoff=distance_cutoff
-        self._distance_matrix_method=None
-
-        self.reformat_potts_model=reformat_potts_model
-        self.init_index_shift=pdb_structure.init_index_shift
-
-        self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
-        self.filtered_aligned_sequence=pdb_structure.filtered_aligned_sequence
-        self.aligned_sequence=pdb_structure.aligned_sequence
-
-        self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
-        self.distance_matrix=self.mapped_distance_matrix
-        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
-
-        
-        if self.distance_cutoff==None:
-            example_matrix=np.ones((len(self.filtered_aligned_sequence),len(self.filtered_aligned_sequence)))
-            self.mask = frustration.compute_mask(example_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
-        else:
-            self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
-
-        self.minimally_frustrated_threshold=1
-
-        # Compute fast properties
-        self._potts_model = dca.matlab.load_potts_model(self.potts_model_file)
-        if self.reformat_potts_model:
-            self.potts_model["h"]=self.potts_model["h"].T
-            self.potts_model["J"]= self.potts_model["familycouplings"].reshape(int(len(self.filtered_aligned_sequence)),21,int(len(self.filtered_aligned_sequence)),21).transpose(0,2,1,3)
-
-        if self.filtered_aligned_sequence is not None:
-            self.aa_freq = frustration.compute_aa_freq(self.sequence)
-            self.contact_freq = frustration.compute_contact_freq(self.sequence)
-        else:
-            self.aa_freq = None
-            self.contact_freq = None   
-
-        # Initialize slow properties
-        self._native_energy = None
-        self._decoy_fluctuation = {}
+        potts_model = dca.matlab.load_potts_model(potts_model_file)
+        self = cls.from_pottsmodel(pdb_structure, potts_model, reformat_potts_model,
+                                   sequence_cutoff, distance_cutoff, sparse)
+        self._potts_model_file = potts_model_file
         return self
 
     @classmethod
@@ -181,7 +226,8 @@ class DCA(Frustratometer):
                         potts_model: dict,
                         reformat_potts_model: bool = False,
                         sequence_cutoff: Union[float, None] = None,
-                        distance_cutoff: Union[float, None] = None)->object:
+                        distance_cutoff: Union[float, None] = None,
+                        sparse: bool = True)->object:
         """
         Generate DCA object from previously generated potts model.
 
@@ -206,27 +252,13 @@ class DCA(Frustratometer):
         DCA object
         """
         self = cls()
-
-        # Set initialization variables
-        self.structure=pdb_structure.structure
-        self._chain=pdb_structure.chain
-        self._sequence=pdb_structure.sequence
-        self._pdb_file=pdb_structure.pdb_file
-        self._potts_model=potts_model
-        self._sequence_cutoff=sequence_cutoff
-        self._distance_cutoff=distance_cutoff
-        self._distance_matrix_method=None
+        self._init_attributes(pdb_structure, sequence_cutoff, distance_cutoff)
 
         self.reformat_potts_model=reformat_potts_model
         self.init_index_shift=pdb_structure.init_index_shift
-
         self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
         self.filtered_aligned_sequence=pdb_structure.filtered_aligned_sequence
         self.aligned_sequence=pdb_structure.aligned_sequence
-
-        self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
-        self.distance_matrix=self.mapped_distance_matrix
-        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
 
         if self.distance_cutoff==None:
             example_matrix=np.ones((len(self.filtered_aligned_sequence),len(self.filtered_aligned_sequence)))
@@ -234,23 +266,13 @@ class DCA(Frustratometer):
         else:
             self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
-        self.minimally_frustrated_threshold=1
-
-        # Compute fast properties
-        if self.reformat_potts_model:
-            self.potts_model["h"]=self.potts_model["h"].T
-            self.potts_model["J"]= self.potts_model["familycouplings"].reshape(int(len(self.filtered_aligned_sequence)),21,int(len(self.filtered_aligned_sequence)),21).transpose(0,2,1,3)
+        self._reformat_potts_model(potts_model)
+        self._apply_sparse_potts_model(potts_model, sparse)
 
         if self.filtered_aligned_sequence is not None:
             self.aa_freq = frustration.compute_aa_freq(self.sequence)
             self.contact_freq = frustration.compute_contact_freq(self.sequence)
-        else:
-            self.aa_freq = None
-            self.contact_freq = None   
 
-        # Initialize slow properties
-        self._native_energy = None
-        self._decoy_fluctuation = {}
         return self
 
     @classmethod
@@ -260,7 +282,8 @@ class DCA(Frustratometer):
                             PFAM_ID: str = None,
                             DCA_format : str = "plmDCA",
                             sequence_cutoff: Union[float, None] = None,
-                            distance_cutoff: Union[float, None] = None)->object:
+                            distance_cutoff: Union[float, None] = None,
+                            sparse: bool = True)->object:
         """
         Generate DCA object from a locally downloaded PFAM alignment file that will be used to generate a Potts Model file.
 
@@ -286,26 +309,9 @@ class DCA(Frustratometer):
         DCA object
         """
         self = cls()
-
-        self.structure=pdb_structure.structure
-        self._chain=pdb_structure.chain
-        self._sequence=pdb_structure.sequence
-        self._pdb_file=pdb_structure.pdb_file
-        self._sequence_cutoff=sequence_cutoff
-        self._distance_cutoff=distance_cutoff
-        self._distance_matrix_method=None
-
-        self.alignment_output_file_name = alignment_output_file_name
-        self.filtered_alignment_output_file_name = filtered_alignment_output_file_name
-
-        self.DCA_format=DCA_format
-        
-        self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
-        self.distance_matrix=self.mapped_distance_matrix
-        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
-        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
-
-        self.minimally_frustrated_threshold=1
+        self._init_from_alignment(pdb_structure, alignment_output_file_name,
+                                  filtered_alignment_output_file_name, DCA_format,
+                                  sequence_cutoff, distance_cutoff)
 
         if PFAM_ID==None:
             self.PFAM_ID=map.get_pfamID(self.pdb_file,self.chain)
@@ -314,18 +320,7 @@ class DCA(Frustratometer):
 
         self.alignment_file=pfam.download_aligment(self.PFAM_ID,self.alignment_output_file_name)
         self.filtered_alignment_file=filter.filter_alignment(self.alignment_output_file_name,self.filtered_alignment_output_file_name)
-        
-        self.potts_model = cls._compute_potts_model_from_alignment(
-            filtered_alignment_file=self.filtered_alignment_file,
-            DCA_format=self.DCA_format,
-        )
-
-        self.aa_freq = None
-        self.contact_freq = None 
-
-        # Initialize slow properties
-        self._native_energy = None
-        self._decoy_fluctuation = {}
+        self._finalize_from_alignment(sparse)
         return self
 
     @classmethod
@@ -335,7 +330,8 @@ class DCA(Frustratometer):
                             query_sequence_database_file : Union[Path,str],
                             DCA_format : str = "plmDCA",
                             sequence_cutoff: Union[float, None] = None,
-                            distance_cutoff: Union[float, None] = None)->object:
+                            distance_cutoff: Union[float, None] = None,
+                            sparse: bool = True)->object:
         """
         Generate DCA object from a locally generated jackhmmer alignment file that will be used to generate a Potts Model file.
         The protein sequence of the structure object will be used as the query sequence by the Jackhmmer algorithm.
@@ -362,42 +358,14 @@ class DCA(Frustratometer):
         DCA object
         """
         self = cls()
-
-        self.structure=pdb_structure.structure
-        self._chain=pdb_structure.chain
-        self._sequence=pdb_structure.sequence
-        self._pdb_file=pdb_structure.pdb_file
-        self._sequence_cutoff=sequence_cutoff
-        self._distance_cutoff=distance_cutoff
-        self._distance_matrix_method=None
-
-        self.alignment_output_file_name = alignment_output_file_name
-        self.filtered_alignment_output_file_name = filtered_alignment_output_file_name
+        self._init_from_alignment(pdb_structure, alignment_output_file_name,
+                                  filtered_alignment_output_file_name, DCA_format,
+                                  sequence_cutoff, distance_cutoff)
         self.query_sequence_database_file=query_sequence_database_file
-
-        self.DCA_format=DCA_format
-        
-        self.mapped_distance_matrix=pdb_structure.mapped_distance_matrix
-        self.distance_matrix=self.mapped_distance_matrix
-        self.chain_breaks=getattr(pdb_structure, 'chain_breaks', None)
-        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
-
-        self.minimally_frustrated_threshold=1
 
         self.alignment_file=align.jackhmmer(self.sequence,self.alignment_output_file_name,self.query_sequence_database_file)
         self.filtered_alignment_file=filter.filter_alignment(self.alignment_output_file_name,self.filtered_alignment_output_file_name)
-
-        self.potts_model = cls._compute_potts_model_from_alignment(
-            filtered_alignment_file=self.filtered_alignment_file,
-            DCA_format=self.DCA_format,
-        )
-
-        self.aa_freq = None
-        self.contact_freq = None 
-
-        # Initialize slow properties
-        self._native_energy = None
-        self._decoy_fluctuation = {}
+        self._finalize_from_alignment(sparse)
         return self
 
 
@@ -557,6 +525,7 @@ class DCA(Frustratometer):
 
     @property
     def potts_model(self):
+        self._ensure_dense_potts_model()
         return self._potts_model
 
     @potts_model.setter

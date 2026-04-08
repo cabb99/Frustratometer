@@ -389,7 +389,7 @@ def test_scores():
     structure=frustratometer.Structure(pdb_file,chain)
     potts_model_file = 'examples/data/PottsModel1cyoA.mat'
     model = frustratometer.DCA.from_potts_model_file(structure, potts_model_file, distance_cutoff=4,
-                                                                sequence_cutoff=0)
+                                                                sequence_cutoff=0, sparse=False)
     assert np.round(model.scores()[30, 40], 5) == -0.02234
 
 #####
