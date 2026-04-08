@@ -114,15 +114,26 @@ def repair_pdbs(jobs, pdb_directory: Path = None) -> list:
         pdb_directory = Path(tempfile.gettempdir())
     pdb_directory = Path(pdb_directory)
 
-    worker_args = []
+    processes = []
     cleaned_paths = []
     for pdb_file, chain in jobs:
         pdb_file = Path(pdb_file)
         cleaned = pdb_directory / f"{pdb_file.stem}_cleaned.pdb"
         cleaned_paths.append(cleaned)
-        worker_args.append((str(pdb_file), chain, str(cleaned)))
+        p = multiprocessing.Process(
+            target=_repair_worker,
+            args=(str(pdb_file), chain, str(cleaned)),
+        )
+        processes.append((p, pdb_file))
 
-    with multiprocessing.Pool() as pool:
-        pool.starmap(_repair_worker, worker_args)
+    for p, _ in processes:
+        p.start()
+
+    for p, pdb_file in processes:
+        p.join()
+        if p.exitcode != 0:
+            raise RuntimeError(
+                f"PDB repair failed for {pdb_file.name} (exit code {p.exitcode})"
+            )
 
     return cleaned_paths
