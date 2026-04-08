@@ -371,7 +371,7 @@ def model(request):
     native_pdb = "tests/data/1bfz.pdb"
     distance_cutoff_contact, min_sequence_separation_contact, k_electrostatics = request.param
     structure = Structure.full_pdb(native_pdb, "A")
-    model = AWSEM(structure, distance_cutoff_contact=distance_cutoff_contact, min_sequence_separation_contact=min_sequence_separation_contact, expose_indicator_functions=True, k_electrostatics=k_electrostatics)   
+    model = AWSEM(structure, distance_cutoff_contact=distance_cutoff_contact, min_sequence_separation_contact=min_sequence_separation_contact, expose_indicator_functions=True, k_electrostatics=k_electrostatics, sparse=False)   
     return model
 
 @pytest.mark.parametrize("reduced_alphabet,use_numba", [

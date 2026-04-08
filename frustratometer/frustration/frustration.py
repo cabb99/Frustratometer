@@ -2203,7 +2203,8 @@ def build_elec_data(distance_matrix: np.ndarray,
                     sparse_potts_model: dict,
                     k_electrostatics: float = 17.3636,
                     screening_length: float = 10.0,
-                    min_sequence_separation_electrostatics: int = 1) -> dict:
+                    min_sequence_separation_electrostatics: int = 1,
+                    chain_breaks: list = None) -> dict:
     """
     Precompute all electrostatic data needed for sparse corrections.
 
@@ -2250,7 +2251,8 @@ def build_elec_data(distance_matrix: np.ndarray,
     # Apply electrostatic sequence separation
     elec_mask = compute_mask(distance_matrix,
                              maximum_contact_distance=None,
-                             minimum_sequence_separation=min_sequence_separation_electrostatics)
+                             minimum_sequence_separation=min_sequence_separation_electrostatics,
+                             chain_breaks=chain_breaks)
     indicator = indicator * elec_mask
 
     ci = sparse_potts_model['contact_i']
