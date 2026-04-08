@@ -93,11 +93,10 @@ class DCA(Frustratometer):
 
     def _apply_sparse_potts_model(self, potts_model: dict, sparse: bool):
         """Store potts_model in sparse or dense form. DCA has no electrostatics."""
-        can_sparse = (sparse
-                      and self._distance_cutoff is not None
-                      and 'J' in potts_model
-                      and potts_model['J'].shape[0] == self.mask.shape[0])
-        if can_sparse:
+        if (sparse
+                and self._distance_cutoff is not None
+                and 'J' in potts_model
+                and potts_model['J'].shape[0] == self.mask.shape[0]):
             self.sparse_potts_model = frustration.potts_model_dense_to_sparse(potts_model, self.mask)
             self._potts_model = {'h': potts_model['h'], 'J': None}
         else:

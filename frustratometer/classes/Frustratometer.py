@@ -47,6 +47,11 @@ class Frustratometer:
             self._potts_model['J'] = frustration.potts_model_sparse_to_dense(self.sparse_potts_model)['J']
 
     @property
+    def _is_sparse(self):
+        """True when a sparse Potts model is available."""
+        return getattr(self, 'sparse_potts_model', None) is not None
+
+    @property
     def potts_model(self):
         """Access the Potts model dict with auto-reconstruction of J from sparse if needed."""
         self._ensure_dense_potts_model()
@@ -76,14 +81,14 @@ class Frustratometer:
         if sequence is None:
             sequence=self.sequence
         else:
-            if getattr(self, 'sparse_potts_model', None) is not None:
+            if self._is_sparse:
                 energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
                 if getattr(self, '_elec_data', None) is not None:
                     energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
                 return energy
             return frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
         if not self._native_energy:
-            if getattr(self, 'sparse_potts_model', None) is not None:
+            if self._is_sparse:
                 self._native_energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
                 if getattr(self, '_elec_data', None) is not None:
                     self._native_energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
@@ -114,7 +119,7 @@ class Frustratometer:
         output (if split_couplings_and_fields==True): np.array
             Array containing computed fields and couplings energies of the protein sequences. 
         """
-        if getattr(self, 'sparse_potts_model', None) is not None:
+        if self._is_sparse:
             output=frustration.compute_sequences_energy_sparse(sequences, self.sparse_potts_model, split_couplings_and_fields)
         else:
             output=frustration.compute_sequences_energy(sequences, self.potts_model, self.mask, split_couplings_and_fields)
@@ -167,7 +172,7 @@ class Frustratometer:
         """
         if sequence is None:
             sequence=self.sequence
-        if getattr(self, 'sparse_potts_model', None) is not None:
+        if self._is_sparse:
             couplings_energy=frustration.compute_couplings_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps)
             if getattr(self, '_elec_data', None) is not None:
                 couplings_energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
@@ -200,9 +205,8 @@ class Frustratometer:
         if not isinstance(mask, np.ndarray):
             mask=self.mask
         # Use sparse path when available
-        _use_sparse = getattr(self, 'sparse_potts_model', None) is not None
-        _elec_data = getattr(self, '_elec_data', None)
-        if _use_sparse:
+        if self._is_sparse:
+            _elec_data = getattr(self, '_elec_data', None)
             if kind == 'singleresidue':
                 fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
                 if _elec_data is not None:
@@ -270,7 +274,7 @@ class Frustratometer:
         corr_norm : np.array
             Contact score matrix (N x N)
         """
-        if getattr(self, 'sparse_potts_model', None) is not None:
+        if self._is_sparse:
             logging.warning(
                 "scores() called on a sparse model: non-contact couplings are "
                 "zero in sparse mode, so scores may differ from the full model. "
@@ -316,7 +320,7 @@ class Frustratometer:
             if aa_freq is None:
                 aa_freq = self.contact_freq
             # Sparse decoy fluctuation has shape (N_contacts, 21, 21) — use sparse pair frustration, then densify
-            _use_sparse = getattr(self, 'sparse_potts_model', None) is not None
+            _use_sparse = self._is_sparse
             if _use_sparse and decoy_fluctuation.ndim == 3:
                 sparse_frust = frustration.compute_pair_frustration_sparse(decoy_fluctuation, aa_freq, correction)
                 frustration_values = frustration.sparse_frustration_to_dense(

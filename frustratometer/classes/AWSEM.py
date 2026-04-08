@@ -323,11 +323,19 @@ class AWSEM(Frustratometer):
         # Indicator exposure
         if expose:
             self._start_indicator_exposure(p)
-            self.indicators.append(theta_c)
-            self.indicators.append(thetaII_c * sigma_protein_c)
-            self.indicators.append(thetaII_c * sigma_water_c)
-            self.indicator_contact_i = ci
-            self.indicator_contact_j = cj
+            # Always expose dense (L, L) indicators for optimization compatibility
+            L = self.N
+            dense_theta = np.zeros((L, L))
+            dense_theta[ci, cj] = theta_c
+            dense_protein = np.zeros((L, L))
+            dense_protein[ci, cj] = thetaII_c * sigma_protein_c
+            dense_water = np.zeros((L, L))
+            dense_water[ci, cj] = thetaII_c * sigma_water_c
+            self.indicators.append(dense_theta)
+            self.indicators.append(dense_protein)
+            self.indicators.append(dense_water)
+            self.indicator_contact_i = None
+            self.indicator_contact_j = None
             if p.k_electrostatics != 0:
                 electrostatics_mask = frustration.compute_mask(
                     self.distance_matrix, maximum_contact_distance=None,

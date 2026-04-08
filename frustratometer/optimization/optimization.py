@@ -17,6 +17,7 @@ from frustratometer.utils.format_time import format_time
 
 _AA = '-ACDEFGHIKLMNPQRSTVWY'
 
+
 def index_to_sequence(seq_index, alphabet):
     """Converts sequence index array back to a sequence string."""
     seq = ''.join([alphabet[index] for index in seq_index])
@@ -365,6 +366,217 @@ class AwsemEnergy(EnergyTerm):
         energy=self.compute_energy(seq_index)
         assert np.isclose(energy,expected_energy), f"Expected energy {expected_energy} but got {energy}"
 
+
+class AwsemEnergySparse(EnergyTerm):
+    """AWSEM energy term using sparse Potts model storage.
+
+    Equivalent to AwsemEnergy but uses the sparse_potts_model (N_contacts, Q, Q)
+    and CSR-like contact lookup arrays instead of the dense (L, L, Q, Q) J matrix.
+    #TODO: Need better tests
+
+    Requires a model created with ``sparse=True``.
+    """
+    def __init__(self, model: Frustratometer, alphabet: str = _AA, use_numba: bool = True):
+        self._use_numba = use_numba
+        self.model = model
+        self.alphabet = alphabet
+
+        spm = getattr(model, 'sparse_potts_model', None)
+        if spm is None:
+            raise ValueError(
+                "AwsemEnergySparse requires a model created with sparse=True. "
+                "Use AwsemEnergy for dense models."
+            )
+
+        self.model_h = model.potts_model['h']
+        self.J_sparse = spm['J']           # (N_contacts, Q, Q)
+        self.contact_i = spm['contact_i']  # (N_contacts,)
+        self.contact_j = spm['contact_j']  # (N_contacts,)
+        self.L = spm['L']
+
+        from frustratometer.frustration.frustration import build_contact_lookup
+        offsets, partners, indices = build_contact_lookup(self.contact_i, self.contact_j, self.L)
+        self.lookup_offsets = offsets
+        self.lookup_partners = partners
+        self.lookup_indices = indices
+
+        # Electrostatic data (if model has it)
+        elec_data = getattr(model, '_elec_data', None)
+        if elec_data is not None:
+            from frustratometer.frustration.frustration import _CHARGES
+            self.indicator_masked = elec_data['indicator'] * model.mask  # (L, L)
+            self.elec_charges = _CHARGES.copy()  # (21,) in DCA alphabet
+        else:
+            self.indicator_masked = None
+            self.elec_charges = None
+
+        if alphabet != _AA:
+            reindex = [_AA.index(aa) for aa in alphabet]
+            self.model_h = self.model_h[:, reindex]
+            self.J_sparse = self.J_sparse[:, reindex][:, :, reindex]
+            if self.elec_charges is not None:
+                self.elec_charges = self.elec_charges[reindex]
+
+        self.initialize_functions()
+
+    def initialize_functions(self):
+        model_h = self.model_h.copy()
+        J_sparse = self.J_sparse.copy()
+        contact_i = self.contact_i.copy()
+        contact_j = self.contact_j.copy()
+        offsets = self.lookup_offsets.copy()
+        partners = self.lookup_partners.copy()
+        indices = self.lookup_indices.copy()
+        has_elec = self.indicator_masked is not None
+        indicator_masked = self.indicator_masked.copy() if has_elec else np.empty((0, 0))
+        elec_charges = self.elec_charges.copy() if has_elec else np.empty(0)
+
+        def compute_energy(seq_index: np.ndarray) -> float:
+            L = len(seq_index)
+            energy_h = 0.0
+            for i in range(L):
+                energy_h -= model_h[i, seq_index[i]]
+
+            energy_J = 0.0
+            N = len(contact_i)
+            for k in range(N):
+                i = contact_i[k]
+                j = contact_j[k]
+                energy_J -= J_sparse[k, seq_index[i], seq_index[j]]
+
+            energy = energy_h + energy_J / 2
+
+            # Electrostatic contribution
+            if has_elec:
+                energy_elec = 0.0
+                for i in range(L):
+                    qi = elec_charges[seq_index[i]]
+                    if qi == 0.0:
+                        continue
+                    for j in range(L):
+                        qj = elec_charges[seq_index[j]]
+                        energy_elec -= indicator_masked[i, j] * qi * qj
+                energy += energy_elec / 2
+
+            return energy
+
+        def compute_denergy_mutation(seq_index: np.ndarray, pos: int, aa_new: int) -> float:
+            aa_old = seq_index[pos]
+            if aa_old == aa_new:
+                return 0.0
+
+            # Fields contribution
+            delta = -model_h[pos, aa_new] + model_h[pos, aa_old]
+
+            # Couplings: iterate over contacts involving pos
+            start = offsets[pos]
+            end = offsets[pos + 1]
+            for idx in range(start, end):
+                k = indices[idx]
+                nbr = partners[idx]
+                aa_nbr = seq_index[nbr]
+                if contact_i[k] == pos:
+                    delta += J_sparse[k, aa_old, aa_nbr] - J_sparse[k, aa_new, aa_nbr]
+                else:
+                    delta += J_sparse[k, aa_nbr, aa_old] - J_sparse[k, aa_nbr, aa_new]
+
+            # Electrostatic mutation correction
+            if has_elec:
+                dq = elec_charges[aa_new] - elec_charges[aa_old]
+                if dq != 0.0:
+                    L = len(seq_index)
+                    phi_pos = 0.0
+                    for j in range(L):
+                        phi_pos += indicator_masked[pos, j] * elec_charges[seq_index[j]]
+                    delta -= dq * phi_pos
+
+            return delta
+
+        def compute_denergy_swap(seq_index: np.ndarray, pos1: int, pos2: int) -> float:
+            aa1_old = seq_index[pos1]
+            aa2_old = seq_index[pos2]
+            if aa1_old == aa2_old:
+                return 0.0
+
+            aa1_new = aa2_old  # pos1 gets pos2's aa
+            aa2_new = aa1_old  # pos2 gets pos1's aa
+
+            delta = 0.0
+            # Fields
+            delta -= model_h[pos1, aa1_new] - model_h[pos1, aa1_old]
+            delta -= model_h[pos2, aa2_new] - model_h[pos2, aa2_old]
+
+            # Couplings for pos1
+            start1 = offsets[pos1]
+            end1 = offsets[pos1 + 1]
+            for idx in range(start1, end1):
+                k = indices[idx]
+                nbr = partners[idx]
+                if nbr == pos2:
+                    continue  # handled separately below
+                aa_nbr = seq_index[nbr]
+                if contact_i[k] == pos1:
+                    delta += J_sparse[k, aa1_old, aa_nbr] - J_sparse[k, aa1_new, aa_nbr]
+                else:
+                    delta += J_sparse[k, aa_nbr, aa1_old] - J_sparse[k, aa_nbr, aa1_new]
+
+            # Couplings for pos2
+            start2 = offsets[pos2]
+            end2 = offsets[pos2 + 1]
+            for idx in range(start2, end2):
+                k = indices[idx]
+                nbr = partners[idx]
+                if nbr == pos1:
+                    continue  # handled separately below
+                aa_nbr = seq_index[nbr]
+                if contact_i[k] == pos2:
+                    delta += J_sparse[k, aa2_old, aa_nbr] - J_sparse[k, aa2_new, aa_nbr]
+                else:
+                    delta += J_sparse[k, aa_nbr, aa2_old] - J_sparse[k, aa_nbr, aa2_new]
+
+            # Direct interaction between pos1 and pos2
+            start = offsets[pos1]
+            end = offsets[pos1 + 1]
+            for idx in range(start, end):
+                k = indices[idx]
+                nbr = partners[idx]
+                if nbr == pos2:
+                    if contact_i[k] == pos1:
+                        delta += J_sparse[k, aa1_old, aa2_old] - J_sparse[k, aa1_new, aa2_new]
+                    else:
+                        delta += J_sparse[k, aa2_old, aa1_old] - J_sparse[k, aa2_new, aa1_new]
+                    break
+
+            # Electrostatic swap correction
+            if has_elec:
+                dq1 = elec_charges[aa1_new] - elec_charges[aa1_old]
+                dq2 = elec_charges[aa2_new] - elec_charges[aa2_old]
+                if dq1 != 0.0 or dq2 != 0.0:
+                    L = len(seq_index)
+                    phi1 = 0.0
+                    phi2 = 0.0
+                    for j in range(L):
+                        qj = elec_charges[seq_index[j]]
+                        phi1 += indicator_masked[pos1, j] * qj
+                        phi2 += indicator_masked[pos2, j] * qj
+                    delta -= dq1 * phi1 + dq2 * phi2
+                    # Correct double-counting: both positions change simultaneously,
+                    # but each phi assumed the other kept its old charge.
+                    delta -= indicator_masked[pos1, pos2] * dq1 * dq2
+
+            return delta
+
+        self.compute_energy = compute_energy
+        self.compute_denergy_mutation = compute_denergy_mutation
+        self.compute_denergy_swap = compute_denergy_swap
+
+    def regression_test(self):
+        expected_energy = self.model.native_energy()
+        seq_index = sequence_to_index(self.model.sequence, alphabet=self.alphabet)
+        energy = self.compute_energy(seq_index)
+        assert np.isclose(energy, expected_energy), f"Expected energy {expected_energy} but got {energy}"
+
+
 class AwsemEnergyAverage(EnergyTerm):   
     def __init__(self, model:Frustratometer, use_numba=True, alphabet=_AA):
         self._use_numba=use_numba
@@ -373,16 +585,16 @@ class AwsemEnergyAverage(EnergyTerm):
         self.reindex_dca=[_AA.index(aa) for aa in alphabet]
         
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = list(model.indicators)
         self.alphabet_size=len(alphabet)
         self.model=model
-        self.model_h = model.potts_model['h'][:,self.reindex_dca]
-        self.model_J = model.potts_model['J'][:,:,self.reindex_dca][:,:,:,self.reindex_dca]
+        self.model_h = model._potts_model['h'][:,self.reindex_dca]
         self.mask = model.mask
         self.indicators1D=np.array([ind for ind in self.indicators if len(ind.shape)==1])
         self.indicators2D=np.array([ind for ind in self.indicators if len(ind.shape)==2])
         #TODO: Fix the gamma matrix to account for elecrostatics
         self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self._is_sparse = model._is_sparse
         
         self.initialize_functions()
     
@@ -483,7 +695,10 @@ class AwsemEnergyAverage(EnergyTerm):
         self.compute_energy = compute_energy
         self.compute_denergy_mutation = denergy_mutation
 
-        awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
+        if self._is_sparse:
+            awsem_energy = AwsemEnergySparse(model=self.model, alphabet=self.alphabet).compute_energy
+        else:
+            awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
 
         def compute_energy_sample(seq_index,n_decoys=100000):
             """ Function to compute the variance of the energy of permutations of a sequence using random shuffling.
@@ -520,16 +735,16 @@ class AwsemEnergyVariance(EnergyTerm):
         self.reindex_dca=[_AA.index(aa) for aa in alphabet]
         
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = list(model.indicators)
         self.alphabet_size=len(alphabet)
         self.model=model
-        self.model_h = model.potts_model['h'][:,self.reindex_dca]
-        self.model_J = model.potts_model['J'][:,:,self.reindex_dca][:,:,:,self.reindex_dca]
+        self.model_h = model._potts_model['h'][:,self.reindex_dca]
         self.mask = model.mask
         self.indicators1D=np.array([ind for ind in self.indicators if len(ind.shape)==1])
         self.indicators2D=np.array([ind for ind in self.indicators if len(ind.shape)==2])
         #TODO: Fix the gamma matrix to account for elecrostatics
         self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self._is_sparse = model._is_sparse
         
         self.initialize_functions()
     
@@ -668,7 +883,10 @@ class AwsemEnergyVariance(EnergyTerm):
         self.compute_energy = compute_energy
         self.compute_denergy_mutation = denergy_mutation
 
-        awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
+        if self._is_sparse:
+            awsem_energy = AwsemEnergySparse(model=self.model, alphabet=self.alphabet).compute_energy
+        else:
+            awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
 
         def compute_energy_sample(seq_index,n_decoys=100000):
             """ Function to compute the variance of the energy of permutations of a sequence using random shuffling.
@@ -707,16 +925,16 @@ class AwsemEnergyStd(EnergyTerm):
         self.n_decoys=n_decoys
         
         assert "indicators" in model.__dict__.keys(), "Indicator functions were not exposed. Initialize AWSEM function with `expose_indicator_functions=True` first."
-        self.indicators = model.indicators
+        self.indicators = list(model.indicators)
         self.alphabet_size=len(alphabet)
         self.model=model
-        self.model_h = model.potts_model['h'][:,self.reindex_dca]
-        self.model_J = model.potts_model['J'][:,:,self.reindex_dca][:,:,:,self.reindex_dca]
+        self.model_h = model._potts_model['h'][:,self.reindex_dca]
         self.mask = model.mask
         self.indicators1D=np.array([ind for ind in self.indicators if len(ind.shape)==1])
         self.indicators2D=np.array([ind for ind in self.indicators if len(ind.shape)==2])
         #TODO: Fix the gamma matrix to account for elecrostatics
         self.gamma = np.concatenate([(a[self.reindex_dca].ravel() if len(a.shape)==1 else a[self.reindex_dca][:,self.reindex_dca].ravel()) for a in model.gamma_array])
+        self._is_sparse = model._is_sparse
         
         self.initialize_functions()
     
@@ -742,7 +960,10 @@ class AwsemEnergyStd(EnergyTerm):
         
         region_means=compute_all_region_means(indicators1D,indicators2D)
         # indicator_means*=0 # Set indicator means to zero to check if the problem is with the mean phi or the inner product matrix
-        awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
+        if self._is_sparse:
+            awsem_energy = AwsemEnergySparse(model=self.model, alphabet=self.alphabet).compute_energy
+        else:
+            awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
 
         if self.n_decoys:
             n_decoys=self.n_decoys
