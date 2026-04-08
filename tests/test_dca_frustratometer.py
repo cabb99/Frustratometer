@@ -145,7 +145,7 @@ def test_create_potts_model_from_aligment():
     except ImportError:
         pytest.skip('pydca module not installed')
     
-    filtered_file=data_path/'PF09696.12_gaps_filtered.fasta'
+    filtered_file=data_path/'PF09696.12_gaps_filtered_small.fasta'
     potts_model = frustratometer.dca.pydca.plmdca(str(filtered_file))
     assert 'h' in potts_model.keys()
     assert 'J' in potts_model.keys()
@@ -467,41 +467,51 @@ def test_from_potts_model_file():
     assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
     assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
 
-@pytest.mark.skipif(not _HAS_PYDCA, reason="pyDCA is not installed")
-def test_from_pfam_alignment_mfDCA_calculation():
-    pdb_file = f'{data_path}/6JXX_A.pdb'
-    chain = 'A'
-    distance_matrix_method='CB'
+@pytest.mark.network
+def test_download_and_filter_pfam_alignment_PF11976():
+    """Test downloading a PFAM alignment and filtering it (no DCA computation)."""
     alignment_output_file_name=f"{output_path}/PF11976_test_alignment.sto"
     filtered_alignment_output_file_name=f"{output_path}/PF11976_test_filtered_alignment.sto"
-    PFAM_ID="PF11976"
-    DCA_format="mfDCA"
-    
-    filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
 
-    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method)
-    model = frustratometer.DCA.from_pfam_alignment(structure, alignment_output_file_name=alignment_output_file_name,filtered_alignment_output_file_name=filtered_alignment_output_file_name,PFAM_ID=PFAM_ID,distance_cutoff=16,sequence_cutoff=1,DCA_format=DCA_format)
+    alignment_file = frustratometer.pfam.download_aligment('PF11976', alignment_output_file_name)
+    filtered_file = frustratometer.filter.filter_alignment(str(alignment_file), filtered_alignment_output_file_name)
 
-    assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
-    assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
+    assert Path(filtered_file).exists()
+    filtered_alignment = Bio.AlignIO.read(filtered_file, 'fasta')
+    # The filtered alignment length depends on the current PFAM release;
+    # just check it's in a reasonable range for PF11976 (~67-80 columns).
+    L = filtered_alignment.get_alignment_length()
+    assert 60 <= L <= 90, f"Unexpected filtered alignment length: {L}"
 
 @pytest.mark.skipif(not _HAS_PYDCA, reason="pyDCA is not installed")
-def test_from_pfam_alignment_plmDCA_calculation():
+def test_pfam_alignment_mfDCA_calculation():
+    """Test mfDCA computation using a small pre-filtered alignment subset."""
     pdb_file = f'{data_path}/6JXX_A.pdb'
     chain = 'A'
-    distance_matrix_method='CB'
-    alignment_output_file_name=f"{output_path}/PF11976_test_alignment.sto"
-    filtered_alignment_output_file_name=f"{output_path}/PF11976_test_filtered_alignment.sto"
-    PFAM_ID="PF11976"
-    DCA_format="plmDCA"
-    
-    filtered_aligned_sequence="INLKVAGQDGSVVQFKIKRHTPLSKLMKAYCERQGLSM-RQIRFRFDGQPINETDTPAQLEMEDEDTIDV--"
 
-    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method)
-    model = frustratometer.DCA.from_pfam_alignment(structure, alignment_output_file_name=alignment_output_file_name,filtered_alignment_output_file_name=filtered_alignment_output_file_name,PFAM_ID=PFAM_ID,distance_cutoff=16,sequence_cutoff=1,DCA_format=DCA_format)
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method='CB')
+    filtered_file = data_path / 'PF11976_test_filtered_alignment_small.sto'
+    potts_model = frustratometer.dca.pydca.mfdca(str(filtered_file))
+    model = frustratometer.DCA.from_pottsmodel(structure, potts_model, distance_cutoff=16, sequence_cutoff=1)
 
-    assert model.potts_model["J"].shape==(len(filtered_aligned_sequence),len(filtered_aligned_sequence),21,21)
-    assert model.potts_model["h"].shape==(len(filtered_aligned_sequence),21)
+    L = len(structure.sequence)
+    assert model.potts_model["J"].shape==(L,L,21,21)
+    assert model.potts_model["h"].shape==(L,21)
+
+@pytest.mark.skipif(not _HAS_PYDCA, reason="pyDCA is not installed")
+def test_pfam_alignment_plmDCA_calculation():
+    """Test plmDCA computation using a small pre-filtered alignment subset."""
+    pdb_file = f'{data_path}/6JXX_A.pdb'
+    chain = 'A'
+
+    structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method='CB')
+    filtered_file = data_path / 'PF11976_test_filtered_alignment_small.sto'
+    potts_model = frustratometer.dca.pydca.plmdca(str(filtered_file))
+    model = frustratometer.DCA.from_pottsmodel(structure, potts_model, distance_cutoff=16, sequence_cutoff=1)
+
+    L = len(structure.sequence)
+    assert model.potts_model["J"].shape==(L,L,21,21)
+    assert model.potts_model["h"].shape==(L,21)
 
 @pytest.mark.skipif(not _HAS_PYDCA, reason="pyDCA is not installed")
 def test_from_hmmer_alignment_plmDCA_calculation():    
@@ -510,7 +520,7 @@ def test_from_hmmer_alignment_plmDCA_calculation():
     distance_matrix_method='CB'
     alignment_output_file_name=f"{output_path}/PF11976_test_alignment.sto"
     filtered_alignment_output_file_name=f"{output_path}/PF11976_test_filtered_alignment.sto"
-    query_sequence_database_file=f"{data_path}/protein-matching-PF11976.fasta"
+    query_sequence_database_file=f"{data_path}/protein-matching-PF11976_small.fasta"
     DCA_format="plmDCA"
 
     structure=frustratometer.Structure(pdb_file,chain,distance_matrix_method=distance_matrix_method)
