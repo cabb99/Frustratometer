@@ -696,7 +696,7 @@ class AwsemEnergyAverage(EnergyTerm):
         self.compute_denergy_mutation = denergy_mutation
 
         if self._is_sparse:
-            awsem_energy = AwsemEnergySparse(model=self.model, alphabet=self.alphabet).compute_energy
+            awsem_energy = AwsemEnergySparse(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
         else:
             awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
 
@@ -884,7 +884,7 @@ class AwsemEnergyVariance(EnergyTerm):
         self.compute_denergy_mutation = denergy_mutation
 
         if self._is_sparse:
-            awsem_energy = AwsemEnergySparse(model=self.model, alphabet=self.alphabet).compute_energy
+            awsem_energy = AwsemEnergySparse(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
         else:
             awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
 
@@ -961,7 +961,7 @@ class AwsemEnergyStd(EnergyTerm):
         region_means=compute_all_region_means(indicators1D,indicators2D)
         # indicator_means*=0 # Set indicator means to zero to check if the problem is with the mean phi or the inner product matrix
         if self._is_sparse:
-            awsem_energy = AwsemEnergySparse(model=self.model, alphabet=self.alphabet).compute_energy
+            awsem_energy = AwsemEnergySparse(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
         else:
             awsem_energy = AwsemEnergy(use_numba=self.use_numba, model=self.model, alphabet=self.alphabet).energy_function
 
