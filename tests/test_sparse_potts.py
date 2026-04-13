@@ -49,10 +49,10 @@ def test_sparse_mask_matches_dense(small_system, max_dist, min_sep, chain_breaks
     L, Q, dm, ci, cj, cd, _ = small_system
 
     dense_mask = compute_mask(dm, max_dist, min_sep, chain_breaks=chain_breaks)
-    sparse_i, sparse_j = compute_mask_sparse(ci, cj, cd, L, max_dist, min_sep, chain_breaks=chain_breaks)
+    sparse_mask = compute_mask_sparse(ci, cj, cd, L, max_dist, min_sep, chain_breaks=chain_breaks)
 
     reconstructed = np.zeros((L, L), dtype=bool)
-    reconstructed[sparse_i, sparse_j] = True
+    reconstructed[sparse_mask.row, sparse_mask.col] = True
 
     off_diag = ~np.eye(L, dtype=bool)
     np.testing.assert_array_equal(reconstructed[off_diag], dense_mask[off_diag])

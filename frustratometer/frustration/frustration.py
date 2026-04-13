@@ -1642,11 +1642,11 @@ def compute_mask_sparse(contact_i: np.ndarray,
 
     Returns
     -------
-    mask_i : np.ndarray
-        Row indices of pairs that pass the mask criteria.
-    mask_j : np.ndarray
-        Column indices of pairs that pass the mask criteria.
+    SparseDistanceMatrix
+        Mask-only (data=None) SparseDistanceMatrix of pairs that pass the criteria.
     """
+    from frustratometer.pdb.sparse import SparseDistanceMatrix as _SDM
+
     keep = np.ones(len(contact_i), dtype=bool)
 
     if maximum_contact_distance is not None:
@@ -1661,7 +1661,7 @@ def compute_mask_sparse(contact_i: np.ndarray,
                 pos_j = np.where(contact_j >= brk, pos_j + minimum_sequence_separation, pos_j)
         keep &= np.abs(pos_i - pos_j) >= minimum_sequence_separation
 
-    return contact_i[keep], contact_j[keep]
+    return _SDM(contact_i[keep], contact_j[keep], data=None, shape=L)
 
 def mask_mean(L: int, minimum_sequence_separation: Union[int, None] = None, chain_breaks: Union[list, None] = None):
     """
@@ -2363,13 +2363,8 @@ def compute_native_energy_elec(sequence: str,
     return energy
 
 
-def build_elec_data_sparse(elec_ci: np.ndarray,
-                           elec_cj: np.ndarray,
-                           elec_dists: np.ndarray,
-                           elec_L: int,
-                           mask_i: np.ndarray,
-                           mask_j: np.ndarray,
-                           mask_L: int,
+def build_elec_data_sparse(elec_dm,
+                           mask_dm,
                            sequence: str,
                            sparse_potts_model: dict,
                            k_electrostatics: float = 17.3636,
@@ -2383,16 +2378,10 @@ def build_elec_data_sparse(elec_ci: np.ndarray,
 
     Parameters
     ----------
-    elec_ci, elec_cj : np.ndarray
-        Row/col indices from the 40A sparse distance matrix.
-    elec_dists : np.ndarray
-        Distances for each (i,j) pair.
-    elec_L : int
-        Sequence length.
-    mask_i, mask_j : np.ndarray
-        Row/col indices of the frustration mask (contacts within the mask).
-    mask_L : int
-        Sequence length (should equal elec_L).
+    elec_dm : SparseDistanceMatrix
+        40 Å sparse distance matrix for electrostatic calculations.
+    mask_dm : SparseDistanceMatrix
+        Frustration mask (data=None).
     sequence : str
         Amino acid sequence.
     sparse_potts_model : dict
@@ -2407,8 +2396,7 @@ def build_elec_data_sparse(elec_ci: np.ndarray,
         Chain break positions.
     mask_sequence_cutoff : int, optional
         When provided, check sequence separation directly for mask membership
-        instead of using mask_i/mask_j. This avoids the mask being limited by
-        the sparse distance cutoff.
+        instead of using mask_i/mask_j.
     mask_chain_breaks : list, optional
         Chain breaks for the mask sequence separation check.
 
@@ -2417,17 +2405,26 @@ def build_elec_data_sparse(elec_ci: np.ndarray,
     elec_data : dict
         Same keys as ``build_elec_data`` output.
     """
+    elec_ci = elec_dm.row
+    elec_cj = elec_dm.col
+    elec_dists = elec_dm.data
+    elec_L = elec_dm.shape
+    mask_i = mask_dm.row
+    mask_j = mask_dm.col
+
     seq_index = np.array([_AA.find(aa) for aa in sequence])
     L = len(seq_index)
     charges = _CHARGES
     q_native = charges[seq_index]
 
     # Apply electrostatic sequence separation to full elec sparse data
-    filt_ci, filt_cj = compute_mask_sparse(
+    filt_mask = compute_mask_sparse(
         elec_ci, elec_cj, elec_dists, elec_L,
         maximum_contact_distance=None,
         minimum_sequence_separation=min_sequence_separation_electrostatics,
         chain_breaks=chain_breaks)
+    filt_ci = filt_mask.row
+    filt_cj = filt_mask.col
 
     # Build a lookup for filtered elec distances
     # We need the distances at (filt_ci, filt_cj) positions

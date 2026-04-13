@@ -1,4 +1,5 @@
 from .. import pdb
+from ..pdb.sparse import SparseDistanceMatrix
 import prody
 import os
 import Bio.PDB.Polypeptide as poly
@@ -93,9 +94,8 @@ class Structure:
         """Check that the structure is internally consistent."""
         L_seq = len(self.sequence)
         dm = self.distance_matrix
-        if isinstance(dm, tuple):
-            # Sparse COO: (contact_i, contact_j, distances, L)
-            L_dm = dm[3]
+        if isinstance(dm, SparseDistanceMatrix):
+            L_dm = dm.shape
         else:
             L_dm = dm.shape[0]
         if L_seq != L_dm:
@@ -119,10 +119,7 @@ class Structure:
     @distance_matrix.setter
     def distance_matrix(self, value):
         """Allow direct assignment for backward compatibility."""
-        if isinstance(value, tuple):
-            assert len(value) == 4, "Sparse distance matrix must be a tuple of (contact_i, contact_j, distances, L)"
-            assert len(value[0]) == len(value[1]) == len(value[2]), "Sparse distance matrix contact_i, contact_j, and distances must have the same length"
-            assert len(value[0]) == len(self.sequence), f"Sparse distance matrix length ({len(value[0])}) does not match sequence length ({len(self.sequence)})"
+        if isinstance(value, SparseDistanceMatrix):
             self._sparse_distance_matrix = value
             self._dense_distance_matrix = None
         else:
@@ -142,11 +139,9 @@ class Structure:
         return self._dense_distance_matrix
 
     @staticmethod
-    def _filter_sparse_tuple(sparse_tuple, init, fin):
-        """Filter a sparse COO tuple to a sub-range [init, fin) and re-index."""
-        ci, cj, dists, L = sparse_tuple
-        keep = (ci >= init) & (ci < fin) & (cj >= init) & (cj < fin)
-        return (ci[keep] - init, cj[keep] - init, dists[keep], fin - init)
+    def _filter_sparse_tuple(sparse_dm, init, fin):
+        """Filter a SparseDistanceMatrix to a sub-range [init, fin) and re-index."""
+        return sparse_dm.filter(init, fin)
 
     def _init_structure(self, pdb_file, chain, seq_selection, aligned_sequence,
                         filtered_aligned_sequence, distance_matrix_method,
@@ -253,9 +248,12 @@ class Structure:
             self._sparse_distance_matrix_elec = pdb.get_sparse_distance_matrix(
                 pdb_file=self.pdb_file, chain=self.chain,
                 method=self.distance_matrix_method, max_distance=40.0)
-            ci, cj, dists, L = self._sparse_distance_matrix_elec
-            keep = dists <= 15.0
-            self._sparse_distance_matrix = (ci[keep], cj[keep], dists[keep], L)
+            keep = self._sparse_distance_matrix_elec.data <= 15.0
+            self._sparse_distance_matrix = SparseDistanceMatrix(
+                self._sparse_distance_matrix_elec.row[keep],
+                self._sparse_distance_matrix_elec.col[keep],
+                self._sparse_distance_matrix_elec.data[keep],
+                self._sparse_distance_matrix_elec.shape)
             self._dense_distance_matrix = None
         else:
             self._dense_distance_matrix = pdb.get_dense_distance_matrix(

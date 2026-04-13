@@ -1,6 +1,7 @@
 import numpy as np
 from ..utils import _path
 from .. import frustration
+from ..pdb.sparse import SparseDistanceMatrix
 from .Frustratometer import Frustratometer
 from .Gamma import Gamma
 from pydantic import BaseModel, Field, ConfigDict
@@ -55,7 +56,7 @@ class AWSEM(Frustratometer):
     aa_map_awsem_x, aa_map_awsem_y = np.meshgrid(aa_map_awsem_list, aa_map_awsem_list, indexing='ij')
     
     def __init__(self, 
-                 pdb_structure: Frustratometer.Structure,
+                 pdb_structure: 'Structure',
                  sequence: str =None,
                  expose_indicator_functions: bool=False,
                  sparse: bool=True,
@@ -124,8 +125,6 @@ class AWSEM(Frustratometer):
         #Sparse matrices
         self._sparse_distance_matrix = None
         self._sparse_distance_matrix_elec = None
-        #Full matrices
-        self.distance_matrix = dense_dm
         if self._distance_is_sparse:
             self._sparse_distance_matrix = pdb_structure._sparse_distance_matrix
             self._sparse_distance_matrix_elec = pdb_structure._sparse_distance_matrix_elec
@@ -161,72 +160,34 @@ class AWSEM(Frustratometer):
         else:
             self._init_from_dense_distances(p, sparse, expose_indicator_functions, pdb_structure)
 
-    def _lookup_sparse_distances(self, ci, cj, dists, L, query_i, query_j):
-        """Look up distances at specific (i, j) positions from a sparse COO distance array.
-
-        Equivalent to ``dense_matrix[query_i, query_j]`` but without materialising the
-        full L×L matrix.  Each (row, col) pair is encoded as a single integer key
-        ``i * L + j``, the source keys are sorted once, and all query keys are resolved
-        in a single vectorised binary search.
-
-        Parameters
-        ----------
-        ci, cj : np.ndarray (N_stored,)
-            Row and column indices of all stored pairs in the sparse array.
-        dists : np.ndarray (N_stored,)
-            Distance values corresponding to each (ci, cj) pair.
-        L : int
-            Sequence length (used for the flat key encoding ``i * L + j``).
-        query_i, query_j : np.ndarray (N_query,)
-            Row and column indices of the pairs whose distances are requested.
-
-        Returns
-        -------
-        np.ndarray (N_query,)
-            Distances at the requested positions, in the same order as the queries.
-
-        Notes
-        -----
-        Every (query_i[k], query_j[k]) pair **must** exist in (ci, cj).  If a query
-        pair is absent, ``np.searchsorted`` returns a wrong position and a silent
-        garbage value is returned — no bounds check is performed.  This is safe in
-        practice because callers always pass indices that were produced by filtering
-        the same sparse source (e.g. the output of ``compute_mask_sparse``).
-        """
-        src_key = ci.astype(np.int64) * L + cj.astype(np.int64)
-        qry_key = query_i.astype(np.int64) * L + query_j.astype(np.int64)
-        sort_idx = np.argsort(src_key)
-        pos = np.searchsorted(src_key, qry_key, sorter=sort_idx)
-        return dists[sort_idx[pos]]
-
     def _init_from_sparse_distances(self, p, sparse, expose, pdb_structure):
         """Initialize AWSEM physics from sparse COO distance data (no L×L arrays)."""
-        dm_ci, dm_cj, dm_dists, dm_L = self._sparse_distance_matrix
+        dm = self._sparse_distance_matrix
 
         # --- Rho computation ---
         if self.burial_in_context:
             full_dm = self.full_pdb_distance_matrix
-            if isinstance(full_dm, tuple):
-                sel_ci, sel_cj, sel_dists, sel_L = full_dm
+            if isinstance(full_dm, SparseDistanceMatrix):
+                sel_dm = full_dm
             else:
-                # Full PDB is dense but selection is sparse — fallback to dense rho
-                sel_ci, sel_cj, sel_dists, sel_L = dm_ci, dm_cj, dm_dists, dm_L
+                # Full PDB is dense but selection is sparse — fallback
+                sel_dm = dm
         else:
-            sel_ci, sel_cj, sel_dists, sel_L = dm_ci, dm_cj, dm_dists, dm_L
+            sel_dm = dm
 
         # Rho sequence separation mask
-        rho_mi, rho_mj = frustration.compute_mask_sparse(
-            sel_ci, sel_cj, sel_dists, sel_L,
+        rho_mask = frustration.compute_mask_sparse(
+            sel_dm.row, sel_dm.col, sel_dm.data, sel_dm.shape,
             maximum_contact_distance=None,
             minimum_sequence_separation=p.min_sequence_separation_rho,
             chain_breaks=self.chain_breaks)
-        rho_dists = self._lookup_sparse_distances(sel_ci, sel_cj, sel_dists, sel_L, rho_mi, rho_mj)
+        rho_dists = sel_dm.lookup(rho_mask.row, rho_mask.col)
 
         rho_vals = 0.25 * (1 + np.tanh(p.eta * (rho_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - rho_dists)))
-        rho_r = np.bincount(rho_mi, weights=rho_vals, minlength=sel_L).astype(np.float64)
+        rho_r = np.bincount(rho_mask.row, weights=rho_vals, minlength=sel_dm.shape).astype(np.float64)
 
         # Handle burial_in_context substructure slicing
-        if sel_L != dm_L and self.burial_in_context:
+        if sel_dm.shape != dm.shape and self.burial_in_context:
             self.init_index_shift = pdb_structure.init_index_shift
             self.fin_index_shift = pdb_structure.fin_index_shift
             rho_r = rho_r[self.init_index_shift:self.fin_index_shift]
@@ -235,19 +196,19 @@ class AWSEM(Frustratometer):
         self.rho_r = rho_r
 
         # --- Contact mask ---
-        contact_ci, contact_cj = frustration.compute_mask_sparse(
-            dm_ci, dm_cj, dm_dists, dm_L,
+        contact_mask = frustration.compute_mask_sparse(
+            dm.row, dm.col, dm.data, dm.shape,
             maximum_contact_distance=p.distance_cutoff_contact,
             minimum_sequence_separation=p.min_sequence_separation_contact,
             chain_breaks=self.chain_breaks)
-        contact_dists = self._lookup_sparse_distances(dm_ci, dm_cj, dm_dists, dm_L, contact_ci, contact_cj)
+        contact_dists = dm.lookup(contact_mask.row, contact_mask.col)
 
         # Theta/thetaII at contacts only
         theta_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - contact_dists)))
         thetaII_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - contact_dists)))
 
         # Sigma at contact positions (no L×L allocation)
-        sigma_water_c = 0.25 * (1 - np.tanh(p.eta_sigma * (rho_r[contact_ci] - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho_r[contact_cj] - p.rho_0)))
+        sigma_water_c = 0.25 * (1 - np.tanh(p.eta_sigma * (rho_r[contact_mask.row] - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho_r[contact_mask.col] - p.rho_0)))
         sigma_protein_c = 1 - sigma_water_c
 
         # Store None for dense sigma (used in configurational frustration)
@@ -270,19 +231,19 @@ class AWSEM(Frustratometer):
         else:
             self.sequence_cutoff = p.min_sequence_separation_contact
             self.distance_cutoff = p.distance_cutoff_contact
-        mask_i, mask_j = frustration.compute_mask_sparse(
-            dm_ci, dm_cj, dm_dists, dm_L,
+        mask_result = frustration.compute_mask_sparse(
+            dm.row, dm.col, dm.data, dm.shape,
             maximum_contact_distance=self.distance_cutoff,
             minimum_sequence_separation=self.sequence_cutoff,
             chain_breaks=self.chain_breaks)
-        self.mask = (mask_i, mask_j, dm_L)
+        self.mask = mask_result
 
         # Common properties
         self.aa_freq = frustration.compute_aa_freq(self.sequence)
         self.contact_freq = frustration.compute_contact_freq(self.sequence)
 
         # Build sparse Potts model (always sparse when distance is sparse)
-        self._build_sparse_from_contacts(p, contact_ci, contact_cj, theta_c, thetaII_c,
+        self._build_sparse_from_contacts(p, contact_mask.row, contact_mask.col, theta_c, thetaII_c,
                                          sigma_water_c, sigma_protein_c, burial_energy, expose)
 
     def _init_from_dense_distances(self, p, sparse, expose, pdb_structure):
@@ -541,11 +502,9 @@ class AWSEM(Frustratometer):
 
         # Electrostatics (from sparse 40Å distance data)
         if p.k_electrostatics != 0:
-            elec_ci, elec_cj, elec_dists, elec_L = self._sparse_distance_matrix_elec
-            mask_i, mask_j, mask_L = self.mask
             self._elec_data = frustration.build_elec_data_sparse(
-                elec_ci, elec_cj, elec_dists, elec_L,
-                mask_i, mask_j, mask_L,
+                self._sparse_distance_matrix_elec,
+                self.mask,
                 self.sequence, self.sparse_potts_model,
                 p.k_electrostatics, p.electrostatics_screening_length,
                 p.min_sequence_separation_electrostatics,
@@ -573,19 +532,19 @@ class AWSEM(Frustratometer):
             self.indicator_contact_j = None
             if p.k_electrostatics != 0:
                 # Reconstruct dense electrostatics indicator from sparse 40Å data
-                elec_ci, elec_cj, elec_dists, elec_L = self._sparse_distance_matrix_elec
-                e_mask_ci, e_mask_cj = frustration.compute_mask_sparse(
-                    elec_ci, elec_cj, elec_dists, elec_L,
+                elec_dm = self._sparse_distance_matrix_elec
+                e_mask = frustration.compute_mask_sparse(
+                    elec_dm.row, elec_dm.col, elec_dm.data, elec_dm.shape,
                     maximum_contact_distance=None,
                     minimum_sequence_separation=p.min_sequence_separation_electrostatics,
                     chain_breaks=self.chain_breaks)
-                e_dists = self._lookup_sparse_distances(elec_ci, elec_cj, elec_dists, elec_L, e_mask_ci, e_mask_cj)
+                e_dists = elec_dm.lookup(e_mask.row, e_mask.col)
                 electrostatics_indicator = np.zeros((L, L))
                 with np.errstate(divide='ignore', invalid='ignore'):
                     vals = np.exp(-e_dists / p.electrostatics_screening_length) / e_dists
                     vals[np.isnan(vals)] = 0.0
                     vals[np.isinf(vals)] = 0.0
-                electrostatics_indicator[e_mask_ci, e_mask_cj] = vals
+                electrostatics_indicator[e_mask.row, e_mask.col] = vals
                 charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
                 charges2 = charges[:, np.newaxis] * charges[np.newaxis, :]
                 self.indicators.append(electrostatics_indicator)
@@ -609,12 +568,12 @@ class AWSEM(Frustratometer):
             Column indices of contacts.
         """
         if self._distance_is_sparse:
-            ci, cj, dists, L = self._sparse_distance_matrix
-            # Upper triangle: ci < cj
-            upper = ci < cj
-            uci = ci[upper]
-            ucj = cj[upper]
-            udists = dists[upper]
+            dm = self._sparse_distance_matrix
+            # Upper triangle: row < col
+            upper = dm.row < dm.col
+            uci = dm.row[upper]
+            ucj = dm.col[upper]
+            udists = dm.data[upper]
             valid = (udists < self.distance_cutoff_contact) & (udists > 0)
             return udists[valid], uci[valid], ucj[valid]
         else:

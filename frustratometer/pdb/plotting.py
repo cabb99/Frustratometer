@@ -60,11 +60,8 @@ def _resolve_config(config: Optional[PlotConfig], **kwargs) -> PlotConfig:
 
 
 def _sparse_to_dense(sparse_dm) -> np.ndarray:
-    """Convert a COO tuple ``(i, j, dist, L)`` to an L×L array with NaN gaps."""
-    ci, cj, dists, L = sparse_dm
-    mat = np.full((L, L), np.nan)
-    mat[ci, cj] = dists
-    return mat
+    """Convert a SparseDistanceMatrix to an L×L array with NaN gaps."""
+    return sparse_dm.to_dense(fill=np.nan)
 
 
 def _setup_ax(ax, L: int, title: str):

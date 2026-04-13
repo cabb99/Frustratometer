@@ -222,12 +222,12 @@ class Frustratometer:
                 if _elec_data is not None:
                     fluctuation = frustration.apply_elec_correction_mutational(fluctuation, self.sparse_potts_model, _elec_data)
             elif kind == 'pseudoconfigurational':
-                if isinstance(self.mask, tuple):
-                    _mi, _mj, _mL = self.mask
+                from ..pdb.sparse import SparseDistanceMatrix as _SDM
+                if isinstance(self.mask, _SDM):
                     if self.distance_cutoff is None:
-                        _mask_mean = frustration.mask_mean(_mL, self.sequence_cutoff, self.chain_breaks)
+                        _mask_mean = frustration.mask_mean(self.mask.shape, self.sequence_cutoff, self.chain_breaks)
                     else:
-                        _mask_mean = float(len(_mi)) / (_mL * _mL)
+                        _mask_mean = float(len(self.mask)) / (self.mask.shape * self.mask.shape)
                 else:
                     _mask_mean = float(self.mask.mean())
                 fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, _mask_mean)

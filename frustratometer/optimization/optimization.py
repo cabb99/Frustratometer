@@ -407,10 +407,9 @@ class AwsemEnergySparse(EnergyTerm):
             if elec_data['indicator'] is not None:
                 # Dense mode: indicator is (L, L)
                 mask = model.mask
-                if isinstance(mask, tuple):
-                    mask_i, mask_j, mask_L = mask
-                    mask = np.zeros((mask_L, mask_L), dtype=float)
-                    mask[mask_i, mask_j] = 1.0
+                from frustratometer.pdb.sparse import SparseDistanceMatrix as _SDM
+                if isinstance(mask, _SDM):
+                    mask = mask.to_dense(fill=0.0)
                 self.indicator_masked = elec_data['indicator'] * mask  # (L, L)
             else:
                 # Sparse mode: reconstruct dense indicator_masked from sparse data
