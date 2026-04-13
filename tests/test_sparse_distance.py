@@ -48,12 +48,12 @@ def test_sparse_cutoff_respected():
 
 
 def test_structure_sparse_flag():
-    """sparse=True populates sparse_distance_data; False leaves it None."""
+    """sparse=True populates _sparse_distance_matrix; False leaves it None."""
     import frustratometer
     s_on = frustratometer.Structure(PDB_FILE, CHAIN, repair_pdb=False, sparse=True)
-    assert s_on.sparse_distance_data is not None
-    ci, cj, d, L = s_on.sparse_distance_data
+    assert s_on._sparse_distance_matrix is not None
+    ci, cj, d, L = s_on._sparse_distance_matrix
     assert L == len(s_on.sequence)
 
     s_off = frustratometer.Structure(PDB_FILE, CHAIN, repair_pdb=False, sparse=False)
-    assert s_off.sparse_distance_data is None
+    assert s_off._sparse_distance_matrix is None

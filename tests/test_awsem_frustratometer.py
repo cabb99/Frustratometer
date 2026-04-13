@@ -37,7 +37,7 @@ def awsem_6u5e():
 @pytest.fixture(scope="module")
 def awsem_6u5e_density():
     """6u5e + AWSEM(cutoff=9.499, sep=2, k_elec=0) — shared by single-residue energy/decoy tests."""
-    structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A")
+    structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A", sparse=False)
     return frustratometer.AWSEM(structure,
                                 distance_cutoff_contact=9.499,
                                 min_sequence_separation_contact=2,
@@ -252,7 +252,7 @@ def test_contact_pair_AWSEM_energy():
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
     lammps_mutational_frustration_dataframe["j"]=lammps_mutational_frustration_dataframe["j"]-1
     ###
-    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A")
+    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A", sparse=False)
     model=frustratometer.AWSEM(structure,distance_cutoff_contact=9.499,
                                                   min_sequence_separation_contact=0,
                                                   k_electrostatics=0)
@@ -361,7 +361,7 @@ def test_contact_pair_decoy_AWSEM_energy_statistics():
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
     lammps_mutational_frustration_dataframe["j"]=lammps_mutational_frustration_dataframe["j"]-1
     ###
-    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A")
+    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A", sparse=False)
     model=frustratometer.AWSEM(structure,distance_cutoff_contact=9.5, min_sequence_separation_contact=None, k_electrostatics=0)
     spm = model.sparse_potts_model
     ci, cj = spm['contact_i'], spm['contact_j']
@@ -747,25 +747,32 @@ def test_sparse_dense_frustration(fixture_name, kind, sparse_vs_dense_2ghy, spar
 
 def test_sparse_dense_chain_breaks_preserved():
     """Verify chain_breaks are correctly propagated in both sparse and dense."""
-    structure = frustratometer.Structure(test_data_path / '2GHY.pdb')
-    sparse_m = frustratometer.AWSEM(structure, sparse=True)
-    dense_m = frustratometer.AWSEM(structure, sparse=False)
+    structure_sparse = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=True)
+    structure_dense = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=False)
+    sparse_m = frustratometer.AWSEM(structure_sparse, sparse=True)
+    dense_m = frustratometer.AWSEM(structure_dense, sparse=False)
     assert sparse_m.chain_breaks == [57]
     assert dense_m.chain_breaks == [57]
-    np.testing.assert_array_equal(sparse_m.mask, dense_m.mask)
+    # In sparse mode, mask only covers pairs in the sparse distance matrix.
+    # Verify that every sparse mask pair is also in the dense mask.
+    mask_i, mask_j, mask_L = sparse_m.mask
+    assert np.all(dense_m.mask[mask_i, mask_j])
 
 
 def test_sparse_dense_multichain_elec_energy():
     """Electrostatics energy on multichain 2GHY must match between sparse and dense."""
-    structure = frustratometer.Structure(test_data_path / '2GHY.pdb')
+    structure_sparse = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=True)
+    structure_dense = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=False)
     params = dict(k_electrostatics=4 * 4.184,
                   min_sequence_separation_contact=0,
                   distance_cutoff_contact=9.5,
                   min_sequence_separation_electrostatics=1)
-    sparse_m = frustratometer.AWSEM(structure, sparse=True, **params)
-    dense_m = frustratometer.AWSEM(structure, sparse=False, **params)
-    np.testing.assert_allclose(sparse_m.native_energy(), dense_m.native_energy(), atol=1e-4)
-    np.testing.assert_allclose(sparse_m.couplings_energy(), dense_m.couplings_energy(), atol=1e-4)
+    sparse_m = frustratometer.AWSEM(structure_sparse, sparse=True, **params)
+    dense_m = frustratometer.AWSEM(structure_dense, sparse=False, **params)
+    # Sparse path uses 40A cutoff for electrostatics; a few distant cross-chain
+    # pairs (>40A) are absent, causing small numeric differences.
+    np.testing.assert_allclose(sparse_m.native_energy(), dense_m.native_energy(), atol=0.02)
+    np.testing.assert_allclose(sparse_m.couplings_energy(), dense_m.couplings_energy(), atol=0.02)
 
 
 if __name__ == "__main__":

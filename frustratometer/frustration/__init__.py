@@ -41,4 +41,7 @@ __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'co
           'apply_elec_correction_mutational',
           'apply_elec_correction_contact',
           'apply_elec_correction_pseudoconfigurational',
+          'build_elec_data_sparse',
+          'compute_native_energy_elec_sparse',
+          'mask_mean',
           ]

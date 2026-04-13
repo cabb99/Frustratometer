@@ -1663,6 +1663,68 @@ def compute_mask_sparse(contact_i: np.ndarray,
 
     return contact_i[keep], contact_j[keep]
 
+def mask_mean(L: int, minimum_sequence_separation: Union[int, None] = None, chain_breaks: Union[list, None] = None):
+    """
+    Compute the fraction of valid residue pairs analytically for a sequence-separation-only mask.
+
+    Instead of constructing the full (L, L) boolean mask and calling `.mean()`, this
+    function counts the number of excluded pairs directly and returns the valid fraction.
+    This is used as a normalization factor for pseudoconfigurational frustration calculations.
+
+    Parameters
+    ----------
+    L : int
+        The number of residues (sequence length). The full mask would have shape (L, L).
+    minimum_sequence_separation : int, optional
+        Minimum sequence separation |i - j| required for a pair to be included.
+        Pairs with |i - j| < minimum_sequence_separation are excluded.
+        If None, no sequence-separation filtering is applied and 1.0 is returned.
+        Default is None.
+    chain_breaks : list of int, optional
+        Indices where new chains begin (excluding the implicit 0). For example, [50, 80]
+        means three chains: residues 0–49, 50–79, 80–end. Cross-chain pairs always satisfy
+        the minimum sequence separation criterion since they are not bonded in sequence.
+        If None, all residues are treated as a single chain. Default is None.
+
+    Returns
+    -------
+    fraction : float
+        The fraction of the (L, L) pairs that pass the sequence-separation filter,
+        equivalent to ``compute_mask(distance_matrix, minimum_sequence_separation=minimum_sequence_separation,
+        chain_breaks=chain_breaks).mean()`` but computed without building the full matrix.
+
+    Examples
+    --------
+    >>> mask_mean(10, minimum_sequence_separation=2)
+    0.8  # (100 - 20) / 100
+
+    Notes
+    -----
+    Without chain breaks, the number of excluded pairs is:
+    L (diagonal) + 2*(L-1) + 2*(L-2) + ... + 2*(L - minimum_sequence_separation + 1).
+
+    With chain breaks, positions are offset so that inter-chain distances are
+    artificially inflated, ensuring cross-chain pairs always pass the filter.
+    """
+    if chain_breaks is None or len(chain_breaks) == 0:
+        n_excluded = L  # diagonal (|i-j| = 0)
+        for k in range(1, minimum_sequence_separation):
+            n_excluded += 2 * (L - k)
+        return float(L * L - n_excluded) / (L * L)
+    else:
+        # With chain breaks, use position-offsetting approach
+        positions = np.arange(L, dtype=np.float64)
+        for brk in chain_breaks:
+            positions[brk:] += minimum_sequence_separation
+        # Count valid pairs efficiently via sorted positions + binary search
+        sorted_pos = np.sort(positions)
+        n_excluded = 0
+        for i in range(L):
+            lo = np.searchsorted(sorted_pos, positions[i] - minimum_sequence_separation + 1e-9, side='left')
+            hi = np.searchsorted(sorted_pos, positions[i] + minimum_sequence_separation - 1e-9, side='right')
+            n_excluded += hi - lo
+        return float(L * L - n_excluded) / (L * L)
+
 
 def potts_model_dense_to_sparse(potts_model: dict, mask: np.ndarray) -> dict:
     """
@@ -2298,6 +2360,178 @@ def compute_native_energy_elec(sequence: str,
     q_native = elec_data['q_native']
     indicator = elec_data['indicator']
     energy = -0.5 * (indicator * mask * np.outer(q_native, q_native)).sum()
+    return energy
+
+
+def build_elec_data_sparse(elec_ci: np.ndarray,
+                           elec_cj: np.ndarray,
+                           elec_dists: np.ndarray,
+                           elec_L: int,
+                           mask_i: np.ndarray,
+                           mask_j: np.ndarray,
+                           mask_L: int,
+                           sequence: str,
+                           sparse_potts_model: dict,
+                           k_electrostatics: float = 17.3636,
+                           screening_length: float = 10.0,
+                           min_sequence_separation_electrostatics: int = 1,
+                           chain_breaks: list = None,
+                           mask_sequence_cutoff: int = None,
+                           mask_chain_breaks: list = None) -> dict:
+    """
+    Build electrostatic data from sparse COO distance arrays.
+
+    Parameters
+    ----------
+    elec_ci, elec_cj : np.ndarray
+        Row/col indices from the 40A sparse distance matrix.
+    elec_dists : np.ndarray
+        Distances for each (i,j) pair.
+    elec_L : int
+        Sequence length.
+    mask_i, mask_j : np.ndarray
+        Row/col indices of the frustration mask (contacts within the mask).
+    mask_L : int
+        Sequence length (should equal elec_L).
+    sequence : str
+        Amino acid sequence.
+    sparse_potts_model : dict
+        Sparse Potts model with 'contact_i', 'contact_j'.
+    k_electrostatics : float
+        Electrostatic coupling coefficient.
+    screening_length : float
+        Debye-Hückel screening length.
+    min_sequence_separation_electrostatics : int
+        Minimum sequence separation for electrostatic interactions.
+    chain_breaks : list, optional
+        Chain break positions.
+    mask_sequence_cutoff : int, optional
+        When provided, check sequence separation directly for mask membership
+        instead of using mask_i/mask_j. This avoids the mask being limited by
+        the sparse distance cutoff.
+    mask_chain_breaks : list, optional
+        Chain breaks for the mask sequence separation check.
+
+    Returns
+    -------
+    elec_data : dict
+        Same keys as ``build_elec_data`` output.
+    """
+    seq_index = np.array([_AA.find(aa) for aa in sequence])
+    L = len(seq_index)
+    charges = _CHARGES
+    q_native = charges[seq_index]
+
+    # Apply electrostatic sequence separation to full elec sparse data
+    filt_ci, filt_cj = compute_mask_sparse(
+        elec_ci, elec_cj, elec_dists, elec_L,
+        maximum_contact_distance=None,
+        minimum_sequence_separation=min_sequence_separation_electrostatics,
+        chain_breaks=chain_breaks)
+
+    # Build a lookup for filtered elec distances
+    # We need the distances at (filt_ci, filt_cj) positions
+    # Create index mapping from original elec arrays
+    elec_key = elec_ci.astype(np.int64) * elec_L + elec_cj.astype(np.int64)
+    filt_key = filt_ci.astype(np.int64) * elec_L + filt_cj.astype(np.int64)
+    # Find matching indices
+    sort_idx = np.argsort(elec_key)
+    filt_pos = np.searchsorted(elec_key, filt_key, sorter=sort_idx)
+    filt_dists = elec_dists[sort_idx[filt_pos]]
+
+    # Indicator values at filtered positions
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ind_vals = -k_electrostatics * np.exp(-filt_dists / screening_length) / filt_dists
+        ind_vals[np.isnan(ind_vals)] = 0.0
+        ind_vals[np.isinf(ind_vals)] = 0.0
+
+    # Build set of mask entries for fast lookup
+    ind_masked = ind_vals.copy()
+    if mask_sequence_cutoff is not None:
+        # Check sequence separation directly (mask not limited by sparse distance cutoff)
+        def _check_seqsep(arr_i, arr_j, seq_cutoff, brks):
+            pos_i = arr_i.astype(np.float64)
+            pos_j = arr_j.astype(np.float64)
+            if brks is not None:
+                for brk in brks:
+                    pos_i = np.where(arr_i >= brk, pos_i + seq_cutoff, pos_i)
+                    pos_j = np.where(arr_j >= brk, pos_j + seq_cutoff, pos_j)
+            return np.abs(pos_i - pos_j) >= seq_cutoff
+
+        filt_in_mask = _check_seqsep(filt_ci, filt_cj, mask_sequence_cutoff, mask_chain_breaks)
+    else:
+        mask_key = mask_i.astype(np.int64) * L + mask_j.astype(np.int64)
+        mask_set = set(mask_key.tolist())
+        filt_in_mask = np.array([int(ci_v) * L + int(cj_v) in mask_set
+                                 for ci_v, cj_v in zip(filt_ci, filt_cj)])
+    ind_masked[~filt_in_mask] = 0.0
+
+    # phi = indicator * mask @ q_native  per row i
+    phi = np.bincount(filt_ci, weights=ind_masked * q_native[filt_cj], minlength=L).astype(np.float64)
+    # phi_raw = indicator @ q_native per row i (unmasked)
+    phi_raw = np.bincount(filt_ci, weights=ind_vals * q_native[filt_cj], minlength=L).astype(np.float64)
+
+    # Indicator at Potts contact positions
+    potts_ci = sparse_potts_model['contact_i']
+    potts_cj = sparse_potts_model['contact_j']
+    potts_key = potts_ci.astype(np.int64) * L + potts_cj.astype(np.int64)
+
+    # Build lookup from filtered elec data
+    ind_lookup = {}
+    for k, v in zip(filt_key, ind_vals):
+        ind_lookup[int(k)] = v
+
+    indicator_at_contacts = np.array([ind_lookup.get(int(k), 0.0) for k in potts_key])
+    if mask_sequence_cutoff is not None:
+        mask_at_contacts = _check_seqsep(potts_ci, potts_cj, mask_sequence_cutoff, mask_chain_breaks).astype(float)
+    else:
+        mask_at_contacts = np.array([1.0 if int(k) in mask_set else 0.0 for k in potts_key])
+
+    if mask_sequence_cutoff is not None:
+        _mask_mean = mask_mean(L, mask_sequence_cutoff, mask_chain_breaks)
+    else:
+        _mask_mean = float(len(mask_i)) / (L * L)
+
+    return {
+        'charges': charges,
+        'q_var': _Q_VAR,
+        'q_native': q_native,
+        'indicator': None,  # No dense indicator in sparse mode
+        'indicator_at_contacts': indicator_at_contacts,
+        'phi': phi,
+        'phi_raw': phi_raw,
+        'mask_at_contacts': mask_at_contacts,
+        'mask_mean': _mask_mean,
+        # Sparse representation for reconstructing dense indicator_masked if needed
+        'indicator_masked_i': filt_ci[filt_in_mask],
+        'indicator_masked_j': filt_cj[filt_in_mask],
+        'indicator_masked_vals': ind_masked[filt_in_mask],
+        'L': L,
+    }
+
+
+def compute_native_energy_elec_sparse(sequence: str,
+                                      elec_data: dict) -> float:
+    """
+    Compute the electrostatic contribution to native energy from sparse elec_data.
+
+    Uses phi vectors instead of full indicator matrix.
+
+    Parameters
+    ----------
+    sequence : str
+        Amino acid sequence.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data_sparse``.
+
+    Returns
+    -------
+    energy : float
+    """
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+    # E = -0.5 * sum_i q_i * phi_i where phi_i = sum_j indicator_ij * mask_ij * q_j
+    energy = -0.5 * (q_native * phi).sum()
     return energy
 
 

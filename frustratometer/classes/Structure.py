@@ -18,7 +18,7 @@ residue_names=[]
 class Structure:
 
     def __init__(self, pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None, sparse: bool = True)->object:
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None, sparse: bool = False)->object:
         
         """
         Generates structure object. Both PDB and CIF format files are accepted as input.
@@ -92,12 +92,61 @@ class Structure:
     def _validate_structure(self):
         """Check that the structure is internally consistent."""
         L_seq = len(self.sequence)
-        L_dm = self.distance_matrix.shape[0]
+        dm = self.distance_matrix
+        if isinstance(dm, tuple):
+            # Sparse COO: (contact_i, contact_j, distances, L)
+            L_dm = dm[3]
+        else:
+            L_dm = dm.shape[0]
         if L_seq != L_dm:
             raise ValueError(
                 f"Sequence length ({L_seq}) does not match distance matrix "
-                f"shape ({L_dm}x{L_dm}). The PDB may have missing residues. "
+                f"size ({L_dm}). The PDB may have missing residues. "
                 f"Try setting repair_pdb=True.")
+
+    @property
+    def _is_sparse(self):
+        """True when sparse distance data is stored and no dense matrix is cached."""
+        return self._sparse_distance_matrix is not None and self._dense_distance_matrix is None
+
+    @property
+    def distance_matrix(self):
+        """Return dense distance matrix if available, otherwise sparse COO tuple."""
+        if self._dense_distance_matrix is not None:
+            return self._dense_distance_matrix
+        return self._sparse_distance_matrix
+
+    @distance_matrix.setter
+    def distance_matrix(self, value):
+        """Allow direct assignment for backward compatibility."""
+        if isinstance(value, tuple):
+            assert len(value) == 4, "Sparse distance matrix must be a tuple of (contact_i, contact_j, distances, L)"
+            assert len(value[0]) == len(value[1]) == len(value[2]), "Sparse distance matrix contact_i, contact_j, and distances must have the same length"
+            assert len(value[0]) == len(self.sequence), f"Sparse distance matrix length ({len(value[0])}) does not match sequence length ({len(self.sequence)})"
+            self._sparse_distance_matrix = value
+            self._dense_distance_matrix = None
+        else:
+            self._dense_distance_matrix = value
+
+    def get_dense_distance_matrix(self):
+        """Lazily compute and cache the dense distance matrix from PDB."""
+        if self._dense_distance_matrix is None:
+            self._dense_distance_matrix = pdb.get_dense_distance_matrix(
+                pdb_file=self.pdb_file, chain=self.chain,
+                method=self.distance_matrix_method)
+            # Apply seq_selection slicing if needed
+            if self.seq_selection is not None:
+                self._dense_distance_matrix = self._dense_distance_matrix[
+                    self.init_index_shift:self.fin_index_shift,
+                    self.init_index_shift:self.fin_index_shift]
+        return self._dense_distance_matrix
+
+    @staticmethod
+    def _filter_sparse_tuple(sparse_tuple, init, fin):
+        """Filter a sparse COO tuple to a sub-range [init, fin) and re-index."""
+        ci, cj, dists, L = sparse_tuple
+        keep = (ci >= init) & (ci < fin) & (cj >= init) & (cj < fin)
+        return (ci[keep] - init, cj[keep] - init, dists[keep], fin - init)
 
     def _init_structure(self, pdb_file, chain, seq_selection, aligned_sequence,
                         filtered_aligned_sequence, distance_matrix_method,
@@ -195,17 +244,27 @@ class Structure:
                 self.structure=prody.parseMMCIF(str(self.pdb_file),chain=self.chain).select(f"protein and {self.seq_selection}")
 
         self.sequence=pdb.get_sequence(self.pdb_file,self.chain)
-        self.distance_matrix=pdb.get_dense_distance_matrix(pdb_file=self.pdb_file,chain=self.chain,
-                                                           method=self.distance_matrix_method)
-        self.full_pdb_distance_matrix=self.distance_matrix
 
-        # Compute sparse distance data if requested
+        # Distance matrix storage
+        self._sparse = sparse
         if sparse:
-            self.sparse_distance_data = pdb.get_sparse_distance_matrix(
+            # Compute the less stringent sparse matrix for electrostatic calculations (max_distance=40.0)
+            # then filter it down for the main sparse matrix (max_distance=15.0)
+            self._sparse_distance_matrix_elec = pdb.get_sparse_distance_matrix(
                 pdb_file=self.pdb_file, chain=self.chain,
-                method=self.distance_matrix_method, max_distance=15.0)
+                method=self.distance_matrix_method, max_distance=40.0)
+            ci, cj, dists, L = self._sparse_distance_matrix_elec
+            keep = dists <= 15.0
+            self._sparse_distance_matrix = (ci[keep], cj[keep], dists[keep], L)
+            self._dense_distance_matrix = None
         else:
-            self.sparse_distance_data = None
+            self._dense_distance_matrix = pdb.get_dense_distance_matrix(
+                pdb_file=self.pdb_file, chain=self.chain,
+                method=self.distance_matrix_method)
+            self._sparse_distance_matrix = None
+            self._sparse_distance_matrix_elec = None
+
+        self.full_pdb_distance_matrix = self.distance_matrix
 
         self.z_coordinates=self.structure.select('((name CB) or (resname GLY and name CA))').getCoords()
 
@@ -216,27 +275,38 @@ class Structure:
         self.chain_breaks = breaks.tolist() if len(breaks) > 0 else None
 
         if self.seq_selection!=None:
-            self.distance_matrix=self.distance_matrix[self.init_index_shift:self.fin_index_shift,
-                                                    self.init_index_shift:self.fin_index_shift]
+            if self._is_sparse:
+                self._sparse_distance_matrix = self._filter_sparse_tuple(
+                    self._sparse_distance_matrix, self.init_index_shift, self.fin_index_shift)
+                self._sparse_distance_matrix_elec = self._filter_sparse_tuple(
+                    self._sparse_distance_matrix_elec, self.init_index_shift, self.fin_index_shift)
+            else:
+                self._dense_distance_matrix = self._dense_distance_matrix[
+                    self.init_index_shift:self.fin_index_shift,
+                    self.init_index_shift:self.fin_index_shift]
             self.sequence=self.sequence[self.init_index_shift:self.fin_index_shift]
 
         if self.aligned_sequence is not None:
+            if self._is_sparse:
+                raise NotImplementedError(
+                    "aligned_sequence is not supported with sparse distance matrices. "
+                    "Use sparse=False or call get_dense_distance_matrix() first.")
             self.full_to_aligned_index_dict=pdb.full_to_filtered_aligned_mapping(self.aligned_sequence,self.filtered_aligned_sequence)
             self.mapped_distance_matrix=np.full((len(self.filtered_aligned_sequence), len(self.filtered_aligned_sequence)), np.inf)
             pos1, pos2 = np.meshgrid(list(self.full_to_aligned_index_dict.keys()), list(self.full_to_aligned_index_dict.keys()), 
                                     indexing='ij', sparse=True)
             modpos1, modpos2 = np.meshgrid(list(self.full_to_aligned_index_dict.values()), list(self.full_to_aligned_index_dict.values()), 
                                     indexing='ij', sparse=True)
-            self.mapped_distance_matrix[modpos1,modpos2]=self.distance_matrix[pos1,pos2]
+            self.mapped_distance_matrix[modpos1,modpos2]=self._dense_distance_matrix[pos1,pos2]
             np.fill_diagonal(self.mapped_distance_matrix, 0)
 
         else:
             if self.seq_selection==None:
                 self.full_to_aligned_index_dict=dict(zip(range(len(self.sequence)), range(len(self.sequence))))
-                self.mapped_distance_matrix=self.distance_matrix
+                self.mapped_distance_matrix=self.distance_matrix if not self._is_sparse else None
             else:
                 self.full_to_aligned_index_dict=dict(zip(range(self.init_index_shift,self.fin_index_shift+1), range(len(self.sequence))))
-                self.mapped_distance_matrix=self.distance_matrix
+                self.mapped_distance_matrix=self.distance_matrix if not self._is_sparse else None
 
     @classmethod
     def from_pdb_list(cls, pdb_files, chain=None, pdb_directory=None, repair_pdb=None, **kwargs):
@@ -313,6 +383,45 @@ class Structure:
                     distance_matrix_method=distance_matrix_method,
                     pdb_directory=pdb_directory,
                     repair_pdb=repair_pdb,)
+    
+    def plot_distance_map(self, interaction_type: bool = False, config=None,
+                          ax=None, **kwargs):
+        """Plot the inter-residue distance map.
+
+        Parameters
+        ----------
+        interaction_type : bool
+            If True, colour contacts by interaction band.
+        config : PlotConfig, optional
+            Visual settings.  Fields can also be overridden via **kwargs.
+        ax : matplotlib Axes, optional
+            Axes to draw on.
+        **kwargs
+            Forwarded to PlotConfig (e.g. ``vmax=15``, ``cmap='hot'``).
+
+        Returns
+        -------
+        matplotlib Axes
+        """
+        chain_label = f' chain {self.chain}' if self.chain else ''
+        mode = 'sparse' if self._is_sparse else 'dense'
+        kwargs.setdefault('title', f'Distance Map ({mode}){chain_label}')
+
+        if self._is_sparse:
+            sparse_dm = getattr(self, '_sparse_distance_matrix_elec',
+                                None) or self._sparse_distance_matrix
+            if interaction_type:
+                return pdb.plot_sparse_interaction_map(
+                    sparse_dm, config=config, ax=ax, **kwargs)
+            return pdb.plot_sparse_distance_map(
+                sparse_dm, config=config, ax=ax, **kwargs)
+        else:
+            if interaction_type:
+                return pdb.plot_interaction_map(
+                    self.distance_matrix, config=config, ax=ax, **kwargs)
+            return pdb.plot_distance_map(
+                self.distance_matrix, config=config, ax=ax, **kwargs)
+
     # @property
     # def sequence(self):
     #     return self._sequence

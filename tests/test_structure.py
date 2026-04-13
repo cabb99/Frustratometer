@@ -21,7 +21,9 @@ def test_structure_valid(pdb, chain, repair_pdb, expect_repair, tmp_path):
     """Structure should be consistent and only call PDBFixer when expected."""
     s = frustratometer.Structure(test_data_path / pdb, chain,
                                  repair_pdb=repair_pdb, pdb_directory=tmp_path)
-    assert len(s.sequence) == s.distance_matrix.shape[0]
+    dm = s.distance_matrix
+    L = dm[3] if isinstance(dm, tuple) else dm.shape[0]
+    assert len(s.sequence) == L
     cleaned_files = list(tmp_path.glob("*_cleaned.pdb"))
     was_repaired = len(cleaned_files) > 0
     assert was_repaired == expect_repair, (
@@ -51,7 +53,9 @@ def test_from_pdb_list(repair_pdb, tmp_path):
                                                             repair_pdb=repair_pdb)
         assert len(structures) == 2
         for s in structures:
-            assert len(s.sequence) == s.distance_matrix.shape[0]
+            dm = s.distance_matrix
+            L = dm[3] if isinstance(dm, tuple) else dm.shape[0]
+            assert len(s.sequence) == L
 
 
 def test_repair_pdb_no_memory_leak(tmp_path):

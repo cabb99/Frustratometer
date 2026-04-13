@@ -51,6 +51,12 @@ class Frustratometer:
         """True when a sparse Potts model is available."""
         return getattr(self, 'sparse_potts_model', None) is not None
 
+    def _compute_native_energy_elec(self, sequence, elec_data):
+        """Dispatch electrostatic native energy to sparse or dense version."""
+        if elec_data.get('indicator') is None:
+            return frustration.compute_native_energy_elec_sparse(sequence, elec_data)
+        return frustration.compute_native_energy_elec(sequence, elec_data, self.mask)
+
     @property
     def potts_model(self):
         """Access the Potts model dict with auto-reconstruction of J from sparse if needed."""
@@ -84,14 +90,14 @@ class Frustratometer:
             if self._is_sparse:
                 energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
                 if getattr(self, '_elec_data', None) is not None:
-                    energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
+                    energy += self._compute_native_energy_elec(sequence, self._elec_data)
                 return energy
             return frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
         if not self._native_energy:
             if self._is_sparse:
                 self._native_energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
                 if getattr(self, '_elec_data', None) is not None:
-                    self._native_energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
+                    self._native_energy += self._compute_native_energy_elec(sequence, self._elec_data)
             else:
                 self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
         energy_value=self._native_energy
@@ -175,7 +181,7 @@ class Frustratometer:
         if self._is_sparse:
             couplings_energy=frustration.compute_couplings_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps)
             if getattr(self, '_elec_data', None) is not None:
-                couplings_energy += frustration.compute_native_energy_elec(sequence, self._elec_data, self.mask)
+                couplings_energy += self._compute_native_energy_elec(sequence, self._elec_data)
         else:
             couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps)
         return couplings_energy
@@ -216,8 +222,15 @@ class Frustratometer:
                 if _elec_data is not None:
                     fluctuation = frustration.apply_elec_correction_mutational(fluctuation, self.sparse_potts_model, _elec_data)
             elif kind == 'pseudoconfigurational':
-                mask_mean = self.mask.mean()
-                fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, mask_mean)
+                if isinstance(self.mask, tuple):
+                    _mi, _mj, _mL = self.mask
+                    if self.distance_cutoff is None:
+                        _mask_mean = frustration.mask_mean(_mL, self.sequence_cutoff, self.chain_breaks)
+                    else:
+                        _mask_mean = float(len(_mi)) / (_mL * _mL)
+                else:
+                    _mask_mean = float(self.mask.mean())
+                fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, _mask_mean)
                 if _elec_data is not None:
                     fluctuation = frustration.apply_elec_correction_pseudoconfigurational(fluctuation, self.sparse_potts_model, _elec_data)
             elif kind == 'contact':
