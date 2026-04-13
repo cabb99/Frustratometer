@@ -755,8 +755,7 @@ def test_sparse_dense_chain_breaks_preserved():
     assert dense_m.chain_breaks == [57]
     # In sparse mode, mask only covers pairs in the sparse distance matrix.
     # Verify that every sparse mask pair is also in the dense mask.
-    mask_i, mask_j, mask_L = sparse_m.mask
-    assert np.all(dense_m.mask[mask_i, mask_j])
+    assert np.all(dense_m.mask[sparse_m.mask.row, sparse_m.mask.col])
 
 
 def test_sparse_dense_multichain_elec_energy():
