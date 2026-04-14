@@ -1,5 +1,5 @@
 """
-Simple profiling utilities for tracking memory usage and execution time.
+Profiling utilities for tracking memory usage and execution time.
 
 Usage:
     from devtools.profiling import track_time, track_memory, profile
