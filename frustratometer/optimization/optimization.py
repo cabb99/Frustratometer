@@ -404,7 +404,19 @@ class AwsemEnergySparse(EnergyTerm):
         elec_data = getattr(model, '_elec_data', None)
         if elec_data is not None:
             from frustratometer.frustration.frustration import _CHARGES
-            self.indicator_masked = elec_data['indicator'] * model.mask  # (L, L)
+            if elec_data['indicator'] is not None:
+                # Dense mode: indicator is (L, L)
+                mask = model.mask
+                from frustratometer.classes.Structure import SparseMatrix as _SM
+                if isinstance(mask, _SM):
+                    mask = mask.to_dense(fill=0.0)
+                self.indicator_masked = elec_data['indicator'] * mask  # (L, L)
+            else:
+                # Sparse mode: reconstruct dense indicator_masked from sparse data
+                eL = elec_data['L']
+                self.indicator_masked = np.zeros((eL, eL), dtype=float)
+                self.indicator_masked[elec_data['indicator_masked_i'],
+                                      elec_data['indicator_masked_j']] = elec_data['indicator_masked_vals']
             self.elec_charges = _CHARGES.copy()  # (21,) in DCA alphabet
         else:
             self.indicator_masked = None
