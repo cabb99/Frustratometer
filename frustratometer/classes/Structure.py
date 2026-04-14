@@ -1,5 +1,6 @@
 from .. import pdb
-from ..pdb.sparse import SparseDistanceMatrix
+from ..pdb.sparse import (sparse_lookup, sparse_compute_mask,
+                           sparse_filter, sparse_to_dense)
 import prody
 import os
 import Bio.PDB.Polypeptide as poly
@@ -10,11 +11,97 @@ import tempfile
 import logging
 import warnings
 
-__all__ = ['Structure']
+__all__ = ['Structure', 'SparseMatrix']
 
 logger = logging.getLogger(__name__)
 
 residue_names=[]
+
+
+class SparseMatrix:
+    """COO sparse matrix wrapping the functional API in ``pdb.sparse``.
+
+    Stores ``(row, col, data)`` arrays and a scalar *shape* (sequence length L).
+    When used as a mask (no distances), *data* is ``None``.
+
+    Parameters
+    ----------
+    row : array-like (N,)
+        Row indices.
+    col : array-like (N,)
+        Column indices.
+    data : array-like (N,) or None
+        Distance values.  ``None`` for mask-only matrices.
+    shape : int or None
+        Sequence length L.  Inferred from ``max(row, col) + 1`` when *None*.
+    """
+
+    __slots__ = ('row', 'col', 'data', 'shape')
+
+    def __init__(self, row, col, data=None, shape=None):
+        self.row = np.asarray(row, dtype=np.intp)
+        self.col = np.asarray(col, dtype=np.intp)
+        self.data = np.asarray(data, dtype=float) if data is not None else None
+        if shape is None:
+            if len(self.row) == 0:
+                shape = 0
+            else:
+                shape = int(max(self.row.max(), self.col.max())) + 1
+        self.shape = int(shape)
+
+    # ------------------------------------------------------------------
+    # Lookup
+    # ------------------------------------------------------------------
+    def lookup(self, query_i, query_j):
+        """Look up distances at ``(query_i, query_j)`` via binary search."""
+        return sparse_lookup(self.row, self.col, self.data, self.shape,
+                             query_i, query_j)
+
+    # ------------------------------------------------------------------
+    # Mask computation
+    # ------------------------------------------------------------------
+    def compute_mask(self, maximum_contact_distance=None,
+                     minimum_sequence_separation=None, chain_breaks=None):
+        """Return a mask-only ``SparseMatrix`` (data=None) of passing pairs."""
+        mr, mc, ms = sparse_compute_mask(
+            self.row, self.col, self.data, self.shape,
+            maximum_contact_distance=maximum_contact_distance,
+            minimum_sequence_separation=minimum_sequence_separation,
+            chain_breaks=chain_breaks)
+        return SparseMatrix(mr, mc, data=None, shape=ms)
+
+    # ------------------------------------------------------------------
+    # Filtering / slicing
+    # ------------------------------------------------------------------
+    def filter(self, init, fin):
+        """Return a new ``SparseMatrix`` restricted to ``[init, fin)`` and re-indexed."""
+        nr, nc, nd, ns = sparse_filter(
+            self.row, self.col, self.data, self.shape, init, fin)
+        return SparseMatrix(nr, nc, nd, ns)
+
+    # ------------------------------------------------------------------
+    # Dense reconstruction
+    # ------------------------------------------------------------------
+    def to_dense(self, fill=np.inf):
+        """Reconstruct an L×L dense array.
+
+        Parameters
+        ----------
+        fill : float
+            Value for entries not stored.  Default ``np.inf``.
+            Diagonal is always 0.0.  For masks, stored pairs get 1.0.
+        """
+        return sparse_to_dense(self.row, self.col, self.data, self.shape, fill)
+
+    # ------------------------------------------------------------------
+    # Dunder methods
+    # ------------------------------------------------------------------
+    def __len__(self):
+        return len(self.row)
+
+    def __repr__(self):
+        kind = 'mask' if self.data is None else 'distance'
+        return f"SparseMatrix({kind}, nnz={len(self)}, L={self.shape})"
 
 class Structure:
 
@@ -94,7 +181,7 @@ class Structure:
         """Check that the structure is internally consistent."""
         L_seq = len(self.sequence)
         dm = self.distance_matrix
-        if isinstance(dm, SparseDistanceMatrix):
+        if isinstance(dm, SparseMatrix):
             L_dm = dm.shape
         else:
             L_dm = dm.shape[0]
@@ -119,7 +206,7 @@ class Structure:
     @distance_matrix.setter
     def distance_matrix(self, value):
         """Allow direct assignment for backward compatibility."""
-        if isinstance(value, SparseDistanceMatrix):
+        if isinstance(value, SparseMatrix):
             self._sparse_distance_matrix = value
             self._dense_distance_matrix = None
         else:
@@ -140,7 +227,7 @@ class Structure:
 
     @staticmethod
     def _filter_sparse_tuple(sparse_dm, init, fin):
-        """Filter a SparseDistanceMatrix to a sub-range [init, fin) and re-index."""
+        """Filter a SparseMatrix to a sub-range [init, fin) and re-index."""
         return sparse_dm.filter(init, fin)
 
     def _init_structure(self, pdb_file, chain, seq_selection, aligned_sequence,
@@ -245,11 +332,12 @@ class Structure:
         if sparse:
             # Compute the less stringent sparse matrix for electrostatic calculations (max_distance=40.0)
             # then filter it down for the main sparse matrix (max_distance=15.0)
-            self._sparse_distance_matrix_elec = pdb.get_sparse_distance_matrix(
-                pdb_file=self.pdb_file, chain=self.chain,
-                method=self.distance_matrix_method, max_distance=40.0)
+            self._sparse_distance_matrix_elec = SparseMatrix(
+                *pdb.get_sparse_distance_matrix(
+                    pdb_file=self.pdb_file, chain=self.chain,
+                    method=self.distance_matrix_method, max_distance=40.0))
             keep = self._sparse_distance_matrix_elec.data <= 15.0
-            self._sparse_distance_matrix = SparseDistanceMatrix(
+            self._sparse_distance_matrix = SparseMatrix(
                 self._sparse_distance_matrix_elec.row[keep],
                 self._sparse_distance_matrix_elec.col[keep],
                 self._sparse_distance_matrix_elec.data[keep],

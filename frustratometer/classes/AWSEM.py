@@ -1,7 +1,7 @@
 import numpy as np
 from ..utils import _path
 from .. import frustration
-from ..pdb.sparse import SparseDistanceMatrix
+from .Structure import SparseMatrix
 from .Frustratometer import Frustratometer
 from .Gamma import Gamma
 from pydantic import BaseModel, Field, ConfigDict
@@ -167,7 +167,7 @@ class AWSEM(Frustratometer):
         # --- Rho computation ---
         if self.burial_in_context:
             full_dm = self.full_pdb_distance_matrix
-            if isinstance(full_dm, SparseDistanceMatrix):
+            if isinstance(full_dm, SparseMatrix):
                 sel_dm = full_dm
             else:
                 # Full PDB is dense but selection is sparse — fallback

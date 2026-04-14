@@ -6,7 +6,7 @@ Uses 6u5e.pdb (complete) and 2GHY.pdb (incomplete — missing residue) as test d
 import pytest
 from pathlib import Path
 import frustratometer
-from frustratometer.pdb.sparse import SparseDistanceMatrix
+from frustratometer.classes.Structure import SparseMatrix
 
 test_data_path = Path(__file__).parent / 'data'
 
@@ -23,7 +23,7 @@ def test_structure_valid(pdb, chain, repair_pdb, expect_repair, tmp_path):
     s = frustratometer.Structure(test_data_path / pdb, chain,
                                  repair_pdb=repair_pdb, pdb_directory=tmp_path)
     dm = s.distance_matrix
-    L = dm.shape if isinstance(dm, SparseDistanceMatrix) else dm.shape[0]
+    L = dm.shape if isinstance(dm, SparseMatrix) else dm.shape[0]
     assert len(s.sequence) == L
     cleaned_files = list(tmp_path.glob("*_cleaned.pdb"))
     was_repaired = len(cleaned_files) > 0
@@ -55,7 +55,7 @@ def test_from_pdb_list(repair_pdb, tmp_path):
         assert len(structures) == 2
         for s in structures:
             dm = s.distance_matrix
-            L = dm.shape if isinstance(dm, SparseDistanceMatrix) else dm.shape[0]
+            L = dm.shape if isinstance(dm, SparseMatrix) else dm.shape[0]
             assert len(s.sequence) == L
 
 

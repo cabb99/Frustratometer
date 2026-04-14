@@ -7,8 +7,6 @@ from scipy.spatial import cKDTree
 import prody
 import itertools
 
-from .sparse import SparseDistanceMatrix
-
 
 # ---------------------------------------------------------------------------
 # Coordinate selection helpers (one per method)
@@ -119,7 +117,7 @@ def _sparse_minimum_distance(structure, chain_selection, max_distance):
     pairs = tree.query_pairs(r=max_distance, output_type='ndarray')
     if pairs.size == 0:
         empty = np.array([], dtype=np.intp)
-        return SparseDistanceMatrix(empty, empty, np.array([], dtype=float), n_res)
+        return (empty, empty, np.array([], dtype=float), n_res)
 
     i_atoms = pairs[:, 0]
     j_atoms = pairs[:, 1]
@@ -140,7 +138,7 @@ def _sparse_minimum_distance(structure, chain_selection, max_distance):
 
     if not min_dist:
         empty = np.array([], dtype=np.intp)
-        return SparseDistanceMatrix(empty, empty, np.array([], dtype=float), n_res)
+        return (empty, empty, np.array([], dtype=float), n_res)
 
     row_list, col_list, data_list = [], [], []
     for (ri, rj), d in min_dist.items():
@@ -148,10 +146,10 @@ def _sparse_minimum_distance(structure, chain_selection, max_distance):
         col_list.extend([rj, ri])
         data_list.extend([d, d])
 
-    return SparseDistanceMatrix(np.array(row_list, dtype=np.intp),
-                                np.array(col_list, dtype=np.intp),
-                                np.array(data_list, dtype=float),
-                                n_res)
+    return (np.array(row_list, dtype=np.intp),
+            np.array(col_list, dtype=np.intp),
+            np.array(data_list, dtype=float),
+            n_res)
 
 def _coords_to_sparse(coords, max_distance):
     """Calculate a sparse distance matrix from coordinates by including only pairs within max_distance."""
@@ -160,7 +158,7 @@ def _coords_to_sparse(coords, max_distance):
     pairs = tree.query_pairs(r=max_distance, output_type='ndarray')
     if pairs.size == 0:
         empty = np.array([], dtype=np.intp)
-        return SparseDistanceMatrix(empty, empty, np.array([], dtype=float), n)
+        return (empty, empty, np.array([], dtype=float), n)
 
     i_idx = pairs[:, 0]
     j_idx = pairs[:, 1]
@@ -169,7 +167,7 @@ def _coords_to_sparse(coords, max_distance):
     contact_i = np.concatenate([i_idx, j_idx]).astype(np.intp)
     contact_j = np.concatenate([j_idx, i_idx]).astype(np.intp)
     data = np.concatenate([dists, dists])
-    return SparseDistanceMatrix(contact_i, contact_j, data, n)
+    return (contact_i, contact_j, data, n)
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -209,7 +207,7 @@ def get_sparse_distance_matrix(
     chain: Optional[str],
     method: str,
     max_distance: float,
-) -> SparseDistanceMatrix:
+) -> tuple:
     """
     Calculate a sparse distance matrix of the specified atoms/residues in a PDB file.
 
@@ -226,8 +224,11 @@ def get_sparse_distance_matrix(
 
     Returns
     -------
-    SparseDistanceMatrix
-        Sparse distance matrix with row, col, data, shape.
+    tuple of (row, col, data, shape)
+        row : np.ndarray (N,) – row indices.
+        col : np.ndarray (N,) – column indices.
+        data : np.ndarray (N,) – distances.
+        shape : int – sequence length.
     """
     if max_distance <= 0:
         raise ValueError("max_distance must be > 0")

@@ -3,7 +3,6 @@ import numpy as np
 import pytest
 from pathlib import Path
 from frustratometer.pdb.distance import get_dense_distance_matrix, get_sparse_distance_matrix
-from frustratometer.pdb.sparse import SparseDistanceMatrix
 
 PDB_FILE = Path(__file__).parent / "data" / "6u5e.pdb"
 CHAIN = "A"
@@ -24,13 +23,13 @@ def test_sparse_is_lossless_subset_of_full(method):
     """Reconstructing a dense matrix from sparse entries must equal
     the full matrix everywhere within the cutoff (and zero elsewhere)."""
     full = get_dense_distance_matrix(PDB_FILE, CHAIN, method=method)
-    sdm = get_sparse_distance_matrix(PDB_FILE, CHAIN, method, MAX_DISTANCE)
-    assert isinstance(sdm, SparseDistanceMatrix)
-    assert sdm.shape == full.shape[0]
+    row, col, data, shape = get_sparse_distance_matrix(PDB_FILE, CHAIN, method, MAX_DISTANCE)
+    assert isinstance(row, np.ndarray)
+    assert shape == full.shape[0]
 
     # Reconstruct dense from sparse
-    reconstructed = np.zeros((sdm.shape, sdm.shape))
-    reconstructed[sdm.row, sdm.col] = sdm.data
+    reconstructed = np.zeros((shape, shape))
+    reconstructed[row, col] = data
 
     # Where full <= cutoff and off-diagonal, reconstructed must match
     mask = (full > 0) & (full <= MAX_DISTANCE)
@@ -41,21 +40,21 @@ def test_sparse_is_lossless_subset_of_full(method):
 
 def test_sparse_cutoff_respected():
     """Tighter cutoff produces fewer entries, all within bound."""
-    sdm_wide = get_sparse_distance_matrix(PDB_FILE, CHAIN, "CB", 15.0)
-    sdm_narrow = get_sparse_distance_matrix(PDB_FILE, CHAIN, "CB", 8.0)
-    assert len(sdm_narrow) < len(sdm_wide)
-    assert sdm_narrow.data.max() <= 8.0
-    assert sdm_wide.data.max() <= 15.0
-    assert sdm_wide.data.max() > 8.0  
+    _, _, data_wide, _ = get_sparse_distance_matrix(PDB_FILE, CHAIN, "CB", 15.0)
+    row_narrow, _, data_narrow, _ = get_sparse_distance_matrix(PDB_FILE, CHAIN, "CB", 8.0)
+    assert len(data_narrow) < len(data_wide)
+    assert data_narrow.max() <= 8.0
+    assert data_wide.max() <= 15.0
+    assert data_wide.max() > 8.0
 
 
 def test_structure_sparse_flag():
     """sparse=True populates _sparse_distance_matrix; False leaves it None."""
     import frustratometer
-    from frustratometer.pdb.sparse import SparseDistanceMatrix as _SDM
+    from frustratometer.classes.Structure import SparseMatrix as _SM
     s_on = frustratometer.Structure(PDB_FILE, CHAIN, repair_pdb=False, sparse=True)
     assert s_on._sparse_distance_matrix is not None
-    assert isinstance(s_on._sparse_distance_matrix, _SDM)
+    assert isinstance(s_on._sparse_distance_matrix, _SM)
     assert s_on._sparse_distance_matrix.shape == len(s_on.sequence)
 
     s_off = frustratometer.Structure(PDB_FILE, CHAIN, repair_pdb=False, sparse=False)

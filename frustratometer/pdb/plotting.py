@@ -60,8 +60,9 @@ def _resolve_config(config: Optional[PlotConfig], **kwargs) -> PlotConfig:
 
 
 def _sparse_to_dense(sparse_dm) -> np.ndarray:
-    """Convert a SparseDistanceMatrix to an L×L array with NaN gaps."""
-    return sparse_dm.to_dense(fill=np.nan)
+    """Convert a SparseMatrix (or duck-typed object with row/col/data/shape) to an L×L array with NaN gaps."""
+    from .sparse import sparse_to_dense
+    return sparse_to_dense(sparse_dm.row, sparse_dm.col, sparse_dm.data, sparse_dm.shape, fill=np.nan)
 
 
 def _setup_ax(ax, L: int, title: str):

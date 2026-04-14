@@ -14,7 +14,8 @@ If you want to map the full sequence residue positions to the aligned sequence r
 
 from .pdb import *
 from .distance import get_dense_distance_matrix, get_sparse_distance_matrix
-from .sparse import SparseDistanceMatrix
+from .sparse import (sparse_lookup, sparse_compute_mask,
+                     sparse_filter, sparse_to_dense)
 from .plotting import (PlotConfig, plot_distance_map, plot_interaction_map,
                        plot_sparse_distance_map, plot_sparse_interaction_map)
 try:
@@ -39,5 +40,6 @@ except ImportError as e:
 
 __all__ = ['download', 'get_sequence', 'get_dense_distance_matrix', 'get_sparse_distance_matrix',
            'full_to_filtered_aligned_mapping', 'repair_pdb', 'repair_pdbs',
+           'sparse_lookup', 'sparse_compute_mask', 'sparse_filter', 'sparse_to_dense',
            'PlotConfig', 'plot_distance_map', 'plot_interaction_map',
            'plot_sparse_distance_map', 'plot_sparse_interaction_map']

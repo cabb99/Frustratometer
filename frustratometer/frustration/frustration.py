@@ -1642,10 +1642,10 @@ def compute_mask_sparse(contact_i: np.ndarray,
 
     Returns
     -------
-    SparseDistanceMatrix
-        Mask-only (data=None) SparseDistanceMatrix of pairs that pass the criteria.
+    SparseMatrix
+        Mask-only (data=None) SparseMatrix of pairs that pass the criteria.
     """
-    from frustratometer.pdb.sparse import SparseDistanceMatrix as _SDM
+    from frustratometer.classes.Structure import SparseMatrix as _SM
 
     keep = np.ones(len(contact_i), dtype=bool)
 
@@ -1661,7 +1661,7 @@ def compute_mask_sparse(contact_i: np.ndarray,
                 pos_j = np.where(contact_j >= brk, pos_j + minimum_sequence_separation, pos_j)
         keep &= np.abs(pos_i - pos_j) >= minimum_sequence_separation
 
-    return _SDM(contact_i[keep], contact_j[keep], data=None, shape=L)
+    return _SM(contact_i[keep], contact_j[keep], data=None, shape=L)
 
 def mask_mean(L: int, minimum_sequence_separation: Union[int, None] = None, chain_breaks: Union[list, None] = None):
     """
@@ -2378,9 +2378,9 @@ def build_elec_data_sparse(elec_dm,
 
     Parameters
     ----------
-    elec_dm : SparseDistanceMatrix
+    elec_dm : SparseMatrix
         40 Å sparse distance matrix for electrostatic calculations.
-    mask_dm : SparseDistanceMatrix
+    mask_dm : SparseMatrix
         Frustration mask (data=None).
     sequence : str
         Amino acid sequence.
