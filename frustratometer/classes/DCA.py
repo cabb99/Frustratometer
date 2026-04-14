@@ -46,6 +46,7 @@ class DCA(Frustratometer):
         self.mapped_distance_matrix = None
         self.distance_matrix = None
         self.chain_breaks = None
+        self._structure_sparse_dm = None
         self.mask = None
         self.minimally_frustrated_threshold = 1
         self.aa_freq = None
@@ -115,6 +116,31 @@ class DCA(Frustratometer):
         self.mapped_distance_matrix = pdb_structure.mapped_distance_matrix
         self.distance_matrix = self.mapped_distance_matrix
         self.chain_breaks = getattr(pdb_structure, 'chain_breaks', None)
+        # Store both sparse DMs: _elec has the wider radius, _sparse is capped at 15 Å
+        self._structure_sparse_dm = getattr(pdb_structure, '_sparse_distance_matrix', None)
+        self._structure_sparse_dm_elec = getattr(pdb_structure, '_sparse_distance_matrix_elec', None)
+
+    def _compute_mask(self, distance_cutoff=None, sequence_cutoff=None, chain_breaks=None):
+        """Compute a dense boolean mask, handling the sparse-structure case."""
+        from .Structure import SparseMatrix
+        dm = self.mapped_distance_matrix
+        if dm is None and self._structure_sparse_dm is not None:
+            # Use the wider-radius elec sparse DM when available so that
+            # distance cutoffs > 15 Å are handled correctly.
+            sparse_dm = self._structure_sparse_dm_elec or self._structure_sparse_dm
+            sparse_mask = sparse_dm.compute_mask(
+                maximum_contact_distance=distance_cutoff,
+                minimum_sequence_separation=sequence_cutoff,
+                chain_breaks=chain_breaks)
+            mask = sparse_mask.to_dense(fill=0).astype(np.bool_)
+            # The sparse DM doesn't store diagonal entries (distance=0).
+            # The dense path includes diagonal when distance_cutoff is None
+            # or >= 0, so replicate that behavior here.
+            if distance_cutoff is None or distance_cutoff >= 0:
+                if sequence_cutoff is None or sequence_cutoff <= 0:
+                    np.fill_diagonal(mask, True)
+            return mask
+        return frustration.compute_mask(dm, distance_cutoff, sequence_cutoff, chain_breaks=chain_breaks)
 
     def _init_from_alignment(self, pdb_structure, alignment_output_file_name,
                              filtered_alignment_output_file_name, DCA_format,
@@ -124,8 +150,7 @@ class DCA(Frustratometer):
         self.alignment_output_file_name = alignment_output_file_name
         self.filtered_alignment_output_file_name = filtered_alignment_output_file_name
         self.DCA_format = DCA_format
-        self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff,
-                                            self.sequence_cutoff, chain_breaks=self.chain_breaks)
+        self.mask = self._compute_mask(self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
     def _finalize_from_alignment(self, sparse):
         """Compute Potts model from alignment and apply sparse storage."""
@@ -263,7 +288,7 @@ class DCA(Frustratometer):
             example_matrix=np.ones((len(self.filtered_aligned_sequence),len(self.filtered_aligned_sequence)))
             self.mask = frustration.compute_mask(example_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
         else:
-            self.mask = frustration.compute_mask(self.mapped_distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
+            self.mask = self._compute_mask(self.distance_cutoff, self.sequence_cutoff, chain_breaks=self.chain_breaks)
 
         self._reformat_potts_model(potts_model)
         self._apply_sparse_potts_model(potts_model, sparse)
@@ -475,8 +500,8 @@ class DCA(Frustratometer):
 
     @sequence_cutoff.setter
     def sequence_cutoff(self, value):
-        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=getattr(self, 'chain_breaks', None))
         self._sequence_cutoff = value
+        self.mask = self._compute_mask(self.distance_cutoff, self.sequence_cutoff, chain_breaks=getattr(self, 'chain_breaks', None))
         self._native_energy = None
         self._decoy_fluctuation = {}
 
@@ -486,8 +511,8 @@ class DCA(Frustratometer):
 
     @distance_cutoff.setter
     def distance_cutoff(self, value):
-        self.mask = frustration.compute_mask(self.distance_matrix, self.distance_cutoff, self.sequence_cutoff, chain_breaks=getattr(self, 'chain_breaks', None))
         self._distance_cutoff = value
+        self.mask = self._compute_mask(self.distance_cutoff, self.sequence_cutoff, chain_breaks=getattr(self, 'chain_breaks', None))
         self._native_energy = None
         self._decoy_fluctuation = {}
 

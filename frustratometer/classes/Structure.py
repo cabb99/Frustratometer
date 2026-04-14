@@ -379,9 +379,9 @@ class Structure:
 
         if self.aligned_sequence is not None:
             if self._is_sparse:
-                raise NotImplementedError(
-                    "aligned_sequence is not supported with sparse distance matrices. "
-                    "Use sparse=False or call get_dense_distance_matrix() first.")
+                # aligned_sequence mapping requires a dense distance matrix;
+                # reconstruct it from the pdb
+                self.get_dense_distance_matrix()
             self.full_to_aligned_index_dict=pdb.full_to_filtered_aligned_mapping(self.aligned_sequence,self.filtered_aligned_sequence)
             self.mapped_distance_matrix=np.full((len(self.filtered_aligned_sequence), len(self.filtered_aligned_sequence)), np.inf)
             pos1, pos2 = np.meshgrid(list(self.full_to_aligned_index_dict.keys()), list(self.full_to_aligned_index_dict.keys()), 
