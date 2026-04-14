@@ -1,0 +1,82 @@
+name: Update README badges
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-badges:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Rewrite badge block in README
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          readme = Path("README.md")
+          text = readme.read_text()
+
+          start = "<!-- badges:start -->"
+          end = "<!-- badges:end -->"
+
+          if start not in text or end not in text:
+              raise SystemExit("README.md is missing badge markers")
+
+          owner = os.environ["OWNER"]
+          repo = os.environ["REPO"]
+
+          badge_block = (
+              f"<!-- badges:start -->\n"
+              f"[![GitHub Actions Build Status](https://github.com/{owner}/{repo}/workflows/CI/badge.svg)]"
+              f"(https://github.com/{owner}/{repo}/actions?query=workflow%3ACI)\n"
+              f"[![codecov](https://codecov.io/gh/{owner}/{repo}/graph/badge.svg?token=JKDOXOYPRS)]"
+              f"(https://codecov.io/gh/{owner}/{repo})\n"
+              f"[![Documentation Status](https://readthedocs.org/projects/frustratometer/badge/?version=latest)]"
+              f"(https://frustratometer.readthedocs.io/en/latest/?badge=latest)\n"
+              f"<!-- badges:end -->"
+          )
+
+          before, rest = text.split(start, 1)
+          _, after = rest.split(end, 1)
+          new_text = before + badge_block + after
+
+          # Rewrite clone URL
+          clone_start = "<!-- clone:start -->"
+          clone_end = "<!-- clone:end -->"
+          if clone_start in new_text and clone_end in new_text:
+              clone_block = (
+                  f"<!-- clone:start -->\n"
+                  f"    git clone https://github.com/{owner}/{repo}\n"
+                  f"<!-- clone:end -->"
+              )
+              cb, crest = new_text.split(clone_start, 1)
+              _, cafter = crest.split(clone_end, 1)
+              new_text = cb + clone_block + cafter
+
+          if new_text != text:
+              readme.write_text(new_text)
+              print("README updated.")
+          else:
+              print("README already up to date.")
+          PY
+
+      - name: Commit changes if needed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "Update README badges for ${{ github.repository }}"
+          git diff --cached --quiet || git push

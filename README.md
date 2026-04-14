@@ -1,9 +1,10 @@
 Frustratometer
 ==============================
-[//]: # (Badges)
+<!-- badges:start -->
 [![GitHub Actions Build Status](https://github.com/cabb99/Frustratometer/workflows/CI/badge.svg)](https://github.com/cabb99/Frustratometer/actions?query=workflow%3ACI)
-[![codecov](https://codecov.io/gh/HanaJaafari/Frustratometer/graph/badge.svg?token=JKDOXOYPRS)](https://codecov.io/gh/HanaJaafari/Frustratometer)
+[![codecov](https://codecov.io/gh/cabb99/Frustratometer/graph/badge.svg?token=JKDOXOYPRS)](https://codecov.io/gh/cabb99/Frustratometer)
 [![Documentation Status](https://readthedocs.org/projects/frustratometer/badge/?version=latest)](https://frustratometer.readthedocs.io/en/latest/?badge=latest)
+<!-- badges:end -->
 
 
 
@@ -39,7 +40,9 @@ Note: `openmm` and `pdbfixer` are not available on PyPI and must be installed se
 
 ### From source
 
-    git clone https://github.com/HanaJaafari/Frustratometer
+<!-- clone:start -->
+    git clone https://github.com/cabb99/Frustratometer
+<!-- clone:end -->
     cd Frustratometer
     conda install -c conda-forge --file requirements.txt
     pip install -e .

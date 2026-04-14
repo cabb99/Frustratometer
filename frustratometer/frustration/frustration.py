@@ -26,7 +26,8 @@ _AA = '-ACDEFGHIKLMNPQRSTVWY'
 
 def compute_mask(distance_matrix: np.array,
                  maximum_contact_distance: Union[float, None] = None,
-                 minimum_sequence_separation: Union[int, None] = None) -> np.array:
+                 minimum_sequence_separation: Union[int, None] = None,
+                 chain_breaks: Union[list, None] = None) -> np.array:
     """
     Computes a 2D Boolean mask (L, L) for pairwise interactions from a given distance matrix using a distance cutoff and/or a minimum sequence-separation cutoff.
     Both cutoffs are inclusive. True indicates that the residue pair meets the criteria.
@@ -40,8 +41,13 @@ def compute_mask(distance_matrix: np.array,
         The maximum distance of a contact. Include i,j if distance_matrix[i,j] <= maximum_contact_distance. 
         If None, no distance filtering is applied. Default is None.
     minimum_sequence_separation : int, optional
-        A minimum sequence separation threshold. Include i,j if |i-j| >= minimum_sequence_separation.
-        If None, no sequence separation is applied . Default is None.
+        A minimum sequence separation threshold. Include i,j if ``abs(i-j) >= minimum_sequence_separation``.
+        If None, no sequence separation is applied. Default is None.
+    chain_breaks : list of int, optional
+        Indices where new chains begin (excluding the implicit 0). For example, [50, 80]
+        means three chains: residues 0-49, 50-79, 80-end. Cross-chain pairs always satisfy
+        the minimum sequence separation, since they are not bonded in sequence.
+        If None, all residues are treated as a single chain. Default is None.
 
     Returns
     -------
@@ -58,13 +64,15 @@ def compute_mask(distance_matrix: np.array,
     [[False  True False]
      [ True False  True]
      [False  True False]]
-
-    .. todo:: Add chain information for sequence separation
     """
     seq_len = len(distance_matrix)
     mask = np.ones([seq_len, seq_len])
     if minimum_sequence_separation is not None:
-        sequence_distance = sdist.squareform(sdist.pdist(np.arange(seq_len)[:, np.newaxis]))
+        positions = np.arange(seq_len, dtype=np.float64)
+        if chain_breaks is not None:
+            for brk in chain_breaks:
+                positions[brk:] += minimum_sequence_separation
+        sequence_distance = sdist.squareform(sdist.pdist(positions[:, np.newaxis]))
         mask *= sequence_distance >= minimum_sequence_separation
     if maximum_contact_distance is not None:
         mask *= distance_matrix <= maximum_contact_distance
@@ -482,12 +490,12 @@ def compute_mutational_decoy_energy_fluctuation(seq: str,
     return decoy_energy2
 
 
-def compute_configurational_decoy_energy_fluctuation(seq: str,
+def compute_pseudoconfigurational_decoy_energy_fluctuation(seq: str,
                                                      potts_model: dict,
                                                      mask: np.array, ) -> np.array:
     r"""
     Computes a (LxLx21x21) matrix for a sequence of length L. Matrix[i,j] describes all possible changes in energy upon mutating and altering the 
-    local densities of residue i and j simultaneously.
+    local densities of residue i and j simultaneously (pseudo-configurational approximation).
     
     .. math::
         \Delta H_{ij} = H_i - H_{i'} + H_{j}-H_{j'} + J_{ij} -J_{ij'} + J_{i'j'} - J_{i'j} + \\sum_k {J_{ik} - J_{i'k} + J_{jk} -J_{j'k}}
@@ -514,8 +522,8 @@ def compute_configurational_decoy_energy_fluctuation(seq: str,
         'J': np.random.rand(20, 20, 20, 20)  # Random couplings
     }
     >>> mask = np.ones((len(seq), len(seq)), dtype=bool) # Include all pairs
-    >>> decoy_energy2 = compute_configurational_decoy_energy_fluctuation(seq, potts_model, mask)
-    >>> print(f"Matrix of Contact Configurational Decoy Energy Fluctuations: "); print(decoy_energy2)
+    >>> decoy_energy2 = compute_pseudoconfigurational_decoy_energy_fluctuation(seq, potts_model, mask)
+    >>> print(f"Matrix of Pseudo-configurational Decoy Energy Fluctuations: "); print(decoy_energy2)
     >>> print(f"Matrix Size: "); print(shape(decoy_energy2))
 
     Notes
@@ -600,7 +608,7 @@ def compute_decoy_energy(seq: str, potts_model: dict, mask: np.array, kind='sing
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
     kind : str
-        Kind of decoys generated. Options: "singleresidue," "mutational," "configurational," and "contact." 
+        Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," and "contact." 
     Returns
     -------
     decoy_energy: np.array
@@ -633,8 +641,8 @@ def compute_decoy_energy(seq: str, potts_model: dict, mask: np.array, kind='sing
         decoy_energy=native_energy + compute_singleresidue_decoy_energy_fluctuation(seq, potts_model, mask)
     elif kind == 'mutational':
         decoy_energy=native_energy + compute_mutational_decoy_energy_fluctuation(seq, potts_model, mask)
-    elif kind == 'configurational':
-        decoy_energy=native_energy + compute_configurational_decoy_energy_fluctuation(seq, potts_model, mask)
+    elif kind == 'pseudoconfigurational':
+        decoy_energy=native_energy + compute_pseudoconfigurational_decoy_energy_fluctuation(seq, potts_model, mask)
     elif kind == 'contact':
         decoy_energy=native_energy + compute_contact_decoy_energy_fluctuation(seq, potts_model, mask)
     return decoy_energy
@@ -729,7 +737,7 @@ def compute_pair_frustration(decoy_fluctuation,
     Returns
     -------
     contact_frustration: np.array
-        LxL array featuring pair frustration indices (mutational or configurational frustration, depending on 
+        LxL array featuring pair frustration indices (mutational or pseudoconfigurational frustration, depending on 
         decoy_fluctuation matrix provided)
     """
     if contact_freq is None:
@@ -902,7 +910,7 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     single_frustration : np.array
         Array containing single residue frustration index values
     pair_frustration : np.array
-        Array containing pair (ex. configurational, mutational, contact) frustration index values
+        Array containing pair (ex. pseudoconfigurational, mutational, contact) frustration index values
     tcl_script : Path or str
         Output tcl script file with static structure
     max_connections : int
@@ -1129,20 +1137,19 @@ def compute_fragment_mask(mask: np.array,
     Creates a mask for a sequence fragment such that:
     - position i belongs to the fragment, all j
     - position j belongs to the fragment, all i
-    
+
     The new mask consider all the interactions within the fragment and also the interactions between the fragment and other sequence positions.
-    
+
     Parameters
     ----------
-    
     mask : np.array
-       A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
-   fragment_pos: np:array
-        Array of sequence positions selected. 
-        
-    Return
+        A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
+    fragment_pos : np.array
+        Array of sequence positions selected.
+
+    Returns
     -------
-    fragment_mask: np.array
+    fragment_mask : np.array
         New 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
     """
 
@@ -1159,9 +1166,8 @@ def compute_fragment_total_native_energy(seq: str,
                                          mask: np.array,
                                          fragment_pos : Union[None, np.array] = None,
                                          fragment_in_context = False ) -> float:
-    
     """
-    Calculates the energy for the complete protein or for a fragment in context
+    Calculates the energy for the complete protein or for a fragment in context.
 
     Parameters
     ----------
@@ -1171,15 +1177,15 @@ def compute_fragment_total_native_energy(seq: str,
         A dictionary containing the Potts model parameters 'h' (fields) and 'J' (couplings). The fields are a 2D array of shape (L, 20), where L is the length of the sequence and 20 is the number of amino acids. The couplings are a 4D array of shape (L, L, 20, 20). The fields and couplings are assumed to be in units of energy.
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
-   fragment_pos: np:array
+    fragment_pos : np.array
         Array of sequence positions selected.
-   fragment_in_context: bool
-        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions
-    
-    Return
+    fragment_in_context : bool
+        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions.
+
+    Returns
     -------
-    energy: float
-        Native energy of the protein 
+    energy : float
+        Native energy of the protein.
     """   
     
     
@@ -1221,7 +1227,7 @@ def compute_fragment_total_decoy_energy(decoy_seqs: list,
                                         config_decoys = False,
                                         msa_mask = 1) -> np.array:
     """
-    Calculates decoy energies for the complete protein or for a fragment in context
+    Calculates decoy energies for the complete protein or for a fragment in context.
 
     Parameters
     ----------
@@ -1231,21 +1237,21 @@ def compute_fragment_total_decoy_energy(decoy_seqs: list,
         A dictionary containing the Potts model parameters 'h' (fields) and 'J' (couplings). The fields are a 2D array of shape (L, 20), where L is the length of the sequence and 20 is the number of amino acids. The couplings are a 4D array of shape (L, L, 20, 20). The fields and couplings are assumed to be in units of energy.
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
-   fragment_pos: np:array
+    fragment_pos : np.array
         Array of sequence positions selected.
-   fragment_in_context: bool
-        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions
-    split_couplings_and_fields: bool
+    fragment_in_context : bool
+        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions.
+    split_couplings_and_fields : bool
         Separate output into coupling and local fields contribution to energy.
-    config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
-    msa_mask: np.array
-        Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB
-    
-    Return
+    config_decoys : bool
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
+    msa_mask : np.array
+        Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB.
+
+    Returns
     -------
-    energy: np.array
-        Decoy energies
+    energy : np.array
+        Decoy energies.
     """   
     
     seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in decoy_seqs])
@@ -1314,7 +1320,7 @@ def compute_total_frustration(seq,
     n_decoys: int
         Number of sequence decoys to create
     config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
     msa_mask: np.array
         Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB
     fragment_pos: np.array
@@ -1420,7 +1426,7 @@ def compute_decoy_h_J(decoy_seqs: list,
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
     config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
     
     Returns
     -------
@@ -1551,7 +1557,7 @@ def compute_energy_sliding_window(seq: str,
     ndecoys: int
         Number of decoy sequences to use
     config_decoys: bool
-        If True, use the configurational decoys approximation, shuffling index positions for configurational decoys energy calculation. If False, mutational decoys.
+        If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
 
     Returns
     -------
@@ -1602,3 +1608,1071 @@ def compute_energy_sliding_window(seq: str,
     }
 
     return results
+
+
+def compute_mask_sparse(contact_i: np.ndarray,
+                        contact_j: np.ndarray,
+                        contact_distances: np.ndarray,
+                        L: int,
+                        maximum_contact_distance: Union[float, None] = None,
+                        minimum_sequence_separation: Union[int, None] = None,
+                        chain_breaks: Union[list, None] = None):
+    """
+    Compute a sparse mask from sparse distance data.
+
+    Parameters
+    ----------
+    contact_i : np.ndarray (N,)
+        Row indices of distance pairs (from sparse distance matrix).
+    contact_j : np.ndarray (N,)
+        Column indices of distance pairs.
+    contact_distances : np.ndarray (N,)
+        Distances for each (i, j) pair.
+    L : int
+        Sequence length (number of residues).
+    maximum_contact_distance : float, optional
+        Include pair if distance <= this value. If None, no distance filtering.
+    minimum_sequence_separation : int, optional
+        Include pair if ``abs(i - j) >= this value``. If None, no sequence separation filtering.
+    chain_breaks : list of int, optional
+        Indices where new chains begin (excluding the implicit 0). Cross-chain pairs
+        always satisfy the minimum sequence separation. Default is None.
+
+    Returns
+    -------
+    SparseMatrix
+        Mask-only (data=None) SparseMatrix of pairs that pass the criteria.
+    """
+    from frustratometer.classes.Structure import SparseMatrix as _SM
+
+    keep = np.ones(len(contact_i), dtype=bool)
+
+    if maximum_contact_distance is not None:
+        keep &= contact_distances <= maximum_contact_distance
+
+    if minimum_sequence_separation is not None:
+        pos_i = contact_i.astype(np.float64)
+        pos_j = contact_j.astype(np.float64)
+        if chain_breaks is not None:
+            for brk in chain_breaks:
+                pos_i = np.where(contact_i >= brk, pos_i + minimum_sequence_separation, pos_i)
+                pos_j = np.where(contact_j >= brk, pos_j + minimum_sequence_separation, pos_j)
+        keep &= np.abs(pos_i - pos_j) >= minimum_sequence_separation
+
+    return _SM(contact_i[keep], contact_j[keep], data=None, shape=L)
+
+def mask_mean(L: int, minimum_sequence_separation: Union[int, None] = None, chain_breaks: Union[list, None] = None):
+    """
+    Compute the fraction of valid residue pairs analytically for a sequence-separation-only mask.
+
+    Instead of constructing the full (L, L) boolean mask and calling `.mean()`, this
+    function counts the number of excluded pairs directly and returns the valid fraction.
+    This is used as a normalization factor for pseudoconfigurational frustration calculations.
+
+    Parameters
+    ----------
+    L : int
+        The number of residues (sequence length). The full mask would have shape (L, L).
+    minimum_sequence_separation : int, optional
+        Minimum sequence separation ``abs(i - j)`` required for a pair to be included.
+        Pairs with ``abs(i - j) < minimum_sequence_separation`` are excluded.
+        If None, no sequence-separation filtering is applied and 1.0 is returned.
+        Default is None.
+    chain_breaks : list of int, optional
+        Indices where new chains begin (excluding the implicit 0). For example, [50, 80]
+        means three chains: residues 0–49, 50–79, 80–end. Cross-chain pairs always satisfy
+        the minimum sequence separation criterion since they are not bonded in sequence.
+        If None, all residues are treated as a single chain. Default is None.
+
+    Returns
+    -------
+    fraction : float
+        The fraction of the (L, L) pairs that pass the sequence-separation filter,
+        equivalent to ``compute_mask(distance_matrix, minimum_sequence_separation=minimum_sequence_separation,
+        chain_breaks=chain_breaks).mean()`` but computed without building the full matrix.
+
+    Examples
+    --------
+    >>> mask_mean(10, minimum_sequence_separation=2)
+    0.8  # (100 - 20) / 100
+
+    Notes
+    -----
+    Without chain breaks, the number of excluded pairs is:
+    L (diagonal) + 2*(L-1) + 2*(L-2) + ... + 2*(L - minimum_sequence_separation + 1).
+
+    With chain breaks, positions are offset so that inter-chain distances are
+    artificially inflated, ensuring cross-chain pairs always pass the filter.
+    """
+    if chain_breaks is None or len(chain_breaks) == 0:
+        n_excluded = L  # diagonal (|i-j| = 0)
+        for k in range(1, minimum_sequence_separation):
+            n_excluded += 2 * (L - k)
+        return float(L * L - n_excluded) / (L * L)
+    else:
+        # With chain breaks, use position-offsetting approach
+        positions = np.arange(L, dtype=np.float64)
+        for brk in chain_breaks:
+            positions[brk:] += minimum_sequence_separation
+        # Count valid pairs efficiently via sorted positions + binary search
+        sorted_pos = np.sort(positions)
+        n_excluded = 0
+        for i in range(L):
+            lo = np.searchsorted(sorted_pos, positions[i] - minimum_sequence_separation + 1e-9, side='left')
+            hi = np.searchsorted(sorted_pos, positions[i] + minimum_sequence_separation - 1e-9, side='right')
+            n_excluded += hi - lo
+        return float(L * L - n_excluded) / (L * L)
+
+
+def potts_model_dense_to_sparse(potts_model: dict, mask: np.ndarray) -> dict:
+    """
+    Convert a dense Potts model to sparse format, keeping only couplings at masked positions.
+
+    Both (i,j) and (j,i) entries are stored to preserve the existing ``sum / 2``
+    energy summation pattern.
+
+    Parameters
+    ----------
+    potts_model : dict
+        Dense Potts model with 'h' (L, Q) and 'J' (L, L, Q, Q).
+    mask : np.ndarray
+        Boolean mask (L, L). True means the pair is a contact.
+
+    Returns
+    -------
+    sparse_potts_model : dict
+        Dictionary with keys:
+        - 'h': np.ndarray (L, Q) — unchanged
+        - 'J': np.ndarray (N_contacts, Q, Q) — couplings at contact positions
+        - 'contact_i': np.ndarray (N_contacts,) — row indices
+        - 'contact_j': np.ndarray (N_contacts,) — column indices
+        - 'L': int — sequence length
+    """
+    contact_i, contact_j = np.where(mask)
+    J_sparse = potts_model['J'][contact_i, contact_j, :, :]
+    return {
+        'h': potts_model['h'],
+        'J': J_sparse,
+        'contact_i': contact_i.astype(np.intp),
+        'contact_j': contact_j.astype(np.intp),
+        'L': potts_model['h'].shape[0],
+    }
+
+
+def potts_model_sparse_to_dense(sparse_potts_model: dict) -> dict:
+    """
+    Convert a sparse Potts model back to dense format.
+
+    Couplings at positions not stored in the sparse model are set to zero.
+
+    Parameters
+    ----------
+    sparse_potts_model : dict
+        Sparse Potts model (see ``potts_model_dense_to_sparse``).
+
+    Returns
+    -------
+    potts_model : dict
+        Dense Potts model with 'h' (L, Q) and 'J' (L, L, Q, Q).
+    """
+    L = sparse_potts_model['L']
+    Q = sparse_potts_model['h'].shape[1]
+    J = np.zeros((L, L, Q, Q), dtype=sparse_potts_model['J'].dtype)
+    J[sparse_potts_model['contact_i'], sparse_potts_model['contact_j'], :, :] = sparse_potts_model['J']
+    return {
+        'h': sparse_potts_model['h'],
+        'J': J,
+    }
+
+
+def build_contact_lookup(contact_i: np.ndarray, contact_j: np.ndarray, L: int) -> tuple:
+    """
+    Build CSR-like flat arrays mapping each position to its contacts.
+
+    For position ``p``, contacts are at indices
+    ``lookup_data[lookup_offsets[p]:lookup_offsets[p+1]]`` in the sparse J array,
+    and the partner positions are
+    ``lookup_partners[lookup_offsets[p]:lookup_offsets[p+1]]``.
+
+    Parameters
+    ----------
+    contact_i : np.ndarray (N_contacts,)
+        Row indices of contacts.
+    contact_j : np.ndarray (N_contacts,)
+        Column indices of contacts.
+    L : int
+        Sequence length.
+
+    Returns
+    -------
+    lookup_offsets : np.ndarray (L+1,)
+        CSR-style offset array.
+    lookup_partners : np.ndarray (N_contacts,)
+        Partner position for each contact entry.
+    lookup_indices : np.ndarray (N_contacts,)
+        Index into sparse J array for each contact entry.
+    """
+    N = len(contact_i)
+    # Count contacts per position (using contact_i as the "row")
+    counts = np.bincount(contact_i, minlength=L).astype(np.intp)
+
+    lookup_offsets = np.zeros(L + 1, dtype=np.intp)
+    np.cumsum(counts, out=lookup_offsets[1:])
+
+    # Sort by contact_i to group contacts by position, then fill partner/index arrays
+    order = np.argsort(contact_i, kind='stable')
+    lookup_partners = contact_j[order].astype(np.intp)
+    lookup_indices = order.astype(np.intp)
+
+    return lookup_offsets, lookup_partners, lookup_indices
+
+
+def compute_native_energy_sparse(seq: str,
+                                 sparse_potts_model: dict,
+                                 ignore_gap_couplings: bool = False,
+                                 ignore_gap_fields: bool = False) -> float:
+    """
+    Compute the native energy using a sparse Potts model.
+
+    Equivalent to ``compute_native_energy`` but avoids materializing the full
+    (L, L) coupling matrix.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model with keys 'h', 'J', 'contact_i', 'contact_j', 'L'.
+    ignore_gap_couplings : bool
+        Zero out couplings involving gap positions. Default False.
+    ignore_gap_fields : bool
+        Zero out fields at gap positions. Default False.
+
+    Returns
+    -------
+    energy : float
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+
+    h = -sparse_potts_model['h'][np.arange(L), seq_index].copy()
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    J_sparse = sparse_potts_model['J']
+
+    j_vals = -J_sparse[np.arange(len(contact_i)), seq_index[contact_i], seq_index[contact_j]]
+
+    gap_indices = np.array([i for i, aa in enumerate(seq) if aa == '-'])
+
+    if ignore_gap_fields and len(gap_indices) > 0:
+        h[gap_indices] = 0.0
+
+    if ignore_gap_couplings and len(gap_indices) > 0:
+        gap_mask = np.isin(contact_i, gap_indices) | np.isin(contact_j, gap_indices)
+        j_vals[gap_mask] = 0.0
+
+    energy = h.sum() + j_vals.sum() / 2
+    return energy
+
+
+def compute_couplings_energy_sparse(seq: str,
+                                    sparse_potts_model: dict,
+                                    ignore_couplings_of_gaps: bool = False) -> float:
+    """
+    Compute the couplings energy using a sparse Potts model.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    ignore_couplings_of_gaps : bool
+        Zero out couplings involving gap positions. Default False.
+
+    Returns
+    -------
+    couplings_energy : float
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    J_sparse = sparse_potts_model['J']
+
+    j_vals = -J_sparse[np.arange(len(contact_i)), seq_index[contact_i], seq_index[contact_j]]
+
+    if ignore_couplings_of_gaps:
+        gap_indices = np.array([i for i, aa in enumerate(seq) if aa == '-'])
+        if len(gap_indices) > 0:
+            gap_mask = np.isin(contact_i, gap_indices) | np.isin(contact_j, gap_indices)
+            j_vals[gap_mask] = 0.0
+
+    return j_vals.sum() / 2
+
+
+def compute_sequences_energy_sparse(seqs: list,
+                                    sparse_potts_model: dict,
+                                    split_couplings_and_fields: bool = False) -> np.ndarray:
+    """
+    Compute energies for multiple sequences using a sparse Potts model.
+
+    Parameters
+    ----------
+    seqs : list of str
+        Amino acid sequences (all length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    split_couplings_and_fields : bool
+        If True, return (2, N_seqs) array of [fields, couplings]. Default False.
+
+    Returns
+    -------
+    energy : np.ndarray (N_seqs,) or (2, N_seqs)
+    """
+    seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in seqs])
+    N_seqs, L = seq_index.shape
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    J_sparse = sparse_potts_model['J']
+
+    h = -sparse_potts_model['h'][np.arange(L)[np.newaxis, :], seq_index]  # (N_seqs, L)
+    j_vals = -J_sparse[np.arange(len(contact_i)),
+                        seq_index[:, contact_i],
+                        seq_index[:, contact_j]]  # (N_seqs, N_contacts)
+
+    if split_couplings_and_fields:
+        return np.array([h.sum(axis=1), j_vals.sum(axis=1) / 2])
+    else:
+        return h.sum(axis=1) + j_vals.sum(axis=1) / 2
+    
+    return lookup_offsets, lookup_partners, lookup_indices
+
+
+def compute_singleresidue_decoy_energy_fluctuation_sparse(seq: str,
+                                                          sparse_potts_model: dict) -> np.ndarray:
+    """
+    Compute single-residue decoy energy fluctuation using a sparse Potts model.
+
+    Returns the same (L, 21) shape as the dense version.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (L, 21)
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+    h = sparse_potts_model['h']
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+
+    # Fields correction: -(h[i, aa_new] - h[i, aa_native])
+    decoy_energy = np.zeros((L, 21))
+    decoy_energy -= (h - h[np.arange(L), seq_index][:, np.newaxis])
+
+    # Couplings correction via V
+    # V[j, a] = sum_i J[i, j, seq[i], a] * mask[i, j]
+    # Dense formula: correction_i(a) = V[i, seq[i]] - V[i, a]
+    V = np.zeros((L, 21))
+    values = J_sparse[np.arange(N_contacts), seq_index[contact_i], :]  # (N_contacts, 21)
+    np.add.at(V, contact_j, values)
+
+    decoy_energy += V[np.arange(L), seq_index][:, np.newaxis] - V
+
+    return decoy_energy
+
+
+def compute_mutational_decoy_energy_fluctuation_sparse(seq: str,
+                                                       sparse_potts_model: dict) -> np.ndarray:
+    """
+    Compute mutational decoy energy fluctuation using a sparse Potts model.
+
+    Returns (N_contacts, 21, 21) instead of (L, L, 21, 21).
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (N_contacts, 21, 21)
+        Energy changes for each contact upon mutating both residues.
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+    h = sparse_potts_model['h']
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+
+    aa_range = np.arange(21)
+    idx = np.arange(N_contacts)
+    pos1 = contact_i
+    pos2 = contact_j
+
+    # Fields correction
+    decoy_energy = np.zeros((N_contacts, 21, 21))
+    dh1 = h[pos1[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos1, seq_index[pos1]][:, np.newaxis]  # (N, 21)
+    dh2 = h[pos2[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos2, seq_index[pos2]][:, np.newaxis]  # (N, 21)
+    decoy_energy -= dh1[:, :, np.newaxis]
+    decoy_energy -= dh2[:, np.newaxis, :]
+
+    # Environment coupling correction via V
+    V = np.zeros((L, 21))
+    values = J_sparse[np.arange(N_contacts), seq_index[contact_i], :]  # (N_contacts, 21)
+    np.add.at(V, contact_j, values)
+
+    decoy_energy += (V[pos1, seq_index[pos1]][:, np.newaxis, np.newaxis]
+                     - V[pos1][:, :, np.newaxis]
+                     + V[pos2, seq_index[pos2]][:, np.newaxis, np.newaxis]
+                     - V[pos2][:, np.newaxis, :])
+
+    # Self-interaction corrections (pair i,j was counted in V for both pos1 and pos2)
+    decoy_energy -= J_sparse[idx, seq_index[pos1], seq_index[pos2]][:, np.newaxis, np.newaxis]
+    term2 = J_sparse[idx[:, np.newaxis], aa_range[np.newaxis, :], seq_index[pos2][:, np.newaxis]]  # (N, 21)
+    decoy_energy += term2[:, :, np.newaxis]
+    term3 = J_sparse[idx[:, np.newaxis], seq_index[pos1][:, np.newaxis], aa_range[np.newaxis, :]]  # (N, 21)
+    decoy_energy += term3[:, np.newaxis, :]
+    decoy_energy -= J_sparse
+
+    return decoy_energy
+
+
+def compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(seq: str,
+                                                            sparse_potts_model: dict,
+                                                            mask_mean: float) -> np.ndarray:
+    """
+    Compute pseudo-configurational decoy energy fluctuation using a sparse Potts model.
+
+    Uses ``mask_mean`` as a scalar weight for decoy interactions (shuffled densities).
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    mask_mean : float
+        Mean of the original dense mask, used as weight for pseudoconfigurational decoys.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (N_contacts, 21, 21)
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    L = len(seq_index)
+    h = sparse_potts_model['h']
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+
+    aa_range = np.arange(21)
+    idx = np.arange(N_contacts)
+    pos1 = contact_i
+    pos2 = contact_j
+
+    # Fields correction
+    decoy_energy = np.zeros((N_contacts, 21, 21))
+    dh1 = h[pos1[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos1, seq_index[pos1]][:, np.newaxis]
+    dh2 = h[pos2[:, np.newaxis], aa_range[np.newaxis, :]] - h[pos2, seq_index[pos2]][:, np.newaxis]
+    decoy_energy -= dh1[:, :, np.newaxis]
+    decoy_energy -= dh2[:, np.newaxis, :]
+
+    # Environment coupling correction
+    V = np.zeros((L, 21))
+    values = J_sparse[np.arange(N_contacts), seq_index[contact_i], :]  # (N_contacts, 21)
+    np.add.at(V, contact_j, values)
+
+    # Native environment uses actual mask (contacts), decoy uses mask_mean
+    decoy_energy += (V[pos1, seq_index[pos1]][:, np.newaxis, np.newaxis]
+                     - V[pos1][:, :, np.newaxis] * mask_mean
+                     + V[pos2, seq_index[pos2]][:, np.newaxis, np.newaxis]
+                     - V[pos2][:, np.newaxis, :] * mask_mean)
+
+    # Self-interaction corrections
+    decoy_energy -= J_sparse[idx, seq_index[pos1], seq_index[pos2]][:, np.newaxis, np.newaxis]
+    term2 = J_sparse[idx[:, np.newaxis], aa_range[np.newaxis, :], seq_index[pos2][:, np.newaxis]] * mask_mean
+    decoy_energy += term2[:, :, np.newaxis]
+    term3 = J_sparse[idx[:, np.newaxis], seq_index[pos1][:, np.newaxis], aa_range[np.newaxis, :]] * mask_mean
+    decoy_energy += term3[:, np.newaxis, :]
+    decoy_energy -= J_sparse * mask_mean
+
+    return decoy_energy
+
+
+def compute_contact_decoy_energy_fluctuation_sparse(seq: str,
+                                                    sparse_potts_model: dict) -> np.ndarray:
+    """
+    Compute contact decoy energy fluctuation using a sparse Potts model.
+
+    Only the coupling at the contact itself changes.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+
+    Returns
+    -------
+    decoy_energy : np.ndarray (N_contacts, 21, 21)
+    """
+    seq_index = np.array([_AA.find(aa) for aa in seq])
+    J_sparse = sparse_potts_model['J']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    N_contacts = len(contact_i)
+    idx = np.arange(N_contacts)
+
+    # Old coupling - new coupling (mask is implicit = 1 for all stored contacts)
+    decoy_energy = (J_sparse[idx, seq_index[contact_i], seq_index[contact_j]][:, np.newaxis, np.newaxis]
+                    - J_sparse)
+    return decoy_energy
+
+
+def compute_pair_frustration_sparse(decoy_fluctuation: np.ndarray,
+                                    contact_freq: Union[None, np.ndarray] = None,
+                                    correction: float = 0) -> np.ndarray:
+    """
+    Compute pair frustration indices from sparse decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation at each contact.
+    contact_freq : np.ndarray (21, 21) or None
+        Amino acid pair frequencies as weights. If None, uniform.
+    correction : float
+        Added to denominator to avoid division by zero. Default 0.
+
+    Returns
+    -------
+    frustration : np.ndarray (N_contacts,)
+        Frustration index for each contact.
+    """
+    if contact_freq is None:
+        contact_freq = np.ones((21, 21))
+    N_contacts = decoy_fluctuation.shape[0]
+    flat_fluct = decoy_fluctuation.reshape(N_contacts, 21 * 21)
+    flat_freq = contact_freq.flatten()
+    average = np.average(flat_fluct, weights=flat_freq, axis=1)
+    variance = np.average((flat_fluct - average[:, np.newaxis]) ** 2, weights=flat_freq, axis=1)
+    std_energy = np.sqrt(variance)
+    frustration = -(-average / (std_energy + correction))
+    return frustration
+
+
+def sparse_frustration_to_dense(frustration_values: np.ndarray,
+                                contact_i: np.ndarray,
+                                contact_j: np.ndarray,
+                                L: int) -> np.ndarray:
+    """
+    Convert sparse frustration values to a dense (L, L) matrix.
+
+    Parameters
+    ----------
+    frustration_values : np.ndarray (N_contacts,)
+        Frustration index for each contact.
+    contact_i : np.ndarray (N_contacts,)
+        Row indices.
+    contact_j : np.ndarray (N_contacts,)
+        Column indices.
+    L : int
+        Sequence length.
+
+    Returns
+    -------
+    dense : np.ndarray (L, L)
+        Dense frustration matrix (zero at non-contact positions).
+    """
+    dense = np.zeros((L, L))
+    dense[contact_i, contact_j] = frustration_values
+    return dense
+
+
+def _build_charges_array():
+    """
+    Build the (21,) charge vector in the DCA alphabet order.
+
+    Returns
+    -------
+    charges : np.ndarray (21,)
+        Charge of each amino acid in ``_AA`` order. D, E = -1; K, R = +1.
+    """
+    charges = np.zeros(21)
+    for idx, aa in enumerate(_AA):
+        if aa in 'DE':
+            charges[idx] = -1.0
+        elif aa in 'KR':
+            charges[idx] = 1.0
+    return charges
+
+
+# Module-level constant
+_CHARGES = _build_charges_array()
+_Q_VAR = (_CHARGES ** 2).sum() / 21  # Var(q) under uniform freq = 4/21
+
+
+def compute_elec_indicator(distance_matrix: np.ndarray,
+                           k_electrostatics: float = 17.3636,
+                           screening_length: float = 10.0) -> np.ndarray:
+    """
+    Compute the electrostatic indicator matrix (Debye-Hückel screening).
+
+    .. math::
+        \\text{indicator}(i,j) = -k_{\\text{elec}} \\frac{\\exp(-d_{ij}/\\lambda)}{d_{ij}}
+
+    Parameters
+    ----------
+    distance_matrix : np.ndarray (L, L)
+        Distance matrix between residues.
+    k_electrostatics : float
+        Electrostatic coupling coefficient (kJ/mol). Default 17.3636.
+    screening_length : float
+        Debye-Hückel screening length (Angstrom). Default 10.0.
+
+    Returns
+    -------
+    indicator : np.ndarray (L, L)
+        Electrostatic indicator. Negative for all pair distances > 0.
+    """
+    with np.errstate(divide='ignore', invalid='ignore'):
+        indicator = -k_electrostatics * np.exp(-distance_matrix / screening_length) / distance_matrix
+        indicator[np.isnan(indicator)] = 0.0
+        indicator[np.isinf(indicator)] = 0.0
+    return indicator
+
+
+def build_elec_data(distance_matrix: np.ndarray,
+                    mask: np.ndarray,
+                    sequence: str,
+                    sparse_potts_model: dict,
+                    k_electrostatics: float = 17.3636,
+                    screening_length: float = 10.0,
+                    min_sequence_separation_electrostatics: int = 1,
+                    chain_breaks: list = None) -> dict:
+    """
+    Precompute all electrostatic data needed for sparse corrections.
+
+    Parameters
+    ----------
+    distance_matrix : np.ndarray (L, L)
+        Distance matrix between residues.
+    mask : np.ndarray (L, L)
+        Contact mask (the mask used for frustration, may differ from
+        the electrostatic mask).
+    sequence : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model.
+    k_electrostatics : float
+        Electrostatic coupling coefficient.
+    screening_length : float
+        Screening length (Angstrom).
+    min_sequence_separation_electrostatics : int
+        Minimum sequence separation for electrostatic interactions.
+
+    Returns
+    -------
+    elec_data : dict
+        Dictionary with keys:
+        - 'charges': (21,) charge array
+        - 'q_var': scalar, Var(q) under uniform frequency
+        - 'q_native': (L,) native charges
+        - 'indicator': (L, L) full indicator matrix
+        - 'indicator_at_contacts': (N_contacts,) indicator values
+        - 'phi': (L,) indicator * mask @ q_native
+        - 'phi_raw': (L,) indicator @ q_native (unmasked, for pseudoconfigurational)
+        - 'mask_at_contacts': (N_contacts,) mask values at contacts
+        - 'mask_mean': scalar, mean of mask
+    """
+    seq_index = np.array([_AA.find(aa) for aa in sequence])
+    L = len(seq_index)
+    charges = _CHARGES
+    q_native = charges[seq_index]
+
+    # Full indicator matrix
+    indicator = compute_elec_indicator(distance_matrix, k_electrostatics, screening_length)
+
+    # Apply electrostatic sequence separation
+    elec_mask = compute_mask(distance_matrix,
+                             maximum_contact_distance=None,
+                             minimum_sequence_separation=min_sequence_separation_electrostatics,
+                             chain_breaks=chain_breaks)
+    indicator = indicator * elec_mask
+
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    # phi vectors
+    indicator_masked = indicator * mask
+    phi = indicator_masked @ q_native          # (L,)
+    phi_raw = indicator @ q_native             # (L,) — unmasked
+
+    return {
+        'charges': charges,
+        'q_var': _Q_VAR,
+        'q_native': q_native,
+        'indicator': indicator,
+        'indicator_at_contacts': indicator[ci, cj],
+        'phi': phi,
+        'phi_raw': phi_raw,
+        'mask_at_contacts': mask[ci, cj].astype(float),
+        'mask_mean': float(mask.mean()),
+    }
+
+
+def compute_native_energy_elec(sequence: str,
+                               elec_data: dict,
+                               mask: np.ndarray) -> float:
+    """
+    Compute the electrostatic contribution to the native energy.
+
+    Parameters
+    ----------
+    sequence : str
+        Amino acid sequence.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+    mask : np.ndarray (L, L)
+        Contact mask.
+
+    Returns
+    -------
+    energy : float
+    """
+    q_native = elec_data['q_native']
+    indicator = elec_data['indicator']
+    energy = -0.5 * (indicator * mask * np.outer(q_native, q_native)).sum()
+    return energy
+
+
+def build_elec_data_sparse(elec_dm,
+                           mask_dm,
+                           sequence: str,
+                           sparse_potts_model: dict,
+                           k_electrostatics: float = 17.3636,
+                           screening_length: float = 10.0,
+                           min_sequence_separation_electrostatics: int = 1,
+                           chain_breaks: list = None,
+                           mask_sequence_cutoff: int = None,
+                           mask_chain_breaks: list = None) -> dict:
+    """
+    Build electrostatic data from sparse COO distance arrays.
+
+    Parameters
+    ----------
+    elec_dm : SparseMatrix
+        40 Å sparse distance matrix for electrostatic calculations.
+    mask_dm : SparseMatrix
+        Frustration mask (data=None).
+    sequence : str
+        Amino acid sequence.
+    sparse_potts_model : dict
+        Sparse Potts model with 'contact_i', 'contact_j'.
+    k_electrostatics : float
+        Electrostatic coupling coefficient.
+    screening_length : float
+        Debye-Hückel screening length.
+    min_sequence_separation_electrostatics : int
+        Minimum sequence separation for electrostatic interactions.
+    chain_breaks : list, optional
+        Chain break positions.
+    mask_sequence_cutoff : int, optional
+        When provided, check sequence separation directly for mask membership
+        instead of using mask_i/mask_j.
+    mask_chain_breaks : list, optional
+        Chain breaks for the mask sequence separation check.
+
+    Returns
+    -------
+    elec_data : dict
+        Same keys as ``build_elec_data`` output.
+    """
+    elec_ci = elec_dm.row
+    elec_cj = elec_dm.col
+    elec_dists = elec_dm.data
+    elec_L = elec_dm.shape
+    mask_i = mask_dm.row
+    mask_j = mask_dm.col
+
+    seq_index = np.array([_AA.find(aa) for aa in sequence])
+    L = len(seq_index)
+    charges = _CHARGES
+    q_native = charges[seq_index]
+
+    # Apply electrostatic sequence separation to full elec sparse data
+    filt_mask = compute_mask_sparse(
+        elec_ci, elec_cj, elec_dists, elec_L,
+        maximum_contact_distance=None,
+        minimum_sequence_separation=min_sequence_separation_electrostatics,
+        chain_breaks=chain_breaks)
+    filt_ci = filt_mask.row
+    filt_cj = filt_mask.col
+
+    # Build a lookup for filtered elec distances
+    # We need the distances at (filt_ci, filt_cj) positions
+    # Create index mapping from original elec arrays
+    elec_key = elec_ci.astype(np.int64) * elec_L + elec_cj.astype(np.int64)
+    filt_key = filt_ci.astype(np.int64) * elec_L + filt_cj.astype(np.int64)
+    # Find matching indices
+    sort_idx = np.argsort(elec_key)
+    filt_pos = np.searchsorted(elec_key, filt_key, sorter=sort_idx)
+    filt_dists = elec_dists[sort_idx[filt_pos]]
+
+    # Indicator values at filtered positions
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ind_vals = -k_electrostatics * np.exp(-filt_dists / screening_length) / filt_dists
+        ind_vals[np.isnan(ind_vals)] = 0.0
+        ind_vals[np.isinf(ind_vals)] = 0.0
+
+    # Build set of mask entries for fast lookup
+    ind_masked = ind_vals.copy()
+    if mask_sequence_cutoff is not None:
+        # Check sequence separation directly (mask not limited by sparse distance cutoff)
+        def _check_seqsep(arr_i, arr_j, seq_cutoff, brks):
+            pos_i = arr_i.astype(np.float64)
+            pos_j = arr_j.astype(np.float64)
+            if brks is not None:
+                for brk in brks:
+                    pos_i = np.where(arr_i >= brk, pos_i + seq_cutoff, pos_i)
+                    pos_j = np.where(arr_j >= brk, pos_j + seq_cutoff, pos_j)
+            return np.abs(pos_i - pos_j) >= seq_cutoff
+
+        filt_in_mask = _check_seqsep(filt_ci, filt_cj, mask_sequence_cutoff, mask_chain_breaks)
+    else:
+        mask_key = mask_i.astype(np.int64) * L + mask_j.astype(np.int64)
+        mask_set = set(mask_key.tolist())
+        filt_in_mask = np.array([int(ci_v) * L + int(cj_v) in mask_set
+                                 for ci_v, cj_v in zip(filt_ci, filt_cj)])
+    ind_masked[~filt_in_mask] = 0.0
+
+    # phi = indicator * mask @ q_native  per row i
+    phi = np.bincount(filt_ci, weights=ind_masked * q_native[filt_cj], minlength=L).astype(np.float64)
+    # phi_raw = indicator @ q_native per row i (unmasked)
+    phi_raw = np.bincount(filt_ci, weights=ind_vals * q_native[filt_cj], minlength=L).astype(np.float64)
+
+    # Indicator at Potts contact positions
+    potts_ci = sparse_potts_model['contact_i']
+    potts_cj = sparse_potts_model['contact_j']
+    potts_key = potts_ci.astype(np.int64) * L + potts_cj.astype(np.int64)
+
+    # Build lookup from filtered elec data
+    ind_lookup = {}
+    for k, v in zip(filt_key, ind_vals):
+        ind_lookup[int(k)] = v
+
+    indicator_at_contacts = np.array([ind_lookup.get(int(k), 0.0) for k in potts_key])
+    if mask_sequence_cutoff is not None:
+        mask_at_contacts = _check_seqsep(potts_ci, potts_cj, mask_sequence_cutoff, mask_chain_breaks).astype(float)
+    else:
+        mask_at_contacts = np.array([1.0 if int(k) in mask_set else 0.0 for k in potts_key])
+
+    if mask_sequence_cutoff is not None:
+        _mask_mean = mask_mean(L, mask_sequence_cutoff, mask_chain_breaks)
+    else:
+        _mask_mean = float(len(mask_i)) / (L * L)
+
+    return {
+        'charges': charges,
+        'q_var': _Q_VAR,
+        'q_native': q_native,
+        'indicator': None,  # No dense indicator in sparse mode
+        'indicator_at_contacts': indicator_at_contacts,
+        'phi': phi,
+        'phi_raw': phi_raw,
+        'mask_at_contacts': mask_at_contacts,
+        'mask_mean': _mask_mean,
+        # Sparse representation for reconstructing dense indicator_masked if needed
+        'indicator_masked_i': filt_ci[filt_in_mask],
+        'indicator_masked_j': filt_cj[filt_in_mask],
+        'indicator_masked_vals': ind_masked[filt_in_mask],
+        'L': L,
+    }
+
+
+def compute_native_energy_elec_sparse(sequence: str,
+                                      elec_data: dict) -> float:
+    """
+    Compute the electrostatic contribution to native energy from sparse elec_data.
+
+    Uses phi vectors instead of full indicator matrix.
+
+    Parameters
+    ----------
+    sequence : str
+        Amino acid sequence.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data_sparse``.
+
+    Returns
+    -------
+    energy : float
+    """
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+    # E = -0.5 * sum_i q_i * phi_i where phi_i = sum_j indicator_ij * mask_ij * q_j
+    energy = -0.5 * (q_native * phi).sum()
+    return energy
+
+
+def apply_elec_correction_singleresidue(decoy_fluctuation: np.ndarray,
+                                        elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to single-residue decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (L, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (L, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+
+    correction = -(charges[np.newaxis, :] - q_native[:, np.newaxis]) * phi[:, np.newaxis]
+    return decoy_fluctuation + correction
+
+
+def apply_elec_correction_mutational(decoy_fluctuation: np.ndarray,
+                                     sparse_potts_model: dict,
+                                     elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to mutational decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    sparse_potts_model : dict
+        Sparse Potts model.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (N_contacts, 21, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+    ind_vals = elec_data['indicator_at_contacts']
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    qn1 = q_native[ci]
+    qn2 = q_native[cj]
+
+    dq_a = charges[np.newaxis, :] - qn1[:, np.newaxis]   # (N, 21)
+    dq_b = charges[np.newaxis, :] - qn2[:, np.newaxis]   # (N, 21)
+
+    correction = -(dq_a * phi[ci][:, np.newaxis])[:, :, np.newaxis]
+    correction = correction - (dq_b * phi[cj][:, np.newaxis])[:, np.newaxis, :]
+    correction = correction - ind_vals[:, np.newaxis, np.newaxis] * dq_a[:, :, np.newaxis] * dq_b[:, np.newaxis, :]
+
+    return decoy_fluctuation + correction
+
+
+def apply_elec_correction_contact(decoy_fluctuation: np.ndarray,
+                                  sparse_potts_model: dict,
+                                  elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to contact decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    sparse_potts_model : dict
+        Sparse Potts model.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (N_contacts, 21, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    ind_vals = elec_data['indicator_at_contacts']
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    qn1 = q_native[ci]
+    qn2 = q_native[cj]
+
+    correction = ind_vals[:, np.newaxis, np.newaxis] * (
+        (qn1 * qn2)[:, np.newaxis, np.newaxis]
+        - charges[np.newaxis, :, np.newaxis] * charges[np.newaxis, np.newaxis, :]
+    )
+
+    return decoy_fluctuation + correction
+
+
+def apply_elec_correction_pseudoconfigurational(decoy_fluctuation: np.ndarray,
+                                          sparse_potts_model: dict,
+                                          elec_data: dict) -> np.ndarray:
+    """
+    Apply electrostatic correction to pseudo-configurational decoy fluctuation.
+
+    Parameters
+    ----------
+    decoy_fluctuation : np.ndarray (N_contacts, 21, 21)
+        Decoy energy fluctuation from Potts-only sparse computation.
+    sparse_potts_model : dict
+        Sparse Potts model.
+    elec_data : dict
+        Electrostatic data from ``build_elec_data``.
+
+    Returns
+    -------
+    corrected : np.ndarray (N_contacts, 21, 21)
+    """
+    charges = elec_data['charges']
+    q_native = elec_data['q_native']
+    phi = elec_data['phi']
+    phi_raw = elec_data['phi_raw']
+    ind_vals = elec_data['indicator_at_contacts']
+    mask_vals = elec_data['mask_at_contacts']
+    mask_mean = elec_data['mask_mean']
+    ci = sparse_potts_model['contact_i']
+    cj = sparse_potts_model['contact_j']
+
+    qn1 = q_native[ci]
+    qn2 = q_native[cj]
+
+    c00 = qn1 * phi[ci] + qn2 * phi[cj] - ind_vals * qn1 * qn2 * mask_vals
+    c10 = mask_mean * (ind_vals * qn2 - phi_raw[ci])
+    c01 = mask_mean * (ind_vals * qn1 - phi_raw[cj])
+    c11 = -ind_vals * mask_mean
+
+    qa = charges[np.newaxis, :, np.newaxis]   # (1, 21, 1)
+    qb = charges[np.newaxis, np.newaxis, :]   # (1, 1, 21)
+    correction = (c00[:, np.newaxis, np.newaxis]
+                  + c10[:, np.newaxis, np.newaxis] * qa
+                  + c01[:, np.newaxis, np.newaxis] * qb
+                  + c11[:, np.newaxis, np.newaxis] * qa * qb)
+
+    return decoy_fluctuation + correction
+
+    

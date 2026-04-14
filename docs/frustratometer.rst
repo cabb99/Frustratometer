@@ -27,7 +27,7 @@ In this module, we implement a version of the frustratometer based on Direct Cou
 Copyright
 ---------
 
-Copyright (c) 2022-2024, Carlos Bueno, Hana Jaafari
+Copyright (c) 2022-2026, Carlos Bueno, Hana Jaafari
 
 Acknowledgements
 ----------------

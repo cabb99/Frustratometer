@@ -5,7 +5,7 @@ If you want to download a PDB file from the RCSB database, use the "download" fu
 
 If you want to extract the structure's sequence, use the "get_sequence" function.
 
-If you want to extract the distance matrix of the structure's contacts, use the "get_distance_matrix" function.
+If you want to extract the distance matrix of the structure's contacts, use the "get_dense_distance_matrix" function.
 
 If you want to map the full sequence residue positions to the aligned sequence residue positions
 (may be needed if applying a distance threshold in DCA-related calculations), use the "full_to_filtered_aligned_mapping" function.
@@ -13,8 +13,13 @@ If you want to map the full sequence residue positions to the aligned sequence r
 """
 
 from .pdb import *
+from .distance import get_dense_distance_matrix, get_sparse_distance_matrix
+from .sparse import (lookup, compute_mask,
+                     filter, to_dense)
+from .plotting import (PlotConfig, plot_distance_map, plot_interaction_map,
+                       plot_sparse_distance_map, plot_sparse_interaction_map)
 try:
-    from .fix import repair_pdb
+    from .fix import repair_pdb, repair_pdbs
 except ImportError as e:
     error_message=str(e)
     if 'pdbfixer' in str(e):
@@ -32,5 +37,9 @@ except ImportError as e:
             )
     else:
         raise e
-    
-__all__ = ['download', 'get_sequence', 'get_distance_matrix', 'full_to_filtered_aligned_mapping', 'repair_pdb']
+
+__all__ = ['download', 'get_sequence', 'get_dense_distance_matrix', 'get_sparse_distance_matrix',
+           'full_to_filtered_aligned_mapping', 'repair_pdb', 'repair_pdbs',
+           'lookup', 'compute_mask', 'filter', 'to_dense',
+           'PlotConfig', 'plot_distance_map', 'plot_interaction_map',
+           'plot_sparse_distance_map', 'plot_sparse_interaction_map']
