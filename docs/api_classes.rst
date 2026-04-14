@@ -33,7 +33,7 @@ The frustratometer package provides a handful of classes used to encapsulate the
    :inherited-members:
    :private-members:  
 
-.. autoclass:: Frustratometer
+.. autoclass:: frustratometer.classes.Frustratometer.Frustratometer
    :members:
    :undoc-members:
    :member-order: bysource
@@ -49,4 +49,14 @@ The frustratometer package provides a handful of classes used to encapsulate the
    :inherited-members:
    :private-members:  
 
+.. autoclass:: SparseMatrix
+   :members:
+   :undoc-members:
+   :member-order: bysource
+   :show-inheritance:
 
+.. autoclass:: Gamma
+   :members:
+   :undoc-members:
+   :member-order: bysource
+   :show-inheritance:

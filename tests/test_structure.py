@@ -12,11 +12,11 @@ test_data_path = Path(__file__).parent / 'data'
 
 
 @pytest.mark.parametrize("pdb,chain,repair_pdb,expect_repair", [
-    ("6u5e.pdb", "A", None,  False),  # complete, auto-detect → no repair needed
-    ("6u5e.pdb", "A", False, False),  # complete, skip repair → fine
-    ("6u5e.pdb", "A", True,  True),   # complete, force repair → calls pdbfixer
-    ("2GHY.pdb", "A", None,  True),   # incomplete, auto-detect → repairs automatically
-    ("2GHY.pdb", "A", True,  True),   # incomplete, force repair → calls pdbfixer
+    ("6u5e.pdb", "A", None,  False),  # complete, auto-detect -> no repair needed
+    ("6u5e.pdb", "A", False, False),  # complete, skip repair -> fine
+    ("6u5e.pdb", "A", True,  True),   # complete, force repair -> calls pdbfixer
+    ("2GHY.pdb", "A", None,  True),   # incomplete, auto-detect -> repairs automatically
+    ("2GHY.pdb", "A", True,  True),   # incomplete, force repair -> calls pdbfixer
 ])
 def test_structure_valid(pdb, chain, repair_pdb, expect_repair, tmp_path):
     """Structure should be consistent and only call PDBFixer when expected."""
@@ -43,7 +43,7 @@ def test_from_pdb_list(repair_pdb, tmp_path):
     """Load multiple PDBs via from_pdb_list with different repair modes."""
     pdb_files = [test_data_path / '6u5e.pdb', test_data_path / '2GHY.pdb']
     if repair_pdb is False:
-        # 2GHY is incomplete → False should fail
+        # 2GHY is incomplete -> False should fail
         with pytest.raises(ValueError, match="repair_pdb=True"):
             frustratometer.Structure.from_pdb_list(pdb_files, 'A',
                                                    pdb_directory=tmp_path,
@@ -130,6 +130,6 @@ def test_structure_detects_chain_breaks():
         pytest.skip("5msm.cif not available")
 
     s = frustratometer.Structure(cif_path, chain=None)
-    # 5msm has 6 chains (A,B,C,D,E,F) → 5 break points
+    # 5msm has 6 chains (A,B,C,D,E,F) -> 5 break points
     assert s.chain_breaks is not None
     assert len(s.chain_breaks) == 5

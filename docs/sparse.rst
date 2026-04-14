@@ -8,6 +8,13 @@ can provide a more straight-forward view of the interactions, but it is computat
 The sparse framework avoids this by storing only the couplings at positions where the contact mask
 is nonzero — typically a small fraction of all pairs.
 
+.. note::
+
+   Sparse mode is now the **default** for both ``AWSEM`` and ``DCA`` classes
+   (``sparse=True``). The ``Structure`` class also supports sparse distance
+   matrices via ``sparse=True``, which avoids allocating the full
+   :math:`(L, L)` distance matrix.
+
 Sparse Potts Model
 ------------------
 
@@ -40,9 +47,13 @@ decoy fluctuations), a CSR-like lookup structure groups contacts by position:
 Sparse Mask
 ^^^^^^^^^^^
 
-Computes the mask without materializing a full :math:`(L, L)` matrix:
+Computes the mask without creating a full :math:`(L, L)` matrix.
+Returns a :class:`~frustratometer.classes.Structure.SparseMatrix` (mask-only,
+``data=None``) instead of a dense boolean array.
 
 .. autofunction:: frustratometer.frustration.frustration.compute_mask_sparse
+
+.. autofunction:: frustratometer.frustration.frustration.mask_mean
 
 
 Sparse Energy Functions
@@ -162,6 +173,8 @@ by all correction functions.
 
 .. autofunction:: frustratometer.frustration.frustration.build_elec_data
 
+.. autofunction:: frustratometer.frustration.frustration.build_elec_data_sparse
+
 
 Native energy correction
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -180,6 +193,8 @@ The factor of :math:`\tfrac{1}{2}` avoids double-counting the symmetric
 :math:`(i,j)` and :math:`(j,i)` contributions.
 
 .. autofunction:: frustratometer.frustration.frustration.compute_native_energy_elec
+
+.. autofunction:: frustratometer.frustration.frustration.compute_native_energy_elec_sparse
 
 
 Decoy corrections

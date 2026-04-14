@@ -542,7 +542,7 @@ def test_sparse_frustration_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_
     # Dense frustration from cached decoys (no recomputation)
     dense_frust = compute_pair_frustration(dense_decoys_6u5e_density[kind], model.contact_freq)
 
-    # Sparse pipeline: decoy → frustration → densify
+    # Sparse pipeline: decoy -> frustration -> densify
     sparse_func = (compute_mutational_decoy_energy_fluctuation_sparse if kind == 'mutational'
                    else compute_contact_decoy_energy_fluctuation_sparse)
     sparse_decoy = sparse_func(model.sequence, spm)

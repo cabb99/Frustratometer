@@ -4,8 +4,8 @@ Four public functions, all using imshow:
 
 - ``plot_distance_map``           – dense L×L, continuous 0-to-vmax colourmap
 - ``plot_interaction_map``        – dense L×L, categorical band colours
-- ``plot_sparse_distance_map``    – sparse COO → temporary L×L with NaN gaps
-- ``plot_sparse_interaction_map`` – sparse COO → temporary L×L with NaN gaps
+- ``plot_sparse_distance_map``    – sparse COO -> temporary L×L with NaN gaps
+- ``plot_sparse_interaction_map`` – sparse COO -> temporary L×L with NaN gaps
 
 All accept an optional ``PlotConfig`` (pydantic) for visual settings.
 Any config field can also be overridden as a keyword argument.
@@ -118,7 +118,7 @@ def plot_distance_map(
     ax: Optional[plt.Axes] = None,
     **kwargs,
 ) -> plt.Axes:
-    """Plot a dense distance matrix with a continuous colourmap (0 → vmax)."""
+    """Plot a dense distance matrix with a continuous colourmap (0 -> vmax)."""
     cfg = _resolve_config(config, **kwargs)
 
     if ax is None:
@@ -157,7 +157,7 @@ def plot_interaction_map(
 
 
 # ---------------------------------------------------------------------------
-# Public API – sparse (COO → imshow with NaN for missing)
+# Public API – sparse (COO -> imshow with NaN for missing)
 # ---------------------------------------------------------------------------
 
 def plot_sparse_distance_map(

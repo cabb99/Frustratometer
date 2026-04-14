@@ -24,15 +24,14 @@ def jackhmmer(sequence: str,
         Databases can be downloaded from: https://www.uniprot.org/help/downloads
     log: File handle
         Path to write the output of the program. Default:DEVNULL
-    dry_run: bool (default: False)
+    dry_run : bool (default: False)
         Creates a fasta file with the sequence and prints the command needed to run jackhmmer
-    **kwargs: 
+    **kwargs
         Other arguments that can be passed to jackhmmer.
-        More information can be found by executing `jackhmmer -h`
-        arguments without a value such as --noali should be passed as `noali=True`
-        Common kwargs:
-            N: number of iterations
-            E: E-value threshold
+        More information can be found by executing ``jackhmmer -h``.
+        Arguments without a value such as ``--noali`` should be passed as ``noali=True``.
+        Common kwargs: ``N`` (number of iterations), ``E`` (E-value threshold).
+
     Returns
     -------
     output_file: Path

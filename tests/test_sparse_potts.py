@@ -70,7 +70,7 @@ def test_sparse_mask_matches_dense(small_system, max_dist, min_sep, chain_breaks
 
 
 def test_sparse_potts_roundtrip_and_lookup(small_system):
-    """dense→sparse→dense recovers J at contacts; lookup indexes them correctly."""
+    """dense->sparse->dense recovers J at contacts; lookup indexes them correctly."""
     L, Q, dm, _, _, _, potts_model = small_system
 
     mask = compute_mask(dm, maximum_contact_distance=10.0, minimum_sequence_separation=3)
@@ -115,6 +115,6 @@ def test_structure_detects_chain_breaks():
         pytest.skip("5msm.cif not available")
 
     s = Structure(cif_path, chain=None)
-    # 5msm has 6 chains (A,B,C,D,E,F) → 5 break points
+    # 5msm has 6 chains (A,B,C,D,E,F) -> 5 break points
     assert s.chain_breaks is not None
     assert len(s.chain_breaks) == 5

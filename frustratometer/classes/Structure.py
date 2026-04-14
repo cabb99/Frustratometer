@@ -412,9 +412,9 @@ class Structure:
         pdb_directory : Path, optional
             Directory for repaired files.
         repair_pdb : bool or None
-            True → repair all in parallel, then build.
-            False → build all without repair.
-            None (default) → build without repair first; batch-repair
+            True -> repair all in parallel, then build.
+            False -> build all without repair.
+            None (default) -> build without repair first; batch-repair
             only the ones that fail validation, then rebuild those.
         **kwargs
             Extra keyword arguments passed to each Structure().
@@ -484,7 +484,7 @@ class Structure:
         interaction_type : bool
             If True, colour contacts by interaction band.
         config : PlotConfig, optional
-            Visual settings.  Fields can also be overridden via **kwargs.
+            Visual settings.  Fields can also be overridden via ``**kwargs``.
         ax : matplotlib Axes, optional
             Axes to draw on.
         **kwargs

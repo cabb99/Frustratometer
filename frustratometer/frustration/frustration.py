@@ -41,8 +41,8 @@ def compute_mask(distance_matrix: np.array,
         The maximum distance of a contact. Include i,j if distance_matrix[i,j] <= maximum_contact_distance. 
         If None, no distance filtering is applied. Default is None.
     minimum_sequence_separation : int, optional
-        A minimum sequence separation threshold. Include i,j if |i-j| >= minimum_sequence_separation.
-        If None, no sequence separation is applied . Default is None.
+        A minimum sequence separation threshold. Include i,j if ``abs(i-j) >= minimum_sequence_separation``.
+        If None, no sequence separation is applied. Default is None.
     chain_breaks : list of int, optional
         Indices where new chains begin (excluding the implicit 0). For example, [50, 80]
         means three chains: residues 0-49, 50-79, 80-end. Cross-chain pairs always satisfy
@@ -1137,20 +1137,19 @@ def compute_fragment_mask(mask: np.array,
     Creates a mask for a sequence fragment such that:
     - position i belongs to the fragment, all j
     - position j belongs to the fragment, all i
-    
+
     The new mask consider all the interactions within the fragment and also the interactions between the fragment and other sequence positions.
-    
+
     Parameters
     ----------
-    
     mask : np.array
-       A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
-   fragment_pos: np:array
-        Array of sequence positions selected. 
-        
-    Return
+        A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
+    fragment_pos : np.array
+        Array of sequence positions selected.
+
+    Returns
     -------
-    fragment_mask: np.array
+    fragment_mask : np.array
         New 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
     """
 
@@ -1167,9 +1166,8 @@ def compute_fragment_total_native_energy(seq: str,
                                          mask: np.array,
                                          fragment_pos : Union[None, np.array] = None,
                                          fragment_in_context = False ) -> float:
-    
     """
-    Calculates the energy for the complete protein or for a fragment in context
+    Calculates the energy for the complete protein or for a fragment in context.
 
     Parameters
     ----------
@@ -1179,15 +1177,15 @@ def compute_fragment_total_native_energy(seq: str,
         A dictionary containing the Potts model parameters 'h' (fields) and 'J' (couplings). The fields are a 2D array of shape (L, 20), where L is the length of the sequence and 20 is the number of amino acids. The couplings are a 4D array of shape (L, L, 20, 20). The fields and couplings are assumed to be in units of energy.
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
-   fragment_pos: np:array
+    fragment_pos : np.array
         Array of sequence positions selected.
-   fragment_in_context: bool
-        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions
-    
-    Return
+    fragment_in_context : bool
+        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions.
+
+    Returns
     -------
-    energy: float
-        Native energy of the protein 
+    energy : float
+        Native energy of the protein.
     """   
     
     
@@ -1229,7 +1227,7 @@ def compute_fragment_total_decoy_energy(decoy_seqs: list,
                                         config_decoys = False,
                                         msa_mask = 1) -> np.array:
     """
-    Calculates decoy energies for the complete protein or for a fragment in context
+    Calculates decoy energies for the complete protein or for a fragment in context.
 
     Parameters
     ----------
@@ -1239,21 +1237,21 @@ def compute_fragment_total_decoy_energy(decoy_seqs: list,
         A dictionary containing the Potts model parameters 'h' (fields) and 'J' (couplings). The fields are a 2D array of shape (L, 20), where L is the length of the sequence and 20 is the number of amino acids. The couplings are a 4D array of shape (L, L, 20, 20). The fields and couplings are assumed to be in units of energy.
     mask : np.array
         A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
-   fragment_pos: np:array
+    fragment_pos : np.array
         Array of sequence positions selected.
-   fragment_in_context: bool
-        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions
-    split_couplings_and_fields: bool
+    fragment_in_context : bool
+        If True, the energetics calculations take into account the interactions between the fragment and other sequence positions.
+    split_couplings_and_fields : bool
         Separate output into coupling and local fields contribution to energy.
-    config_decoys: bool
+    config_decoys : bool
         If True, use the pseudoconfigurational decoys approximation, shuffling index positions for pseudoconfigurational decoys energy calculation. If False, mutational decoys.
-    msa_mask: np.array
-        Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB
-    
-    Return
+    msa_mask : np.array
+        Extra mask to use a Multiple Sequence Alignment that do not cover completely the reference PDB.
+
+    Returns
     -------
-    energy: np.array
-        Decoy energies
+    energy : np.array
+        Decoy energies.
     """   
     
     seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in decoy_seqs])
@@ -1635,7 +1633,7 @@ def compute_mask_sparse(contact_i: np.ndarray,
     maximum_contact_distance : float, optional
         Include pair if distance <= this value. If None, no distance filtering.
     minimum_sequence_separation : int, optional
-        Include pair if |i - j| >= this value. If None, no sequence separation filtering.
+        Include pair if ``abs(i - j) >= this value``. If None, no sequence separation filtering.
     chain_breaks : list of int, optional
         Indices where new chains begin (excluding the implicit 0). Cross-chain pairs
         always satisfy the minimum sequence separation. Default is None.
@@ -1676,8 +1674,8 @@ def mask_mean(L: int, minimum_sequence_separation: Union[int, None] = None, chai
     L : int
         The number of residues (sequence length). The full mask would have shape (L, L).
     minimum_sequence_separation : int, optional
-        Minimum sequence separation |i - j| required for a pair to be included.
-        Pairs with |i - j| < minimum_sequence_separation are excluded.
+        Minimum sequence separation ``abs(i - j)`` required for a pair to be included.
+        Pairs with ``abs(i - j) < minimum_sequence_separation`` are excluded.
         If None, no sequence-separation filtering is applied and 1.0 is returned.
         Default is None.
     chain_breaks : list of int, optional

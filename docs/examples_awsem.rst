@@ -9,17 +9,29 @@ The Frustratometer package includes a prody-based Structure class to load the st
 .. code-block:: python
 
     import frustratometer
+    from pathlib import Path
 
     # Define the path to your PDB file
     pdb_path = Path('data/my_protein.pdb')
-    # Load the structure
+    # Load the structure (dense distance matrix)
     structure = frustratometer.Structure.full_pdb(pdb_path)
     structure.sequence #The sequence of the structure
+
+For large proteins you can use a sparse distance matrix to avoid allocating the
+full :math:`(L, L)` array:
+
+.. code-block:: python
+
+    structure_sparse = frustratometer.Structure.full_pdb(pdb_path, sparse=True)
 
 Creating an AWSEM Model Instance
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 After loading the structure, create an AWSEM model instance with the desired parameters. Here we provide some typical configurations that can be found elsewhere.
+
+The AWSEM constructor defaults to ``sparse=True``, building a sparse Potts model
+that stores couplings only at contact positions. Pass ``sparse=False`` to build
+the full dense representation.
 
 .. code-block:: python
 

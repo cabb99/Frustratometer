@@ -414,7 +414,7 @@ class TestGammaCorrelation(unittest.TestCase):
 class TestGammaFileIO(unittest.TestCase):
 
     def setUp(self):
-        # Simple setup for file I/O tests
+        # Setup for file I/O tests
         self.segment_definition = {'Segment': (1, 5)}
         self.gamma = frustratometer.Gamma(np.arange(5), self.segment_definition)
         self.temp_file_path = "gamma_test_file.json"

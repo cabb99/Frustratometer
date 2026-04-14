@@ -1,7 +1,7 @@
 """
 Profiling utilities for tracking memory usage and execution time.
 
-Usage:
+Usage (from the project folder)
     from devtools.profiling import track_time, track_memory, profile
 
     # Context managers
