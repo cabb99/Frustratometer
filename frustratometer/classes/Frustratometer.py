@@ -320,15 +320,17 @@ class Frustratometer:
             sequence=self.sequence
         if not isinstance(mask, np.ndarray):
             mask=self.mask
+        # Configurational frustration has its own dedicated method (e.g. in AWSEM);
+        # dispatch before computing decoy_fluctuation which doesn't handle 'configurational'.
+        if kind == 'configurational' and 'configurational_frustration' in dir(self):
+            #TODO: Correct this function for different aa_freq than WT
+            return self.configurational_frustration(aa_freq, correction)
         decoy_fluctuation = self.decoy_fluctuation(sequence=sequence,kind=kind, mask=mask)
         if kind == 'singleresidue':
             if aa_freq is None:
                 aa_freq = self.aa_freq
             frustration_values=frustration.compute_single_frustration(decoy_fluctuation, aa_freq, correction)
             return frustration_values
-        elif kind == 'configurational' and 'configurational_frustration' in dir(self):
-            #TODO: Correct this function for different aa_freq than WT
-            return self.configurational_frustration(None, correction)
         elif kind in ['mutational', 'pseudoconfigurational', 'contact']:
             if aa_freq is None:
                 aa_freq = self.contact_freq
