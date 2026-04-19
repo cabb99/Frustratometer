@@ -401,17 +401,19 @@ class AWSEM(Frustratometer):
         sigma_water_c = sigma_water[ci, cj]
         sigma_protein_c = sigma_protein[ci, cj]
 
-        # Build J_sparse in AWSEM 20-letter alphabet: (N_c, q, q)
-        J_sparse_20 = p.k_contact * (
-            self.direct_gamma[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
-            + self.water_gamma[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
-            + self.protein_gamma[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
-        )
+        dg21 = self.direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+        wg21 = self.water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+        pg21 = self.protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+        dg21[0, :] = 0; dg21[:, 0] = 0
+        wg21[0, :] = 0; wg21[:, 0] = 0
+        pg21[0, :] = 0; pg21[:, 0] = 0
 
-        # Map to DCA 21-letter alphabet: (N_c, 21, 21)
-        J_sparse_21 = J_sparse_20[:, self.aa_map_awsem_x, self.aa_map_awsem_y]
-        J_sparse_21[:, 0, :] = 0
-        J_sparse_21[:, :, 0] = 0
+        # Build J_sparse directly in DCA 21-letter alphabet: (N_c, 21, 21)
+        J_sparse_21 = p.k_contact * (
+            dg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
+            + wg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
+            + pg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
+        )
 
         # Sparse Potts model
         h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
@@ -474,17 +476,21 @@ class AWSEM(Frustratometer):
     def _build_sparse_from_contacts(self, p, ci, cj, theta_c, thetaII_c,
                                      sigma_water_c, sigma_protein_c, burial_energy, expose):
         """Build sparse Potts model from pre-computed contact-level values (sparse distance path)."""
-        # Build J_sparse in AWSEM 20-letter alphabet: (N_c, q, q)
-        J_sparse_20 = p.k_contact * (
-            self.direct_gamma[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
-            + self.water_gamma[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
-            + self.protein_gamma[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
-        )
+        # Pre-map gamma matrices to DCA 21-letter alphabet (21, 21) to avoid
+        # allocating the intermediate (N_c, 20, 20) tensor.
+        dg21 = self.direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+        wg21 = self.water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+        pg21 = self.protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+        dg21[0, :] = 0; dg21[:, 0] = 0
+        wg21[0, :] = 0; wg21[:, 0] = 0
+        pg21[0, :] = 0; pg21[:, 0] = 0
 
-        # Map to DCA 21-letter alphabet: (N_c, 21, 21)
-        J_sparse_21 = J_sparse_20[:, self.aa_map_awsem_x, self.aa_map_awsem_y]
-        J_sparse_21[:, 0, :] = 0
-        J_sparse_21[:, :, 0] = 0
+        # Build J_sparse directly in DCA 21-letter alphabet: (N_c, 21, 21)
+        J_sparse_21 = p.k_contact * (
+            dg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
+            + wg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
+            + pg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
+        )
 
         # Sparse Potts model
         h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]

@@ -2456,9 +2456,12 @@ def build_elec_data_sparse(elec_dm,
         filt_in_mask = _check_seqsep(filt_ci, filt_cj, mask_sequence_cutoff, mask_chain_breaks)
     else:
         mask_key = mask_i.astype(np.int64) * L + mask_j.astype(np.int64)
-        mask_set = set(mask_key.tolist())
-        filt_in_mask = np.array([int(ci_v) * L + int(cj_v) in mask_set
-                                 for ci_v, cj_v in zip(filt_ci, filt_cj)])
+        sort_idx_mk = np.argsort(mask_key)
+        sorted_mask_key = mask_key[sort_idx_mk]
+        filt_lookup_key = filt_ci.astype(np.int64) * L + filt_cj.astype(np.int64)
+        filt_pos = np.searchsorted(sorted_mask_key, filt_lookup_key)
+        filt_pos = np.clip(filt_pos, 0, len(sorted_mask_key) - 1)
+        filt_in_mask = sorted_mask_key[filt_pos] == filt_lookup_key
     ind_masked[~filt_in_mask] = 0.0
 
     # phi = indicator * mask @ q_native  per row i
@@ -2471,16 +2474,20 @@ def build_elec_data_sparse(elec_dm,
     potts_cj = sparse_potts_model['contact_j']
     potts_key = potts_ci.astype(np.int64) * L + potts_cj.astype(np.int64)
 
-    # Build lookup from filtered elec data
-    ind_lookup = {}
-    for k, v in zip(filt_key, ind_vals):
-        ind_lookup[int(k)] = v
+    sort_idx_filt = np.argsort(filt_key)
+    sorted_filt_key = filt_key[sort_idx_filt]
+    potts_pos = np.searchsorted(sorted_filt_key, potts_key)
+    potts_pos = np.clip(potts_pos, 0, len(sorted_filt_key) - 1)
+    found = sorted_filt_key[potts_pos] == potts_key
+    indicator_at_contacts = np.where(found, ind_vals[sort_idx_filt[potts_pos]], 0.0)
 
-    indicator_at_contacts = np.array([ind_lookup.get(int(k), 0.0) for k in potts_key])
     if mask_sequence_cutoff is not None:
         mask_at_contacts = _check_seqsep(potts_ci, potts_cj, mask_sequence_cutoff, mask_chain_breaks).astype(float)
     else:
-        mask_at_contacts = np.array([1.0 if int(k) in mask_set else 0.0 for k in potts_key])
+        # mask_key and sorted_mask_key already computed in the filt_in_mask branch above
+        mask_pos = np.searchsorted(sorted_mask_key, potts_key)
+        mask_pos = np.clip(mask_pos, 0, len(sorted_mask_key) - 1)
+        mask_at_contacts = (sorted_mask_key[mask_pos] == potts_key).astype(float)
 
     if mask_sequence_cutoff is not None:
         _mask_mean = mask_mean(L, mask_sequence_cutoff, mask_chain_breaks)
