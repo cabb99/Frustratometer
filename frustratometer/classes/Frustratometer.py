@@ -296,7 +296,7 @@ class Frustratometer:
         self._ensure_dense_potts_model()
         return frustration.compute_scores(self.potts_model)
 
-    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0) -> np.array:
+    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:float = 0) -> np.array:
         """
         Calculates frustration index values.
         
@@ -389,8 +389,10 @@ class Frustratometer:
         """
         return frustration.compute_auc(self.roc())
 
-    def vmd(self, sequence: str = None, single:Union[str,np.array] = 'singleresidue', pair:Union[str,np.array] = 'mutational',
-             aa_freq:np.array = None, correction:int = 0, max_connections:Union[int,None] = None, movie_name=None, still_image_name=None):
+    def vmd(self, sequence: Union[None,str] = None, single:Union[None,str,np.ndarray] = 'singleresidue', pair:Union[None,str,np.ndarray] = 'mutational',
+             aa_freq:Union[None,np.ndarray] = None, correction:float = 0, max_connections:Union[int,None] = None, 
+             minimum_distance_cutoff:float = 3.5, maximum_distance_cutoff:float = 9.5, minimum_sequence_separation:int = 10,
+             movie_name=None, still_image_name=None, exit_afterwards=True):
         """
         Calculates frustration indices and superimposes frustration patterns onto PDB structure using the VMD software.
 
@@ -415,11 +417,34 @@ class Frustratometer:
                     from the sequence that was passed to this vmd function. Proceeding further may not\n\
                     perform the computation that you intend to perform.")
         
+        if maximum_distance_cutoff is None and "distance_cutoff" in dir(self):
+            maximum_distance_cutoff = self.distance_cutoff
 
-        tcl_script = frustration.write_tcl_script(self.pdb_file, self.chain, self.mask, self.distance_matrix, self.distance_cutoff,
-                                      -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq),
-                                      -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq),
-                                      max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name)
+        if single is None:
+            single = None
+        if type(single) is np.ndarray:
+            single = single.astype(float)
+        if type(single) is str:
+            single = -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq, correction = correction)
+
+        if pair is None:
+            pair = None 
+        if type(pair) is np.ndarray:
+            pair = pair.astype(float)
+        if type(pair) is str:
+            pair = -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq, correction = correction)
+        
+        tcl_script_name = 'tcl_script.tcl'
+        if movie_name is not None:
+            tcl_script_name = f'{movie_name}.tcl'
+        elif still_image_name is not None:
+            tcl_script_name = f'{still_image_name}.tcl'
+        
+        tcl_script = frustration.write_tcl_script(pdb_file =self.pdb_file, chain = self.chain, mask = self.mask, distance_matrix = self.distance_matrix, 
+                                                  single_frustration = single, pair_frustration = pair,
+                                                  minimum_distance_cutoff=minimum_distance_cutoff, maximum_distance_cutoff=maximum_distance_cutoff, minimum_sequence_separation=minimum_sequence_separation,
+                                                  max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name, tcl_script=tcl_script_name,
+                                                  exit_afterwards=exit_afterwards)
         frustration.call_vmd(self.pdb_file, tcl_script)
 
     def view_pair_frustration(self, sequence:str = None, pair:str = 'mutational', aa_freq:np.array = None):

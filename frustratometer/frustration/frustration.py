@@ -890,111 +890,169 @@ def plot_singleresidue_decoy_energy(decoy_energy, native_energy, method='cluster
     return g
 
 
-def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, distance_matrix: np.array, distance_cutoff: float, single_frustration: np.array,
-                    pair_frustration: np.array, tcl_script: Union[Path, str] ='frustration.tcl',max_connections: int =None, movie_name: Union[Path, str] =None, still_image_name: Union[Path, str] =None) -> Union[Path, str]:
+def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, distance_matrix: np.array,
+                     single_frustration: Union[np.ndarray, None] = None,
+                     pair_frustration: Union[np.ndarray, None] = None,
+                     minimum_distance_cutoff: float = None, maximum_distance_cutoff: float = None, 
+                     minimum_sequence_separation: int = None, max_connections: int = None,
+                     tcl_script: Union[Path, str] ='frustration.tcl',
+                     movie_name: Union[Path, str] =None, still_image_name: Union[Path, str] =None, 
+                     exit_afterwards=True, initial_rotation: tuple = (-90, -90, 0)) -> Union[Path, str]:
     """
-    Writes a tcl script that can be run with VMD to superimpose the frustration patterns onto the corresponding PDB structure. 
+    Write a TCL script for VMD to visualize single and pair frustration.
 
     Parameters
     ----------
-    pdb_file :  Path or str
-        pdb file name
+    pdb_file : Path or str
+        Path to the PDB file used for visualization.
     chain : str
-        Select chain from pdb
+        Chain identifier used to select residues from the PDB.
     mask : np.array
-        A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
+        Boolean mask of shape (L, L) indicating eligible residue pairs.
     distance_matrix : np.array
-        LxL array for sequence of length L, describing distances between contacts
-    distance_cutoff : float
-        Maximum distance at which a contact occurs
-    single_frustration : np.array
-        Array containing single residue frustration index values
-    pair_frustration : np.array
-        Array containing pair (ex. pseudoconfigurational, mutational, contact) frustration index values
+        Pairwise distance matrix of shape (L, L).
+    single_frustration : np.array, optional
+        Per-residue frustration values (length L). If provided, written to the VMD beta field.
+    pair_frustration : np.array, optional
+        Pair frustration matrix of shape (L, L). If provided, pair connections are drawn.
+    minimum_distance_cutoff : float, optional
+        Lower inclusive cutoff applied to pair distances when filtering pair contacts.
+    maximum_distance_cutoff : float, optional
+        Upper inclusive cutoff applied to pair distances when filtering pair contacts.
+    minimum_sequence_separation : int, optional
+        Minimum sequence separation applied only to intra-chain pairs.
+        Inter-chain pairs are not filtered by sequence separation.
+    max_connections : int, optional
+        Maximum number of minimally frustrated and highly frustrated connections to draw
+        (applied independently to each class after sorting).
     tcl_script : Path or str
-        Output tcl script file with static structure
-    max_connections : int
-        Maximum number of pair frustration values visualized in tcl file
-    movie_name : Path or str
-        Output movie file with rotating structure
-    still_image_name : Path or str
-        Output image file with still image
+        Output TCL script path.
+    movie_name : Path or str, optional
+        Base filename for a rotating movie rendering (MP4).
+    still_image_name : Path or str, optional
+        Output path for a still image snapshot.
+    exit_afterwards : bool, optional
+        If True, append ``exit`` to the VMD script when rendering output.
     
 
     Returns
     -------
     tcl_script : Path or str
-        tcl script file
+        Path to the generated TCL script.
+
     """
     fo = open(tcl_script, 'w+')
-    single_frustration = np.nan_to_num(single_frustration,nan=0,posinf=0,neginf=0)
-    pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
+    if single_frustration is not None:
+        single_frustration = np.nan_to_num(single_frustration, nan=0, posinf=0, neginf=0)
+    
+    if pair_frustration is not None:
+        pair_frustration = np.nan_to_num(pair_frustration, nan=0, posinf=0, neginf=0)
     
     
     structure = prody.parsePDB(str(pdb_file))
     selection = structure.select('protein', chain=chain)
-    residues = np.unique(selection.getResindices())
+    ca_selection = selection.select('name CA')
+    residues = ca_selection.getResindices()
+    unique_chains = list(dict.fromkeys(ca_selection.getChids()))
+    chain_to_index = {ch: i for i, ch in enumerate(unique_chains)}
+    chain_indices = np.array([chain_to_index[ch] for ch in ca_selection.getChids()])
+
 
     fo.write(f'[atomselect top all] set beta 0\n')
-    # Single residue frustration
-    for r, f in zip(residues, single_frustration):
-        # print(f)
-        fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
+    
+    if single_frustration is not None:
 
-    # Mutational frustration:
-    r1, r2 = np.meshgrid(residues, residues, indexing='ij')
-    sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel(),distance_matrix.ravel(), mask.ravel()]).T
-    #Filter with mask and distance
-    if distance_cutoff:
-        mask_dist=(sel_frustration[:, -2] <= distance_cutoff)
-    else:
+        for r, f in zip(residues, single_frustration):
+            fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
+
+    
+    if pair_frustration is not None:
+        # Mutational frustration:
+        r1, r2 = np.meshgrid(residues, residues, indexing='ij')
+        c1, c2 = np.meshgrid(chain_indices, chain_indices, indexing='ij')
+        
+        sel_frustration = np.array([r1.ravel(), r2.ravel(), c1.ravel(), c2.ravel(), pair_frustration.ravel(), distance_matrix.ravel(), mask.ravel()]).T
+        #Filter with mask and distance
         mask_dist=np.ones(len(sel_frustration),dtype=bool)
-    sel_frustration = sel_frustration[mask_dist & (sel_frustration[:, -1] > 0)]
-    
-    minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -0.78]
-    #minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -1.78]
-    sort_index = np.argsort(minimally_frustrated[:, 2])
-    minimally_frustrated = minimally_frustrated[sort_index]
-    if max_connections:
-        minimally_frustrated = minimally_frustrated[:max_connections]
-    fo.write('draw color green\n')
-    
-
-    for (r1, r2, f, d ,m) in minimally_frustrated:
-        r1=int(r1)
-        r2=int(r2)
-        if abs(r1-r2) == 1: # don't draw interactions between residues adjacent in sequence
-            continue
-        pos1 = selection.select(f'resindex {r1} and (name CB or (resname GLY and name CA))').getCoords()[0]
-        pos2 = selection.select(f'resindex {r2} and (name CB or (resname GLY and name CA))').getCoords()[0]
-        distance = np.linalg.norm(pos1 - pos2)
-        if d > 9.5 or d < 3.5:
-            continue
-        fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
-        if 3.5 <= distance <= 6.5:
-            fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
+        if maximum_distance_cutoff is not None:
+            mask_dist= mask_dist & (sel_frustration[:, -2] <= maximum_distance_cutoff)
+            
+        if minimum_distance_cutoff is not None:
+            mask_dist = mask_dist & (sel_frustration[:, -2] >= minimum_distance_cutoff)
+            
+        if minimum_sequence_separation is not None:
+            #Filter with sequence separation for residues in the same chain
+            mask_seqsep = np.ones(len(sel_frustration), dtype=bool)
+            same_chain = sel_frustration[:, 2] == sel_frustration[:, 3]
+            seq_sep = np.abs(sel_frustration[:, 0] - sel_frustration[:, 1])
+            mask_seqsep[same_chain] = seq_sep[same_chain] >= minimum_sequence_separation
         else:
-            fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
+            mask_seqsep = np.ones(len(sel_frustration), dtype=bool) 
 
-    frustrated = sel_frustration[sel_frustration[:, 2] > 1]
-    #frustrated = sel_frustration[sel_frustration[:, 2] > 0]
-    sort_index = np.argsort(frustrated[:, 2])[::-1]
-    frustrated = frustrated[sort_index]
-    if max_connections:
-        frustrated = frustrated[:max_connections]
-    fo.write('draw color red\n')
-    for (r1, r2, f ,d, m) in frustrated:
-        r1=int(r1)
-        r2=int(r2)
-        if d > 9.5 or d < 3.5:
-            continue
-        fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
-        if 3.5 <= d <= 6.5:
-            fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
-        else:
-            fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
+        sel_frustration = sel_frustration[mask_dist & (sel_frustration[:, -1] > 0) & mask_seqsep]
+        # print(f"Number of contacts after filtering: {len(sel_frustration)}")
+        draw_contacts = sel_frustration[(sel_frustration[:, 4] < -0.78) | (sel_frustration[:, 4] > 1)]
+        # print(f"Number of contacts to draw: {len(draw_contacts)}")
+        
+        minimally_frustrated = sel_frustration[sel_frustration[:, 4] < -0.78]
+        #minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -1.78]
+        sort_index = np.argsort(minimally_frustrated[:, 4])
+        minimally_frustrated = minimally_frustrated[sort_index]
+        if max_connections:
+            minimally_frustrated = minimally_frustrated[:max_connections]
+        fo.write('draw color green\n')
+        
+        counter = 0
+        for (r1, r2, c1, c2, f, d ,m) in minimally_frustrated:
+            r1=int(r1)
+            r2=int(r2)
+            if r1>r2: #Remove symmetric pairs
+                continue
+            if d > 9.5 or d < 3.5:
+                continue
+            # pos1_CA = selection.select(f'resindex {r1} and (name CA or (resname GLY and name CA))').getCoords()[0]
+            # pos2_CA = selection.select(f'resindex {r2} and (name CA or (resname GLY and name CA))').getCoords()[0]
+            # distance_CA = np.linalg.norm(pos1_CA - pos2_CA)
+            # if distance_CA > 9.5 or distance_CA < 3.5:
+            #     continue
+
+            fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
+            fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
+            if 3.5 <= d <= 6.5:
+                fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
+            else:
+                fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
+            counter += 1
+        
+        # print("Number of minimally frustrated contacts drawn: ", counter)
+
+        frustrated = sel_frustration[sel_frustration[:, 4] > 1]
+        #frustrated = sel_frustration[sel_frustration[:, 2] > 0]
+        sort_index = np.argsort(frustrated[:, 4])[::-1]
+        frustrated = frustrated[sort_index]
+        if max_connections:
+            frustrated = frustrated[:max_connections]
+        fo.write('draw color red\n')
+        for (r1, r2, c1, c2, f ,d, m) in frustrated:
+            r1=int(r1)
+            r2=int(r2)
+            if r1>r2: #Remove symmetric pairs
+                continue
+            # pos1_CA = selection.select(f'resindex {r1} and (name CA or (resname GLY and name CA))').getCoords()[0]
+            # pos2_CA = selection.select(f'resindex {r2} and (name CA or (resname GLY and name CA))').getCoords()[0]
+            # distance_CA = np.linalg.norm(pos1_CA - pos2_CA)
+            # if distance_CA > 9.5 or distance_CA < 3.5:
+            #     continue
+            if d > 9.5 or d < 3.5:
+                continue
+            fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
+            fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
+            if 3.5 <= d <= 6.5:
+                fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
+            else:
+                fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
+            counter += 1
+        # print("Number of connections drawn: ", counter)
     
     fo.write('''mol delrep top 0
             mol color Beta
@@ -1004,7 +1062,11 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
             mol addrep top
             color scale method GWR
             ''')
-    
+
+    fo.write(f'rotate x by {initial_rotation[0]}\n')
+    fo.write(f'rotate y by {initial_rotation[1]}\n')
+    fo.write(f'rotate z by {initial_rotation[2]}\n')
+
     if movie_name:
         fo.write('''axes location Off
             color Display Background white
@@ -1014,10 +1076,16 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
             display resetview
             display resize [expr [lindex [display get size] 0]/2*2] [expr [lindex [display get size] 1]/2*2] ;#Resize display to even height and width
             display update ui
+            ''')
 
+        fo.write(f'rotate x by {initial_rotation[0]}\n')
+        fo.write(f'rotate y by {initial_rotation[1]}\n')
+        fo.write(f'rotate z by {initial_rotation[2]}\n')
+
+        fo.write('''
             # Set up the movie directory and base file name
-            mkdir movie_tmp
-            set workdir "movie_tmp"
+            mkdir movie_tmp_''' + f'{movie_name}' + '''
+            set workdir "movie_tmp_''' +f'{movie_name}"' + '''
             ''' + f'set basename "{movie_name}"' + '''
             set numframes 360
             set framerate 25
@@ -1058,18 +1126,19 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
                 set output [format "%s/$basename.%05d.tga" $workdir $i]
                 exec rm $output
             }
-            exit
-        ''')
+
+        ''' + ("exit\n" if exit_afterwards else '')
+        
+        )
     elif still_image_name:
         fo.write(f'set output "{still_image_name}"' + '''
             render snapshot $output
-            exit
-        ''')
+            ''' + ("exit\n" if exit_afterwards else ''))
     fo.close()
     return tcl_script
 
 
-def call_vmd(pdb_file: Union[Path,str], tcl_script: Union[Path,str]):
+def call_vmd(pdb_file: Union[Path,str], tcl_script: Union[Path,str],pipe=False):
     """
     Calls VMD program with given pdb file and tcl script to visualize frustration patterns
 
@@ -1081,7 +1150,10 @@ def call_vmd(pdb_file: Union[Path,str], tcl_script: Union[Path,str]):
         Output tcl script file with static structure
     """
     import subprocess
-    return subprocess.Popen(['vmd', '-e', tcl_script, pdb_file], stdin=subprocess.PIPE)
+    if pipe:
+        return subprocess.Popen(['vmd', '-e', tcl_script, pdb_file], stdin=subprocess.PIPE)
+    else:    
+        return subprocess.Popen(['vmd', '-e', tcl_script, pdb_file])
 
 
 def canvas(with_attribution=True):
