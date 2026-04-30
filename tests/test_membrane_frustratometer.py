@@ -31,7 +31,7 @@ from pathlib import Path
 import frustratometer
 
 TEST_DATA = Path("tests/data")
-REF = json.loads((TEST_DATA / "openawsem_energies.json").read_text())
+REF = json.loads((TEST_DATA / "2xov_validation" / "openawsem_energies.json").read_text())
 ENERGY_ABS_TOL_KJ = 0.1
 ENERGY_ABS_TOL_KJ_WATER_CONTACT = 0.3
 ENERGY_ABS_TOL_KJ_MEMBRANE_CONTACT = 0.2
