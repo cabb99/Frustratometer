@@ -2,6 +2,7 @@ import json
 import numpy as np
 from ..utils import _path
 from .. import frustration
+from ..frustration.frustration import _AA as _AA_21
 from .Structure import Structure, SparseMatrix
 from .Frustratometer import Frustratometer
 from .Gamma import Gamma
@@ -217,12 +218,24 @@ class AWSEM(Frustratometer):
                 self.dgwoct = np.array(p.zim, dtype=np.float64)
             else:
                 self.dgwoct = np.array([self._dgwoct_scale[_AA.index(aa)] for aa in self.sequence], dtype=np.float64)
+            # Per-residue, per-aa Zim contribution to h, shape (N, 21).
+            # Build paths add this to h; zim_energy() reads it at the native sequence.
+            if p.zim is not None:
+                # Preassigned dgwoct is per-position, independent of aa type.
+                zim_col = p.k_membrane * self.dgwoct * self.phi_z  # (N,)
+                self._zim_h = np.broadcast_to(zim_col[:, None],
+                                              (self.N, len(self.aa_map_awsem_list))).copy()
+            else:
+                # dgwoct_scale (length 20) reshuffled into the 21-letter alphabet.
+                zim_h_20 = p.k_membrane * self._dgwoct_scale[None, :] * self.phi_z[:, None]
+                self._zim_h = zim_h_20[:, self.aa_map_awsem_list]
         else:
             self.alpha = None
             self.phi_z = None
             self.dgwoct = None
             self.z_coords = None
             self._dgwoct_scale = None
+            self._zim_h = None
 
         self._decoy_fluctuation = {}
         self.minimally_frustrated_threshold=.78
@@ -474,13 +487,8 @@ class AWSEM(Frustratometer):
         # Dense Potts model
         self._potts_model = {}
         self._potts_model['h'] = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        if p.membrane:
-            if p.zim is not None:
-                # Preassigned membrane zim is position-dependent and independent of amino acid type.
-                self._potts_model['h'] += p.k_membrane * self.dgwoct[:, np.newaxis] * self.phi_z[:, np.newaxis]
-            else:
-                zim_h = p.k_membrane * self._dgwoct_scale[np.newaxis, :] * self.phi_z[:, np.newaxis]  # (N, 20)
-                self._potts_model['h'] += zim_h[:, self.aa_map_awsem_list]
+        if self._zim_h is not None:
+            self._potts_model['h'] += self._zim_h
         self._potts_model['J'] = contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
         self._potts_model['h'][:, 0] = 0
         self._potts_model['J'][:, :, 0, :] = 0
@@ -564,13 +572,8 @@ class AWSEM(Frustratometer):
 
         # Sparse Potts model
         h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        if p.membrane:
-            if p.zim is not None:
-                # Preassigned membrane zim is position-dependent and independent of amino acid type.
-                h += p.k_membrane * self.dgwoct[:, np.newaxis] * self.phi_z[:, np.newaxis]
-            else:
-                zim_h = p.k_membrane * self._dgwoct_scale[np.newaxis, :] * self.phi_z[:, np.newaxis]
-                h += zim_h[:, self.aa_map_awsem_list]
+        if self._zim_h is not None:
+            h += self._zim_h
         h[:, 0] = 0
         self.sparse_potts_model = {
             'h': h,
@@ -681,14 +684,8 @@ class AWSEM(Frustratometer):
 
         # Sparse Potts model
         h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        if p.membrane:
-            # Add Zim membrane potential: k_membrane * DGwoct(aa_type) * phi_z(position)
-            if p.zim is not None:
-                # Preassigned membrane zim is position-dependent and independent of amino acid type.
-                h += p.k_membrane * self.dgwoct[:, np.newaxis] * self.phi_z[:, np.newaxis]
-            else:
-                zim_h = p.k_membrane * self._dgwoct_scale[np.newaxis, :] * self.phi_z[:, np.newaxis]  # (N, 20)
-                h += zim_h[:, self.aa_map_awsem_list]
+        if self._zim_h is not None:
+            h += self._zim_h
         h[:, 0] = 0
         self.sparse_potts_model = {
             'h': h,
@@ -932,3 +929,13 @@ class AWSEM(Frustratometer):
     def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000):
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
+
+    def zim_energy(self) -> float:
+        """Membrane Zim (insertion) potential energy for the native sequence,
+        in kJ/mol. Sign matches the contribution added to ``h`` (opposite of
+        :meth:`fields_energy`); ``fields_energy() + zim_energy()`` is the
+        burial-only contribution. Returns 0.0 outside membrane mode."""
+        if self._zim_h is None:
+            return 0.0
+        seq_index = np.array([_AA_21.index(aa) for aa in self.sequence])
+        return float(self._zim_h[np.arange(self.N), seq_index].sum())

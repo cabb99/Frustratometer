@@ -103,7 +103,7 @@ class Frustratometer:
         energy_value=self._native_energy
         return energy_value
 
-    def sequences_energies(self, sequences:np.array, split_couplings_and_fields:bool = False):
+    def sequences_energies(self, sequences: np.ndarray, split_couplings_and_fields:bool = False):
         """
         Computes the energy of multiple protein sequences.
 
@@ -186,7 +186,7 @@ class Frustratometer:
             couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps)
         return couplings_energy
         
-    def decoy_fluctuation(self, sequence:str = None,kind:str = 'singleresidue',mask:np.array = None) -> np.array:
+    def decoy_fluctuation(self, sequence:str = None,kind:str = 'singleresidue',mask:np.array = None) -> np.ndarray:
         """
         Computes a matrix for a sequence of length L that describes all possible changes in energy upon mutating a single or pair of residues (depending on "kind" entry used) simultaneously.
             
@@ -296,7 +296,7 @@ class Frustratometer:
         self._ensure_dense_potts_model()
         return frustration.compute_scores(self.potts_model)
 
-    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:float = 0) -> np.array:
+    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:float = 0) -> np.ndarray:
         """
         Calculates frustration index values.
         
