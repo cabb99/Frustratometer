@@ -56,4 +56,10 @@ setup(
         'numba',
     ],
 
+    entry_points={
+        'console_scripts': [
+            'frustratometer = frustratometer.cli:main',
+        ],
+    },
+
 )

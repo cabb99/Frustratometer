@@ -1,4 +1,6 @@
 """Provide the primary functions."""
+import os
+
 from .. import pdb
 from .. import dca
 
@@ -9,6 +11,8 @@ from pathlib import Path
 #Import other modules
 from .. import frustration
 import logging
+import tempfile
+import subprocess
 
 __all__=['PottsModel']
 ##################
@@ -392,7 +396,7 @@ class Frustratometer:
     def vmd(self, sequence: Union[None,str] = None, single:Union[None,str,np.ndarray] = 'singleresidue', pair:Union[None,str,np.ndarray] = 'mutational',
              aa_freq:Union[None,np.ndarray] = None, correction:float = 0, max_connections:Union[int,None] = None, 
              minimum_distance_cutoff:float = 3.5, maximum_distance_cutoff:float = 9.5, minimum_sequence_separation:int = 10,
-             movie_name=None, still_image_name=None, exit_afterwards=True):
+             movie_name=None, still_image_name=None, exit_afterwards=True, debug_directory:Union[None,Path] = None):
         """
         Calculates frustration indices and superimposes frustration patterns onto PDB structure using the VMD software.
 
@@ -434,18 +438,31 @@ class Frustratometer:
         if type(pair) is str:
             pair = -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq, correction = correction)
         
-        tcl_script_name = 'tcl_script.tcl'
-        if movie_name is not None:
-            tcl_script_name = f'{movie_name}.tcl'
-        elif still_image_name is not None:
-            tcl_script_name = f'{still_image_name}.tcl'
+        #Create a temporary directory to store the tcl script and the movie frames
+        if debug_directory is not None:
+            debug_directory.mkdir(parents=True, exist_ok=True)
+        else:
+            debug_directory = Path(tempfile.mkdtemp())
+        print(f"Debug directory for VMD output: {debug_directory}")
         
+        # Define the name of the tcl script based on whether a movie or still image is being generated
+        if movie_name is not None:
+            tcl_script_name = debug_directory / Path(movie_name).with_suffix('.tcl')
+        elif still_image_name is not None:
+            tcl_script_name = debug_directory / Path(still_image_name).with_suffix('.tcl')
+
+        tcl_script_name.parent.mkdir(parents=True, exist_ok=True)
+        print(f"VMD script will be saved as: {tcl_script_name}")
+
+        
+
         tcl_script = frustration.write_tcl_script(pdb_file =self.pdb_file, chain = self.chain, mask = self.mask, distance_matrix = self.distance_matrix, 
                                                   single_frustration = single, pair_frustration = pair,
                                                   minimum_distance_cutoff=minimum_distance_cutoff, maximum_distance_cutoff=maximum_distance_cutoff, minimum_sequence_separation=minimum_sequence_separation,
-                                                  max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name, tcl_script=tcl_script_name,
-                                                  exit_afterwards=exit_afterwards)
-        frustration.call_vmd(self.pdb_file, tcl_script)
+                                                  max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name, tcl_script=str(tcl_script_name),
+                                                  exit_afterwards=exit_afterwards, debug_directory=debug_directory)
+        
+        return frustration.call_vmd(self.pdb_file, tcl_script)
 
     def view_pair_frustration(self, sequence:str = None, pair:str = 'mutational', aa_freq:np.array = None):
         """

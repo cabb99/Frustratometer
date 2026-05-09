@@ -21,6 +21,7 @@ import scipy.spatial.distance as sdist
 import numpy as np
 from typing import Union
 from pathlib import Path
+import subprocess
 
 _AA = '-ACDEFGHIKLMNPQRSTVWY'
 
@@ -897,7 +898,8 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
                      minimum_sequence_separation: int = None, max_connections: int = None,
                      tcl_script: Union[Path, str] ='frustration.tcl',
                      movie_name: Union[Path, str] =None, still_image_name: Union[Path, str] =None, 
-                     exit_afterwards=True, initial_rotation: tuple = (-90, -90, 0)) -> Union[Path, str]:
+                     exit_afterwards=True, initial_rotation: tuple = (-90, -90, 0),
+                     debug_directory: Union[Path, str] = None) -> Union[Path, str]:
     """
     Write a TCL script for VMD to visualize single and pair frustration.
 
@@ -1084,8 +1086,7 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
 
         fo.write('''
             # Set up the movie directory and base file name
-            mkdir movie_tmp_''' + f'{movie_name}' + '''
-            set workdir "movie_tmp_''' +f'{movie_name}"' + '''
+            set workdir "''' +f'{debug_directory}"' + '''
             ''' + f'set basename "{movie_name}"' + '''
             set numframes 360
             set framerate 25
@@ -1121,10 +1122,10 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
             captureFrames
             convertToMP4
 
-            # Cleanup the TGA files if desired
-            for {set i 0} {$i < $numframes} {incr i} {
-                set output [format "%s/$basename.%05d.tga" $workdir $i]
-                exec rm $output
+            # # Cleanup the TGA files if desired
+            # for {set i 0} {$i < $numframes} {incr i} {
+            #     set output [format "%s/$basename.%05d.tga" $workdir $i]
+            #     exec rm $output
             }
 
         ''' + ("exit\n" if exit_afterwards else '')
@@ -1149,7 +1150,6 @@ def call_vmd(pdb_file: Union[Path,str], tcl_script: Union[Path,str],pipe=False):
     tcl_script : Path or str
         Output tcl script file with static structure
     """
-    import subprocess
     if pipe:
         return subprocess.Popen(['vmd', '-e', tcl_script, pdb_file], stdin=subprocess.PIPE)
     else:    
