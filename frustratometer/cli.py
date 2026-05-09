@@ -161,7 +161,7 @@ def resolve_params(args: argparse.Namespace) -> dict:
 def _build_model(args: argparse.Namespace, params: dict):
     structure = frustratometer.Structure(args.pdb, args.chain,
                                          repair_pdb=args.repair_pdb)
-    return frustratometer.AWSEM(structure, sparse=False, **params)
+    return frustratometer.AWSEM(structure, **params)
 
 
 def _expand_kinds(kinds: list[str]) -> list[str]:
