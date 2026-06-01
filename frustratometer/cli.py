@@ -312,6 +312,16 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = args.output_dir or Path(f"frustration_{args.pdb.stem}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    frustratometer.utils.autolog_run(
+        results_dir=out_dir,
+        program_version=frustratometer.__version__,
+        extra={
+            "profile": args.profile,
+            "params": params,
+            "parsed_args": vars(args),
+        },
+    )
+
     pair_kinds = [k for k in kinds if k != "singleresidue"]
     needs_separate_sr = (
         "singleresidue" in kinds
