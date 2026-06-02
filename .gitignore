@@ -116,6 +116,14 @@ ENV/
 # macOS
 .DS_Store
 
+# CUDA / Nsight Systems profiling artifacts
+*.qdstrm
+*.qdrep
+*.nsys-rep
+
+# Large benchmark-only structure (not committed; supply locally to benchmark)
+tests/data/9qr3.cif
+
 #Other files
 frustratometer/databases
 docs/autosummary/*
@@ -125,3 +133,5 @@ tests/data/*/Images/*
 tests/data/*/VisualizationScripts/*
 tests/data/*/README
 tests/data/*.rar
+
+scratch

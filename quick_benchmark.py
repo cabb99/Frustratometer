@@ -8,6 +8,9 @@ pdbs = ['tests/data/6u5e.pdb', 'tests/data/5msm.pdb','tests/data/9qr3.cif']
 
 for pdb in pdbs:
     name = Path(pdb).name
+    if not Path(pdb).exists():
+        print(f"Skipping {name} (file not found)")
+        continue
     structure = frustratometer.Structure(pdb, 'A', sparse=True)
     L = len(structure.sequence)
     print(f"===========================================================")
