@@ -731,59 +731,27 @@ class FrustrationCUDA:
         return values
 
 
-def prepare_cuda(data, default_n_decoys: int = 4000, seed: int = 42) -> FrustrationCUDA:
-    """Small convenience constructor for callers that prefer function style."""
-    return FrustrationCUDA(data, default_n_decoys=default_n_decoys, seed=seed)
-
-
 # -----------------------------------------------------------------------------
-# Legacy compatibility API
+# Module-level API (mirrors frustration.numba)
 # -----------------------------------------------------------------------------
 
-class DeviceData(FrustrationCUDA):
-    """Backward-compatible alias for the pre-uploaded CUDA backend state."""
-
-
-def _ensure_backend(data):
-    """Accept host frustration data or an already prepared CUDA backend."""
-    return data if isinstance(data, FrustrationCUDA) else DeviceData(data)
+def _as_backend(data):
+    """Accept a host FrustrationData or an already-uploaded FrustrationCUDA."""
+    return data if isinstance(data, FrustrationCUDA) else FrustrationCUDA(data)
 
 
 def native_energy(data):
-    """Legacy module-level native energy entry point."""
-    return _ensure_backend(data).native_energy()
+    return _as_backend(data).native_energy()
 
 
 def singleresidue_frustration(data, correction=0.0):
-    """Legacy module-level singleresidue entry point."""
-    return _ensure_backend(data).singleresidue(correction=float(correction))
-
-
-def mutational_frustration(data, correction=0.0):
-    """Legacy module-level mutational entry point.
-
-    Returns
-    -------
-    frustration : ndarray (Nc,)
-    contact_i   : ndarray (Nc,)
-    contact_j   : ndarray (Nc,)
-    L           : int
-    """
-    backend = _ensure_backend(data)
-    values = backend.mutational(correction=float(correction), dense=False)
-    return values, backend._contact_i_host, backend._contact_j_host, backend.L
+    return _as_backend(data).singleresidue(correction=float(correction))
 
 
 def mutational_frustration_dense(data, correction=0.0):
-    """Legacy dense mutational frustration entry point."""
-    return _ensure_backend(data).mutational(correction=float(correction), dense=True)
+    return _as_backend(data).mutational(correction=float(correction), dense=True)
 
 
 def configurational_frustration(data, n_decoys=4000, seed=42, correction=0.0):
-    """Legacy module-level configurational frustration entry point."""
-    return _ensure_backend(data).configurational(
-        n_decoys=n_decoys,
-        seed=seed,
-        correction=float(correction),
-        dense=True,
-    )
+    return _as_backend(data).configurational(
+        n_decoys=n_decoys, seed=seed, correction=float(correction), dense=True)

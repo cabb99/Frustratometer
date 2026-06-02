@@ -207,20 +207,16 @@ class TestFastAttributes:
 @pytest.fixture(scope="module")
 def cuda_backend(cuda_data):
     """Pre-built FrustrationCUDA instance reused across backend-level tests."""
-    return fcuda.prepare_cuda(cuda_data)
+    return fcuda.FrustrationCUDA(cuda_data)
 
 
 class TestFrustrationCUDAClass:
-    def test_prepare_cuda_returns_frustration_cuda(self, cuda_data):
-        backend = fcuda.prepare_cuda(cuda_data)
+    def test_constructor_returns_frustration_cuda(self, cuda_data):
+        backend = fcuda.FrustrationCUDA(cuda_data)
         assert isinstance(backend, fcuda.FrustrationCUDA)
 
-    def test_device_data_is_frustration_cuda(self, cuda_data):
-        dd = fcuda.DeviceData(cuda_data)
-        assert isinstance(dd, fcuda.FrustrationCUDA)
-
     def test_init_L_matches_model(self, awsem_model, cuda_data):
-        backend = fcuda.prepare_cuda(cuda_data)
+        backend = fcuda.FrustrationCUDA(cuda_data)
         assert backend.L == awsem_model.N
 
     def test_mutational_sparse_shape(self, cuda_backend):
@@ -234,25 +230,6 @@ class TestFrustrationCUDAClass:
     def test_configurational_dense_shape(self, cuda_backend):
         dense = cuda_backend.configurational(n_decoys=1000, dense=True)
         assert dense.shape == (cuda_backend.L, cuda_backend.L)
-
-
-# ── Legacy tuple API ──────────────────────────────────────────────────────────
-
-class TestLegacyTupleAPI:
-    def test_mutational_frustration_returns_4_tuple(self, cuda_data):
-        result = fcuda.mutational_frustration(cuda_data)
-        assert len(result) == 4
-
-    def test_mutational_frustration_sparse_matches_dense(self, cuda_data):
-        values, ci, cj, _ = fcuda.mutational_frustration(cuda_data)
-        dense = fcuda.mutational_frustration_dense(cuda_data)
-        # Two separate kernel runs may differ by ~fp64 machine epsilon due to
-        # non-deterministic atomic ordering in _build_v_kernel.
-        np.testing.assert_allclose(dense[ci, cj], values, atol=1e-12)
-
-    def test_mutational_frustration_L_matches_model(self, awsem_model, cuda_data):
-        _, _, _, L = fcuda.mutational_frustration(cuda_data)
-        assert L == awsem_model.N
 
 
 # ── Backend reuse ─────────────────────────────────────────────────────────────

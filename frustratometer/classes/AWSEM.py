@@ -367,8 +367,8 @@ class AWSEM(Frustratometer):
         self._device_data = None
         if self._fast_backend == 'cuda':
             try:
-                from ..frustration.cuda import DeviceData
-                self._device_data = DeviceData(self._frustration_data)
+                from ..frustration.cuda import FrustrationCUDA
+                self._device_data = FrustrationCUDA(self._frustration_data)
             except Exception:
                 pass
 
@@ -760,7 +760,7 @@ class AWSEM(Frustratometer):
         return fmod
 
     def _get_fast_data(self):
-        """Return cached DeviceData (CUDA) or FrustrationData for fast-path calls."""
+        """Return cached FrustrationCUDA (CUDA) or FrustrationData for fast-path calls."""
         if self._fast_backend == 'cuda' and self._device_data is not None:
             return self._device_data
         return self._frustration_data
