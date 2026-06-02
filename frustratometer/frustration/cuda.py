@@ -26,9 +26,6 @@ import numpy as np
 from numba import cuda
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float64
 
-from frustratometer.frustration import numba as _fnumba
-
-
 ALPHABET = 21
 THREADS_REDUCE = 256
 THREADS_NATIVE = 256
@@ -434,18 +431,13 @@ def _config_decoy_kernel(
 
 @cuda.jit
 def _reduce_sum_sq_kernel(arr, out_sum_sq):
-    """Block-reduce arr into out_sum_sq[0]=sum, out_sum_sq[1]=sum-of-squares.
-
-    Works for both float32 and float64 input: values are upcast to float64
-    before entering shared memory so the accumulation is always full-precision.
-    """
+    """Block-reduce arr into out_sum_sq[0]=sum, out_sum_sq[1]=sum-of-squares."""
     s_sum = cuda.shared.array(THREADS_REDUCE, dtype=np.float64)
     s_sq = cuda.shared.array(THREADS_REDUCE, dtype=np.float64)
 
     tid = cuda.threadIdx.x
     idx = cuda.grid(1)
 
-    # Explicit upcast on load: float32 → float64 is a no-op for float64 input.
     value = np.float64(arr[idx]) if idx < arr.shape[0] else np.float64(0.0)
     s_sum[tid] = value
     s_sq[tid] = value * value
@@ -495,8 +487,7 @@ class FrustrationCUDA:
     - configurational(n_decoys=None, seed=None, correction=0.0, dense=True)
     """
 
-    def __init__(self, data, default_n_decoys: int = 4000, seed: int = 42,
-                 workspace_dtype=np.float64, build_v_on_cpu: bool = False):
+    def __init__(self, data, default_n_decoys: int = 4000, seed: int = 42):
         self.L = data.L
         self.Nc = data.Nc
         self.n_conf = data.n_conf
@@ -504,8 +495,6 @@ class FrustrationCUDA:
         self.eta_sigma = data.eta_sigma
         self.rho_0 = data.rho_0
         self.k_electrostatics = data.k_electrostatics
-        self.workspace_dtype = np.dtype(workspace_dtype)
-        self._build_v_on_cpu = build_v_on_cpu
 
         # Host-side metadata only for output formatting.
         self._contact_i_host = data.contact_i
@@ -553,23 +542,16 @@ class FrustrationCUDA:
         self.conf_elec_ind = cuda.to_device(data.conf_elec_ind)
 
     def _allocate_workspace(self, default_n_decoys: int) -> None:
-        wdtype = self.workspace_dtype
-        self.d_V = cuda.device_array((self.L, ALPHABET), dtype=wdtype)
-        # Output arrays always stay float64 so host-facing results are unaffected.
+        self.d_V = cuda.device_array((self.L, ALPHABET), dtype=np.float64)
         self.d_native_parts = cuda.device_array(3, dtype=np.float64)
         self.d_singleresidue = cuda.device_array(self.L, dtype=np.float64)
         self.d_mutational = cuda.device_array(self.Nc, dtype=np.float64)
         self.d_config_native = cuda.device_array(self.n_conf, dtype=np.float64)
         self.d_config_result = cuda.device_array(self.n_conf, dtype=np.float64)
-        # Stats accumulator stays float64 for precision in the score kernel.
         self.d_config_stats = cuda.device_array(2, dtype=np.float64)
-        self.d_config_decoy = cuda.device_array(default_n_decoys, dtype=wdtype)
+        self.d_config_decoy = cuda.device_array(default_n_decoys, dtype=np.float64)
 
     def _build_v(self, data) -> None:
-        if self._build_v_on_cpu:
-            v_host = _fnumba.compute_V(data).astype(self.workspace_dtype)
-            self.d_V = cuda.to_device(v_host)
-            return
         _clear_kernel[self._blocks(self.d_V.size, THREADS_REDUCE), THREADS_REDUCE](self.d_V.reshape(self.d_V.size))
         if self.Nc == 0:
             return
@@ -587,7 +569,7 @@ class FrustrationCUDA:
 
     def _ensure_decoys(self, n_decoys: int, seed: int) -> None:
         if self.d_config_decoy.shape[0] != n_decoys:
-            self.d_config_decoy = cuda.device_array(n_decoys, dtype=self.workspace_dtype)
+            self.d_config_decoy = cuda.device_array(n_decoys, dtype=np.float64)
         if self._rng_states.shape[0] != n_decoys or self._rng_seed != seed:
             self._rng_states = create_xoroshiro128p_states(n_decoys, seed=seed)
             self._rng_seed = seed
@@ -749,11 +731,9 @@ class FrustrationCUDA:
         return values
 
 
-def prepare_cuda(data, default_n_decoys: int = 4000, seed: int = 42,
-                 workspace_dtype=np.float64, build_v_on_cpu: bool = False) -> FrustrationCUDA:
+def prepare_cuda(data, default_n_decoys: int = 4000, seed: int = 42) -> FrustrationCUDA:
     """Small convenience constructor for callers that prefer function style."""
-    return FrustrationCUDA(data, default_n_decoys=default_n_decoys, seed=seed,
-                           workspace_dtype=workspace_dtype, build_v_on_cpu=build_v_on_cpu)
+    return FrustrationCUDA(data, default_n_decoys=default_n_decoys, seed=seed)
 
 
 # -----------------------------------------------------------------------------

@@ -309,126 +309,19 @@ class TestCUDAvsNumbaParity:
         np.testing.assert_allclose(cuda_dense[mask], numba_dense[mask], atol=1e-5, rtol=1e-4)
 
 
-# ── Phase 2: mixed-precision workspace ───────────────────────────────────────
+# ── Output dtype ───────────────────────────────────────────────
 
-@pytest.fixture(scope="module")
-def f32_backend(cuda_data):
-    return fcuda.prepare_cuda(cuda_data, workspace_dtype=np.float32)
+class TestOutputDtype:
+    """Host-facing outputs are always float64 (a Python float for the scalar)."""
 
+    def test_native_energy_is_python_float(self, cuda_backend):
+        assert isinstance(cuda_backend.native_energy(), float)
 
-@pytest.fixture(scope="module")
-def f64_backend(cuda_data):
-    return fcuda.prepare_cuda(cuda_data, workspace_dtype=np.float64)
+    def test_singleresidue_output_is_float64(self, cuda_backend):
+        assert cuda_backend.singleresidue().dtype == np.float64
 
+    def test_mutational_dense_output_is_float64(self, cuda_backend):
+        assert cuda_backend.mutational(dense=True).dtype == np.float64
 
-class TestMixedPrecisionAPI:
-    """workspace_dtype parameter is accepted and workspace arrays have the right dtype."""
-
-    def test_f32_backend_is_frustration_cuda(self, cuda_data):
-        backend = fcuda.prepare_cuda(cuda_data, workspace_dtype=np.float32)
-        assert isinstance(backend, fcuda.FrustrationCUDA)
-
-    def test_default_workspace_dtype_is_float64(self, f64_backend):
-        assert f64_backend.d_V.dtype == np.float64
-
-    def test_v_matrix_is_float32(self, f32_backend):
-        assert f32_backend.d_V.dtype == np.float32
-
-    def test_config_decoy_is_float32(self, f32_backend):
-        assert f32_backend.d_config_decoy.dtype == np.float32
-
-    def test_config_stats_stays_float64(self, f32_backend):
-        # Accumulation buffer must stay float64 to preserve score precision.
-        assert f32_backend.d_config_stats.dtype == np.float64
-
-
-class TestMixedPrecisionOutputDtype:
-    """Host-facing outputs must always be float64 regardless of workspace_dtype."""
-
-    def test_native_energy_is_python_float(self, f32_backend):
-        assert isinstance(f32_backend.native_energy(), float)
-
-    def test_singleresidue_output_is_float64(self, f32_backend):
-        assert f32_backend.singleresidue().dtype == np.float64
-
-    def test_mutational_sparse_output_is_float64(self, f32_backend):
-        assert f32_backend.mutational(dense=False).dtype == np.float64
-
-    def test_mutational_dense_output_is_float64(self, f32_backend):
-        assert f32_backend.mutational(dense=True).dtype == np.float64
-
-    def test_configurational_output_is_float64(self, f32_backend):
-        result = f32_backend.configurational(n_decoys=500, dense=True)
-        assert result.dtype == np.float64
-
-
-class TestMixedPrecisionDrift:
-    """float32 workspace results must agree with float64 within agreed tolerances.
-
-    Tolerances:
-    - native_energy: rtol=1e-3  (energy is a single scalar, tight)
-    - singleresidue: atol=5e-2  (z-score; ~2 decimal places)
-    - mutational:    atol=5e-2  (z-score; ~2 decimal places)
-    """
-
-    def test_native_energy_drift(self, f32_backend, f64_backend):
-        ref = f64_backend.native_energy()
-        got = f32_backend.native_energy()
-        np.testing.assert_allclose(got, ref, rtol=1e-3)
-
-    def test_singleresidue_drift(self, f32_backend, f64_backend):
-        ref = f64_backend.singleresidue()
-        got = f32_backend.singleresidue()
-        np.testing.assert_allclose(got, ref, atol=5e-2, rtol=5e-2)
-
-    def test_mutational_drift(self, f32_backend, f64_backend):
-        ref = f64_backend.mutational(dense=True)
-        got = f32_backend.mutational(dense=True)
-        mask = ref != 0
-        np.testing.assert_allclose(got[mask], ref[mask], atol=5e-2, rtol=5e-2)
-
-
-# ── Phase 3: CPU-precomputed V upload ─────────────────────────────────────────
-
-@pytest.fixture(scope="module")
-def cpu_v_backend(cuda_data):
-    return fcuda.prepare_cuda(cuda_data, build_v_on_cpu=True)
-
-
-class TestCPUPrecomputedV:
-    """build_v_on_cpu=True must upload a CPU-built V matrix instead of using the GPU kernel."""
-
-    def test_build_v_on_cpu_is_accepted(self, cuda_data):
-        backend = fcuda.prepare_cuda(cuda_data, build_v_on_cpu=True)
-        assert isinstance(backend, fcuda.FrustrationCUDA)
-
-    def test_v_shape_preserved(self, cpu_v_backend):
-        assert cpu_v_backend.d_V.shape == (cpu_v_backend.L, 21)
-
-    def test_v_dtype_preserved(self, cpu_v_backend):
-        assert cpu_v_backend.d_V.dtype == np.float64
-
-    def test_native_energy_matches_gpu_build(self, cuda_data, cpu_v_backend):
-        gpu_val = fcuda.native_energy(cuda_data)
-        cpu_val = cpu_v_backend.native_energy()
-        np.testing.assert_allclose(cpu_val, gpu_val, rtol=1e-10)
-
-    def test_singleresidue_matches_gpu_build(self, cuda_data, cpu_v_backend):
-        gpu_val = fcuda.singleresidue_frustration(cuda_data)
-        cpu_val = cpu_v_backend.singleresidue()
-        np.testing.assert_allclose(cpu_val, gpu_val, atol=1e-10, rtol=1e-10)
-
-    def test_mutational_matches_gpu_build(self, cuda_data, cpu_v_backend):
-        gpu_dense = fcuda.mutational_frustration_dense(cuda_data)
-        cpu_dense = cpu_v_backend.mutational(dense=True)
-        mask = gpu_dense != 0
-        np.testing.assert_allclose(cpu_dense[mask], gpu_dense[mask], atol=1e-10, rtol=1e-10)
-
-    def test_v_matches_numba_compute_v(self, cuda_data, cpu_v_backend):
-        expected = fnumba.compute_V(cuda_data)
-        got = cpu_v_backend.d_V.copy_to_host()
-        np.testing.assert_allclose(got, expected, rtol=1e-12)
-
-    def test_build_v_on_cpu_with_float32_workspace(self, cuda_data):
-        backend = fcuda.prepare_cuda(cuda_data, build_v_on_cpu=True, workspace_dtype=np.float32)
-        assert backend.d_V.dtype == np.float32
+    def test_configurational_output_is_float64(self, cuda_backend):
+        assert cuda_backend.configurational(n_decoys=500, dense=True).dtype == np.float64
