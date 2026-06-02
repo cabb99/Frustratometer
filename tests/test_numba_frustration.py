@@ -16,48 +16,8 @@ test_data_path = Path('tests/data')
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _make_data_from_awsem(model):
-    """Extract sparse distances and gammas from an existing AWSEM object,
-    then build a FrustrationData instance."""
-    dm = model._sparse_distance_matrix
-    # Use the wider electrostatic distance matrix if available
-    elec_dm = getattr(model, '_sparse_distance_matrix_elec', None)
-    elec_kw = {}
-    if elec_dm is not None:
-        elec_kw = dict(
-            elec_dist_row=elec_dm.row,
-            elec_dist_col=elec_dm.col,
-            elec_dist_data=elec_dm.data,
-        )
-    return FrustrationData.from_sparse(
-        dist_row=dm.row,
-        dist_col=dm.col,
-        dist_data=dm.data,
-        L=model.N,
-        sequence=model.sequence,
-        burial_gamma=model.burial_gamma,
-        direct_gamma=model.direct_gamma,
-        water_gamma=model.water_gamma,
-        protein_gamma=model.protein_gamma,
-        k_contact=model.k_contact,
-        eta=model.eta,
-        r_min=model.r_min,
-        r_max=model.r_max,
-        r_minII=model.r_minII,
-        r_maxII=model.r_maxII,
-        eta_sigma=model.eta_sigma,
-        rho_0=model.rho_0,
-        burial_kappa=model.burial_kappa,
-        burial_ro_min=model.burial_ro_min,
-        burial_ro_max=model.burial_ro_max,
-        min_seq_sep_rho=model.min_sequence_separation_rho,
-        min_seq_sep_contact=model.min_sequence_separation_contact,
-        distance_cutoff_contact=model.distance_cutoff_contact,
-        k_electrostatics=model.k_electrostatics,
-        screening_length=model.electrostatics_screening_length,
-        min_seq_sep_elec=model.min_sequence_separation_electrostatics,
-        chain_breaks=model.chain_breaks,
-        **elec_kw,
-    )
+    """Build a FrustrationData instance from an existing AWSEM object."""
+    return FrustrationData.from_awsem(model)
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────

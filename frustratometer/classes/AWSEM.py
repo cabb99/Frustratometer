@@ -329,39 +329,7 @@ class AWSEM(Frustratometer):
         from ..frustration.data import FrustrationData
 
         dm = self._sparse_distance_matrix
-        elec_kw = {}
-        if self._sparse_distance_matrix_elec is not None:
-            elec_dm = self._sparse_distance_matrix_elec
-            elec_kw = dict(
-                elec_dist_row=elec_dm.row,
-                elec_dist_col=elec_dm.col,
-                elec_dist_data=elec_dm.data,
-            )
-
-        self._frustration_data = FrustrationData.from_sparse(
-            dist_row=dm.row, dist_col=dm.col, dist_data=dm.data,
-            L=self.N, sequence=self.sequence,
-            burial_gamma=self.burial_gamma,
-            direct_gamma=self.direct_gamma,
-            water_gamma=self.water_gamma,
-            protein_gamma=self.protein_gamma,
-            k_contact=p.k_contact,
-            eta=p.eta,
-            r_min=p.r_min, r_max=p.r_max,
-            r_minII=p.r_minII, r_maxII=p.r_maxII,
-            eta_sigma=p.eta_sigma, rho_0=p.rho_0,
-            burial_kappa=p.burial_kappa,
-            burial_ro_min=p.burial_ro_min,
-            burial_ro_max=p.burial_ro_max,
-            min_seq_sep_rho=p.min_sequence_separation_rho,
-            min_seq_sep_contact=p.min_sequence_separation_contact,
-            distance_cutoff_contact=p.distance_cutoff_contact,
-            k_electrostatics=p.k_electrostatics,
-            screening_length=p.electrostatics_screening_length,
-            min_seq_sep_elec=p.min_sequence_separation_electrostatics,
-            chain_breaks=self.chain_breaks,
-            **elec_kw,
-        )
+        self._frustration_data = FrustrationData.from_awsem(self)
 
         # Mask (for visualization methods)
         if p.k_electrostatics != 0:

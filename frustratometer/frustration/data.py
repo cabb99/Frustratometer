@@ -332,3 +332,45 @@ class FrustrationData:
             conf_theta=C(conf_theta), conf_thetaII=C(conf_thetaII),
             conf_elec_ind=C(conf_elec_ind),
         )
+
+    @classmethod
+    def from_awsem(cls, model):
+        """Build FrustrationData from a constructed AWSEM model.
+
+        Pulls the sparse distance matrices, gamma matrices and AWSEM
+        parameters straight off the model (all are set as attributes during
+        ``AWSEM.__init__``), then delegates to :meth:`from_sparse`.
+        """
+        dm = model._sparse_distance_matrix
+        elec_dm = getattr(model, '_sparse_distance_matrix_elec', None)
+        elec_kw = {}
+        if elec_dm is not None:
+            elec_kw = dict(
+                elec_dist_row=elec_dm.row,
+                elec_dist_col=elec_dm.col,
+                elec_dist_data=elec_dm.data,
+            )
+        return cls.from_sparse(
+            dist_row=dm.row, dist_col=dm.col, dist_data=dm.data,
+            L=model.N, sequence=model.sequence,
+            burial_gamma=model.burial_gamma,
+            direct_gamma=model.direct_gamma,
+            water_gamma=model.water_gamma,
+            protein_gamma=model.protein_gamma,
+            k_contact=model.k_contact,
+            eta=model.eta,
+            r_min=model.r_min, r_max=model.r_max,
+            r_minII=model.r_minII, r_maxII=model.r_maxII,
+            eta_sigma=model.eta_sigma, rho_0=model.rho_0,
+            burial_kappa=model.burial_kappa,
+            burial_ro_min=model.burial_ro_min,
+            burial_ro_max=model.burial_ro_max,
+            min_seq_sep_rho=model.min_sequence_separation_rho,
+            min_seq_sep_contact=model.min_sequence_separation_contact,
+            distance_cutoff_contact=model.distance_cutoff_contact,
+            k_electrostatics=model.k_electrostatics,
+            screening_length=model.electrostatics_screening_length,
+            min_seq_sep_elec=model.min_sequence_separation_electrostatics,
+            chain_breaks=model.chain_breaks,
+            **elec_kw,
+        )
