@@ -45,3 +45,11 @@ __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'co
           'compute_native_energy_elec_sparse',
           'mask_mean',
           ]
+
+from . import data as data
+from . import numba as numba
+
+try:
+    from . import cuda as cuda
+except Exception:
+    pass

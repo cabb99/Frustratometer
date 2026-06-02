@@ -60,6 +60,8 @@ class AWSEM(Frustratometer):
                  sequence: Union[str, None] =None,
                  expose_indicator_functions: bool=False,
                  sparse: bool=True,
+                 fast: bool=False,
+                 backend: str='numba',
                  **parameters):
         """
         Generate AWSEM object
@@ -154,8 +156,16 @@ class AWSEM(Frustratometer):
 
         self._decoy_fluctuation = {}
         self.minimally_frustrated_threshold=.78
+        self._frustration_data = None
+        self._fast_backend = backend if fast else None
 
-        if self._distance_is_sparse:
+        if fast:
+            if not self._distance_is_sparse:
+                raise ValueError("fast=True requires a sparse Structure (sparse=True)")
+            if backend not in ('numba', 'cuda'):
+                raise ValueError(f"backend must be 'numba' or 'cuda', got {backend!r}")
+            self._init_fast(p)
+        elif self._distance_is_sparse:
             self._init_from_sparse_distances(p, sparse, expose_indicator_functions, pdb_structure)
         else:
             self._init_from_dense_distances(p, sparse, expose_indicator_functions, pdb_structure)
@@ -313,6 +323,86 @@ class AWSEM(Frustratometer):
             self._build_sparse(p, sequence_mask_contact, theta, thetaII, burial_energy, expose)
         else:
             self._build_dense(p, sequence_mask_contact, theta, thetaII, burial_energy, expose)
+
+    def _init_fast(self, p):
+        """Initialize fast mode: build FrustrationData, skip Potts model construction."""
+        from ..frustration.data import FrustrationData
+
+        dm = self._sparse_distance_matrix
+        elec_kw = {}
+        if self._sparse_distance_matrix_elec is not None:
+            elec_dm = self._sparse_distance_matrix_elec
+            elec_kw = dict(
+                elec_dist_row=elec_dm.row,
+                elec_dist_col=elec_dm.col,
+                elec_dist_data=elec_dm.data,
+            )
+
+        self._frustration_data = FrustrationData.from_sparse(
+            dist_row=dm.row, dist_col=dm.col, dist_data=dm.data,
+            L=self.N, sequence=self.sequence,
+            burial_gamma=self.burial_gamma,
+            direct_gamma=self.direct_gamma,
+            water_gamma=self.water_gamma,
+            protein_gamma=self.protein_gamma,
+            k_contact=p.k_contact,
+            eta=p.eta,
+            r_min=p.r_min, r_max=p.r_max,
+            r_minII=p.r_minII, r_maxII=p.r_maxII,
+            eta_sigma=p.eta_sigma, rho_0=p.rho_0,
+            burial_kappa=p.burial_kappa,
+            burial_ro_min=p.burial_ro_min,
+            burial_ro_max=p.burial_ro_max,
+            min_seq_sep_rho=p.min_sequence_separation_rho,
+            min_seq_sep_contact=p.min_sequence_separation_contact,
+            distance_cutoff_contact=p.distance_cutoff_contact,
+            k_electrostatics=p.k_electrostatics,
+            screening_length=p.electrostatics_screening_length,
+            min_seq_sep_elec=p.min_sequence_separation_electrostatics,
+            chain_breaks=self.chain_breaks,
+            **elec_kw,
+        )
+
+        # Mask (for visualization methods)
+        if p.k_electrostatics != 0:
+            self.sequence_cutoff = min(p.min_sequence_separation_electrostatics,
+                                       p.min_sequence_separation_contact)
+            self.distance_cutoff = None
+        else:
+            self.sequence_cutoff = p.min_sequence_separation_contact
+            self.distance_cutoff = p.distance_cutoff_contact
+        self.mask = frustration.compute_mask_sparse(
+            dm.row, dm.col, dm.data, dm.shape,
+            maximum_contact_distance=self.distance_cutoff,
+            minimum_sequence_separation=self.sequence_cutoff,
+            chain_breaks=self.chain_breaks)
+
+        # Frequencies
+        self.aa_freq = frustration.compute_aa_freq(self.sequence)
+        self.contact_freq = frustration.compute_contact_freq(self.sequence)
+
+        # Structural arrays (needed by some methods)
+        self.rho = None
+        self.rho_r = self._frustration_data.rho_r
+        self._burial_indicator = self._frustration_data.burial_indicator
+        self._sigma_water = None
+        self._sigma_protein = None
+
+        # Nulled Potts model (not built in fast mode)
+        self._native_energy = None
+        self._elec_data = None
+        self.sparse_potts_model = None
+        self._potts_model = {}
+        self.contact_energy = None
+
+        # Pre-upload to GPU if CUDA backend (eliminates per-call re-upload)
+        self._device_data = None
+        if self._fast_backend == 'cuda':
+            try:
+                from ..frustration.cuda import DeviceData
+                self._device_data = DeviceData(self._frustration_data)
+            except Exception:
+                pass
 
     def _start_indicator_exposure(self, p):
         """Set up burial indicators and gamma arrays (common to sparse and dense)."""
@@ -693,6 +783,44 @@ class AWSEM(Frustratometer):
         # import pandas as pd
         return configurational_energies #, pd.DataFrame(decoy_data, columns=decoy_data_columns)
     
+    def _get_fast_module(self):
+        """Return the numba or cuda frustration module based on self._fast_backend."""
+        if self._fast_backend == 'cuda':
+            from ..frustration import cuda as fmod
+        else:
+            from ..frustration import numba as fmod
+        return fmod
+
+    def _get_fast_data(self):
+        """Return cached DeviceData (CUDA) or FrustrationData for fast-path calls."""
+        if self._fast_backend == 'cuda' and self._device_data is not None:
+            return self._device_data
+        return self._frustration_data
+
     def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000):
+        if self._frustration_data is not None:
+            fmod = self._get_fast_module()
+            return fmod.configurational_frustration(
+                self._get_fast_data(), n_decoys=n_decoys, correction=float(correction))
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
+
+    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0):
+        if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
+            fmod = self._get_fast_module()
+            data = self._get_fast_data()
+            if kind == 'singleresidue':
+                return fmod.singleresidue_frustration(data, correction=float(correction))
+            elif kind == 'mutational':
+                return fmod.mutational_frustration_dense(data, correction=float(correction))
+            elif kind == 'configurational':
+                return self.configurational_frustration(aa_freq=aa_freq, correction=correction)
+        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction)
+
+    def native_energy(self, sequence=None, ignore_couplings_of_gaps=False, ignore_fields_of_gaps=False):
+        if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
+            if self._native_energy is None:
+                fmod = self._get_fast_module()
+                self._native_energy = fmod.native_energy(self._get_fast_data())
+            return self._native_energy
+        return super().native_energy(sequence=sequence, ignore_couplings_of_gaps=ignore_couplings_of_gaps, ignore_fields_of_gaps=ignore_fields_of_gaps)
