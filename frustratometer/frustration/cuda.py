@@ -748,6 +748,11 @@ def singleresidue_frustration(data, correction=0.0):
     return _as_backend(data).singleresidue(correction=float(correction))
 
 
+def mutational_frustration(data, correction=0.0):
+    """Sparse per-contact mutational frustration (Nc,); see frustration.numba."""
+    return _as_backend(data).mutational(correction=float(correction), dense=False)
+
+
 def mutational_frustration_dense(data, correction=0.0):
     return _as_backend(data).mutational(correction=float(correction), dense=True)
 

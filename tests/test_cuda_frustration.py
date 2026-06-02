@@ -103,6 +103,13 @@ class TestMutationalFrustration:
         mask = got_dense != 0
         np.testing.assert_allclose(got_dense[mask], ref_dense[mask], atol=1e-3, rtol=1e-3)
 
+    def test_mutational_sparse_matches_dense(self, cuda_data):
+        sparse = fcuda.mutational_frustration(cuda_data)
+        dense = fcuda.mutational_frustration_dense(cuda_data)
+        assert sparse.shape == (cuda_data.Nc,)
+        # Two separate kernel runs may differ by ~fp64 epsilon (atomic ordering in V build).
+        np.testing.assert_allclose(dense[cuda_data.contact_i, cuda_data.contact_j], sparse, atol=1e-12)
+
 
 @pytest.mark.stochastic
 class TestConfigurationalFrustration:

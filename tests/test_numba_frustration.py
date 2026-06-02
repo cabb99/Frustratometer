@@ -102,6 +102,12 @@ class TestMutationalFrustration:
         mask = got_dense != 0
         np.testing.assert_allclose(got_dense[mask], ref_dense[mask], atol=1e-3, rtol=1e-3)
 
+    def test_mutational_sparse_matches_dense(self, numba_data):
+        sparse = fnumba.mutational_frustration(numba_data)
+        dense = fnumba.mutational_frustration_dense(numba_data)
+        assert sparse.shape == (numba_data.Nc,)
+        np.testing.assert_allclose(dense[numba_data.contact_i, numba_data.contact_j], sparse)
+
 
 @pytest.mark.stochastic
 class TestConfigurationalFrustration:

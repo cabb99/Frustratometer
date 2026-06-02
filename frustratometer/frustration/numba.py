@@ -271,6 +271,25 @@ def singleresidue_frustration(data, correction=0.0):
     )
 
 
+def mutational_frustration(data, correction=0.0):
+    """Compute mutational frustration per contact (sparse).
+
+    Returns
+    -------
+    frustration : ndarray (Nc,)
+        Per-contact values; the contacts are ``data.contact_i`` / ``data.contact_j``.
+        Preferred over the dense form for large proteins (avoids the (L, L) matrix).
+    """
+    return _mutational(
+        data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
+        data.theta, data.tsw, data.tsp,
+        data.burial_indicator, data.gammas, data.bg, data.k_contact,
+        data.contact_freq, data.charges, data.elec_phi,
+        data.elec_ind_contacts,
+        float(correction),
+    )
+
+
 def mutational_frustration_dense(data, correction=0.0):
     """Compute mutational frustration as a dense (L, L) matrix.
 
@@ -279,14 +298,7 @@ def mutational_frustration_dense(data, correction=0.0):
     dense : ndarray (L, L)
         Zero at non-contact positions.
     """
-    frust = _mutational(
-        data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
-        data.theta, data.tsw, data.tsp,
-        data.burial_indicator, data.gammas, data.bg, data.k_contact,
-        data.contact_freq, data.charges, data.elec_phi,
-        data.elec_ind_contacts,
-        float(correction),
-    )
+    frust = mutational_frustration(data, correction)
     dense = np.zeros((data.L, data.L))
     dense[data.contact_i, data.contact_j] = frust
     return dense
