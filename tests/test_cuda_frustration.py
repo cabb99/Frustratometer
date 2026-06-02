@@ -194,6 +194,12 @@ class TestFastMutationalFrustration:
         mask = got != 0
         np.testing.assert_allclose(got[mask], ref[mask], atol=1e-3, rtol=1e-3)
 
+    def test_fast_mutational_sparse(self, fast_model):
+        sparse = fast_model.frustration(kind='mutational', dense=False)
+        dense = fast_model.frustration(kind='mutational')
+        assert sparse.shape == fast_model.N
+        np.testing.assert_allclose(dense[sparse.row, sparse.col], sparse.data)
+
 
 class TestFastAttributes:
     def test_has_frustration_data(self, fast_model):

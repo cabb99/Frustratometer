@@ -773,13 +773,25 @@ class AWSEM(Frustratometer):
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
-    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0):
+    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True):
+        """Frustration index for the native sequence.
+
+        In fast mode, ``kind='mutational'`` with ``dense=False`` returns a
+        :class:`SparseMatrix` (``row``=contact_i, ``col``=contact_j,
+        ``data``=frustration values, ``shape``=L) instead of the (L, L) matrix,
+        avoiding the full-matrix allocation for large proteins. Expand it with
+        ``.to_dense(fill=0.0)``. ``dense`` only affects ``kind='mutational'``.
+        """
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
             fmod = self._get_fast_module()
             data = self._get_fast_data()
             if kind == 'singleresidue':
                 return fmod.singleresidue_frustration(data, correction=float(correction))
             elif kind == 'mutational':
+                if not dense:
+                    fd = self._frustration_data
+                    values = fmod.mutational_frustration(data, correction=float(correction))
+                    return SparseMatrix(fd.contact_i, fd.contact_j, data=values, shape=fd.L)
                 return fmod.mutational_frustration_dense(data, correction=float(correction))
             elif kind == 'configurational':
                 return self.configurational_frustration(aa_freq=aa_freq, correction=correction)
