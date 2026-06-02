@@ -26,7 +26,6 @@ class Gamma:
             self._init_from_file(data)
         else:
             raise TypeError("Unsupported type for initializing Gamma.")
-        print(self.gamma_array)
         
         self.alphabet = alphabet if alphabet is not None else self.default_alphabet.copy()
         self.segment_definition = segment_definition if segment_definition is not None else self.default_segment_definition.copy()
