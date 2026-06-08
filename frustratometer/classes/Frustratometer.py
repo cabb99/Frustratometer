@@ -421,6 +421,8 @@ class Frustratometer:
                                       -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq),
                                       max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name)
         frustration.call_vmd(self.pdb_file, tcl_script)
+        if call_vmd:
+            frustration.call_vmd(self.pdb_file, tcl_script)
 
     def view_pair_frustration(self, sequence:str = None, pair:str = 'mutational', aa_freq:np.array = None):
         """
