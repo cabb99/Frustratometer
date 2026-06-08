@@ -937,108 +937,134 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask, distance_matri
     
     fo = open(tcl_script, 'w+')
     single_frustration = np.nan_to_num(single_frustration,nan=0,posinf=0,neginf=0)
-    pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
+    # Avoid converting SparseMatrix with nan_to_num; only apply to dense arrays
+    if _SM is not None and isinstance(pair_frustration, _SM):
+        # leave as-is; we'll look up values sparsely later
+        pass
+    else:
+        pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
     
     
     structure = prody.parsePDB(str(pdb_file))
     selection = structure.select('protein', chain=chain)
     residues = np.unique(selection.getResindices())
 
+    # Precompute per-residue coordinates once, aligned to `residues` (NaN where an
+    # atom is missing). Lines are drawn CA->CA; the Cbeta coords (CB, or CA for
+    # glycine -- mirroring pdb.distance._select_cb) decide the solid/dashed style.
+    ca_sel = selection.select('name CA')
+    cb_sel = selection.select('name CB or (resname GLY and name CA)')
+    ca_xyz = np.full((len(residues), 3), np.nan)
+    cb_xyz = np.full((len(residues), 3), np.nan)
+    ca_xyz[np.searchsorted(residues, ca_sel.getResindices())] = ca_sel.getCoords()
+    cb_xyz[np.searchsorted(residues, cb_sel.getResindices())] = cb_sel.getCoords()
+
     fo.write(f'[atomselect top all] set beta 0\n')
     # Single residue frustration
     for r, f in zip(residues, single_frustration):
-        # print(f)
         fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
 
-    # Mutational frustration: Handle both sparse and dense matrices
-    # Build sel_frustration from sparse or dense data
-    if _SM is not None and isinstance(mask, _SM) and isinstance(distance_matrix, _SM):
-        # Both are sparse - work directly with sparse indices
-        mask_i = mask.row
-        mask_j = mask.col
-        
-        # Look up distances and frustrations for mask pairs
-        distances = np.array([distance_matrix.lookup(i, j) for i, j in zip(mask_i, mask_j)])
-        frustrations = np.array([pair_frustration[i, j] for i, j in zip(mask_i, mask_j)])
-        
-        # Create array: [i, j, frustration, distance, mask_value]
-        # mask_value is always 1 (since we're only iterating over mask pairs)
-        sel_frustration = np.column_stack((mask_i, mask_j, frustrations, distances, np.ones(len(mask_i))))
-    elif _SM is not None and isinstance(mask, _SM):
-        # mask is sparse, distance_matrix is dense
-        mask_i = mask.row
-        mask_j = mask.col
-        distances = distance_matrix[mask_i, mask_j]
-        frustrations = np.array([pair_frustration[i, j] for i, j in zip(mask_i, mask_j)])
-        sel_frustration = np.column_stack((mask_i, mask_j, frustrations, distances, np.ones(len(mask_i))))
-    elif _SM is not None and isinstance(distance_matrix, _SM):
-        # distance_matrix is sparse, mask is dense
-        r1, r2 = np.meshgrid(residues, residues, indexing='ij')
-        mask_indices = np.where(mask)
-        sel_frustration = np.column_stack((
-            mask_indices[0],
-            mask_indices[1],
-            pair_frustration[mask_indices],
-            np.array([distance_matrix.lookup(i, j) for i, j in zip(mask_indices[0], mask_indices[1])]),
-            mask[mask_indices]
-        ))
+    # creating ii and jj could be an issue if we have a huge distance 
+    # matrix, but such a use case seems very unlikely
+    ii, jj = np.triu_indices(len(residues), k=1)
+
+    # even though having a RAM-challening distance matrix
+    # is very unlikely, 
+    # we might make the distance matrix sparse for other reasons,
+    # such as wanting to use frustratometer.AWSEM(... ,  fast=True);
+    # the below code handles this use case, relying on ii and jj
+    # but checking whether the distance matrix is sparse
+    # and handling it appropriately
+
+    # Helper: sparse-aware membership test for mask (mask may be SparseMatrix with data=None)
+    def _sparse_mask_keep(mask_sm, qi, qj):
+        # build keys and use searchsorted like pdb.sparse.lookup does
+        src_key = mask_sm.row.astype(np.int64) * int(mask_sm.shape) + mask_sm.col.astype(np.int64)
+        sort_idx = np.argsort(src_key)
+        qry_key = np.asarray(qi, dtype=np.int64) * int(mask_sm.shape) + np.asarray(qj, dtype=np.int64)
+        pos = np.searchsorted(src_key, qry_key, sorter=sort_idx)
+        matched = np.zeros(len(qry_key), dtype=bool)
+        if len(src_key) > 0:
+            valid = pos < len(src_key)
+            if valid.any():
+                matched[valid] = src_key[sort_idx[pos[valid]]] == qry_key[valid]
+        return matched
+
+    # Helper: sparse-aware lookup with default for missing pairs
+    def _sparse_lookup_default(sm, qi, qj, default=np.inf):
+        L = int(sm.shape)
+        src_key = sm.row.astype(np.int64) * L + sm.col.astype(np.int64)
+        sort_idx = np.argsort(src_key)
+        qry_key = np.asarray(qi, dtype=np.int64) * L + np.asarray(qj, dtype=np.int64)
+        pos = np.searchsorted(src_key, qry_key, sorter=sort_idx)
+        out = np.full(len(qry_key), default, dtype=float)
+        if len(src_key) == 0:
+            return out
+        valid = pos < len(src_key)
+        if not valid.any():
+            return out
+        matched = np.zeros(len(qry_key), dtype=bool)
+        matched[valid] = src_key[sort_idx[pos[valid]]] == qry_key[valid]
+        if sm.data is not None and matched.any():
+            matched_idx = np.nonzero(matched)[0]
+            out[matched_idx] = sm.data[sort_idx[pos[matched_idx]]]
+        return out
+
+    # Determine which triangular pairs to keep (mask and optional distance cutoff)
+    if _SM is not None and isinstance(mask, _SM):
+        keep = _sparse_mask_keep(mask, ii, jj)
     else:
-        # Both are dense (original code)
-        r1, r2 = np.meshgrid(residues, residues, indexing='ij')
-        sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel(),distance_matrix.ravel(), mask.ravel()]).T
-    
-    # Filter with mask and distance
+        keep = (np.asarray(mask)[ii, jj] > 0)
+
     if distance_cutoff:
-        mask_dist=(sel_frustration[:, 3] <= distance_cutoff)  # distance is at index 3
+        if _SM is not None and isinstance(distance_matrix, _SM):
+            dist_all = _sparse_lookup_default(distance_matrix, ii, jj, default=np.inf)
+        else:
+            dist_all = np.asarray(distance_matrix)[ii, jj]
+        keep &= (dist_all <= distance_cutoff)
+
+    ii, jj = ii[keep], jj[keep]
+
+    # Fetch frustration and distance values for the kept pairs in a sparse-aware way
+    if _SM is not None and isinstance(pair_frustration, _SM):
+        frust = _sparse_lookup_default(pair_frustration, ii, jj, default=0.0)
     else:
-        mask_dist=np.ones(len(sel_frustration),dtype=bool)
-    sel_frustration = sel_frustration[mask_dist & (sel_frustration[:, 4] > 0)]  # mask value is at index 4
-    
-    minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -0.78]
-    #minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -1.78]
-    sort_index = np.argsort(minimally_frustrated[:, 2])
-    minimally_frustrated = minimally_frustrated[sort_index]
-    if max_connections:
-        minimally_frustrated = minimally_frustrated[:max_connections]
-    fo.write('draw color green\n')
-    
+        frust = np.asarray(pair_frustration)[ii, jj]
 
-    for (r1, r2, f, d ,m) in minimally_frustrated:
-        r1=int(r1)
-        r2=int(r2)
-        if abs(r1-r2) == 1: # don't draw interactions between residues adjacent in sequence
-            continue
-        pos1 = selection.select(f'resindex {r1} and (name CB or (resname GLY and name CA))').getCoords()[0]
-        pos2 = selection.select(f'resindex {r2} and (name CB or (resname GLY and name CA))').getCoords()[0]
-        distance = np.linalg.norm(pos1 - pos2)
-        if d > 9.5 or d < 3.5:
-            continue
-        fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
-        if 3.5 <= distance <= 6.5:
-            fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
-        else:
-            fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
+    if _SM is not None and isinstance(distance_matrix, _SM):
+        dist = _sparse_lookup_default(distance_matrix, ii, jj, default=np.inf)
+    else:
+        dist = np.asarray(distance_matrix)[ii, jj]
 
-    frustrated = sel_frustration[sel_frustration[:, 2] > 1]
-    #frustrated = sel_frustration[sel_frustration[:, 2] > 0]
-    sort_index = np.argsort(frustrated[:, 2])[::-1]
-    frustrated = frustrated[sort_index]
-    if max_connections:
-        frustrated = frustrated[:max_connections]
-    fo.write('draw color red\n')
-    for (r1, r2, f ,d, m) in frustrated:
-        r1=int(r1)
-        r2=int(r2)
-        if d > 9.5 or d < 3.5:
-            continue
-        fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
-        if 3.5 <= d <= 6.5:
-            fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
-        else:
-            fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
-    
+    # Green = minimally frustrated (most negative first); red = frustrated (most positive
+    # first). For each: sort, cap at max_connections, then draw the in-range contacts.
+    for color, group, reverse in (
+        ('green', frust < -0.78, False),
+        ('red',   frust > 1,     True),
+    ):
+        gi, gj, gd, gf = ii[group], jj[group], dist[group], frust[group]
+        order = np.argsort(gf)
+        if reverse:
+            order = order[::-1]
+        gi, gj, gd = gi[order], gj[order], gd[order]
+        if max_connections:
+            gi, gj, gd = gi[:max_connections], gj[:max_connections], gd[:max_connections]
+
+        draw = (gd >= 3.5) & (gd <= 9.5)
+        draw &= np.abs(residues[gi] - residues[gj]) != 1 # Skip adjacent residues, which are often connected by a covalent bond and thus always close in space, but not necessarily frustrated.
+        draw &= ~(np.isnan(ca_xyz[gi]).any(1) | np.isnan(ca_xyz[gj]).any(1) |
+                  np.isnan(cb_xyz[gi]).any(1) | np.isnan(cb_xyz[gj]).any(1))
+        gi, gj = gi[draw], gj[draw]
+
+        cb_dist = np.linalg.norm(cb_xyz[gi] - cb_xyz[gj], axis=1)   # Cbeta-Cbeta -> dashing
+        styles = np.where((cb_dist >= 3.5) & (cb_dist <= 6.5), 'solid', 'dashed')
+
+        fo.write(f'draw color {color}\n')
+        for a, b, style in zip(gi, gj, styles):
+            p1, p2 = ca_xyz[a], ca_xyz[b]
+            fo.write("draw line {%.3f %.3f %.3f} {%.3f %.3f %.3f} style %s width 2\n"
+                     % (p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], style))
+
     fo.write('''mol delrep top 0
             mol color Beta
             mol representation NewCartoon 0.300000 10.000000 4.100000 0
@@ -1047,7 +1073,7 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask, distance_matri
             mol addrep top
             color scale method GWR
             ''')
-    
+
     if movie_name:
         fo.write('''axes location Off
             color Display Background white
