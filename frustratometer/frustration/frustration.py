@@ -964,8 +964,6 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask, distance_matri
     for r, f in zip(residues, single_frustration):
         fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
 
-    # creating ii and jj could be an issue if we have a huge distance 
-    # matrix, but such a use case seems very unlikely
     ii, jj = np.triu_indices(len(residues), k=1)
 
     # even though having a RAM-challening distance matrix
@@ -1024,17 +1022,8 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask, distance_matri
         keep &= (dist_all <= distance_cutoff)
 
     ii, jj = ii[keep], jj[keep]
-
-    # Fetch frustration and distance values for the kept pairs in a sparse-aware way
-    if _SM is not None and isinstance(pair_frustration, _SM):
-        frust = _sparse_lookup_default(pair_frustration, ii, jj, default=0.0)
-    else:
-        frust = np.asarray(pair_frustration)[ii, jj]
-
-    if _SM is not None and isinstance(distance_matrix, _SM):
-        dist = _sparse_lookup_default(distance_matrix, ii, jj, default=np.inf)
-    else:
-        dist = np.asarray(distance_matrix)[ii, jj]
+    frust = pair_frustration[ii, jj]
+    dist = distance_matrix[ii, jj]
 
     # Green = minimally frustrated (most negative first); red = frustrated (most positive
     # first). For each: sort, cap at max_connections, then draw the in-range contacts.
