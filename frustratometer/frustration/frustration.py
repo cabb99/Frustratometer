@@ -890,10 +890,12 @@ def plot_singleresidue_decoy_energy(decoy_energy, native_energy, method='cluster
     return g
 
 
-def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, distance_matrix: np.array, distance_cutoff: float, single_frustration: np.array,
+def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask, distance_matrix, distance_cutoff: float, single_frustration: np.array,
                     pair_frustration: np.array, tcl_script: Union[Path, str] ='frustration.tcl',max_connections: int =None, movie_name: Union[Path, str] =None, still_image_name: Union[Path, str] =None) -> Union[Path, str]:
     """
     Writes a tcl script that can be run with VMD to superimpose the frustration patterns onto the corresponding PDB structure. 
+    
+    Supports both dense and sparse matrices for mask and distance_matrix.
 
     Parameters
     ----------
@@ -901,10 +903,11 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
         pdb file name
     chain : str
         Select chain from pdb
-    mask : np.array
-        A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
-    distance_matrix : np.array
-        LxL array for sequence of length L, describing distances between contacts
+    mask : np.array or SparseMatrix
+        A 2D Boolean array or SparseMatrix that determines which residue pairs should be considered in the energy computation.
+        If dense, should have dimensions (L, L) where L is the sequence length.
+    distance_matrix : np.array or SparseMatrix
+        Distance matrix (dense or sparse) for sequence of length L, describing distances between contacts
     distance_cutoff : float
         Maximum distance at which a contact occurs
     single_frustration : np.array
@@ -926,6 +929,12 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     tcl_script : Path or str
         tcl script file
     """
+    # Import SparseMatrix locally to avoid circular imports
+    try:
+        from frustratometer.classes.Structure import SparseMatrix as _SM
+    except ImportError:
+        _SM = None
+    
     fo = open(tcl_script, 'w+')
     single_frustration = np.nan_to_num(single_frustration,nan=0,posinf=0,neginf=0)
     pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
@@ -941,15 +950,49 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
         # print(f)
         fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
 
-    # Mutational frustration:
-    r1, r2 = np.meshgrid(residues, residues, indexing='ij')
-    sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel(),distance_matrix.ravel(), mask.ravel()]).T
-    #Filter with mask and distance
+    # Mutational frustration: Handle both sparse and dense matrices
+    # Build sel_frustration from sparse or dense data
+    if _SM is not None and isinstance(mask, _SM) and isinstance(distance_matrix, _SM):
+        # Both are sparse - work directly with sparse indices
+        mask_i = mask.row
+        mask_j = mask.col
+        
+        # Look up distances and frustrations for mask pairs
+        distances = np.array([distance_matrix.lookup(i, j) for i, j in zip(mask_i, mask_j)])
+        frustrations = np.array([pair_frustration[i, j] for i, j in zip(mask_i, mask_j)])
+        
+        # Create array: [i, j, frustration, distance, mask_value]
+        # mask_value is always 1 (since we're only iterating over mask pairs)
+        sel_frustration = np.column_stack((mask_i, mask_j, frustrations, distances, np.ones(len(mask_i))))
+    elif _SM is not None and isinstance(mask, _SM):
+        # mask is sparse, distance_matrix is dense
+        mask_i = mask.row
+        mask_j = mask.col
+        distances = distance_matrix[mask_i, mask_j]
+        frustrations = np.array([pair_frustration[i, j] for i, j in zip(mask_i, mask_j)])
+        sel_frustration = np.column_stack((mask_i, mask_j, frustrations, distances, np.ones(len(mask_i))))
+    elif _SM is not None and isinstance(distance_matrix, _SM):
+        # distance_matrix is sparse, mask is dense
+        r1, r2 = np.meshgrid(residues, residues, indexing='ij')
+        mask_indices = np.where(mask)
+        sel_frustration = np.column_stack((
+            mask_indices[0],
+            mask_indices[1],
+            pair_frustration[mask_indices],
+            np.array([distance_matrix.lookup(i, j) for i, j in zip(mask_indices[0], mask_indices[1])]),
+            mask[mask_indices]
+        ))
+    else:
+        # Both are dense (original code)
+        r1, r2 = np.meshgrid(residues, residues, indexing='ij')
+        sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel(),distance_matrix.ravel(), mask.ravel()]).T
+    
+    # Filter with mask and distance
     if distance_cutoff:
-        mask_dist=(sel_frustration[:, -2] <= distance_cutoff)
+        mask_dist=(sel_frustration[:, 3] <= distance_cutoff)  # distance is at index 3
     else:
         mask_dist=np.ones(len(sel_frustration),dtype=bool)
-    sel_frustration = sel_frustration[mask_dist & (sel_frustration[:, -1] > 0)]
+    sel_frustration = sel_frustration[mask_dist & (sel_frustration[:, 4] > 0)]  # mask value is at index 4
     
     minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -0.78]
     #minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -1.78]

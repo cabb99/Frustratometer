@@ -51,6 +51,20 @@ class Frustratometer:
         """True when a sparse Potts model is available."""
         return getattr(self, 'sparse_potts_model', None) is not None
 
+    def _get_mask_mean(self):
+        """Get the mean value of the mask, handling both sparse and dense formats."""
+        from .Structure import SparseMatrix as _SM
+        if isinstance(self.mask, _SM):
+            # For sparse mask, compute the mean analytically
+            return frustration.mask_mean(
+                self.mask.shape,
+                minimum_sequence_separation=getattr(self, 'sequence_cutoff', None),
+                chain_breaks=getattr(self, 'chain_breaks', None)
+            )
+        else:
+            # Dense mask: compute mean directly
+            return float(self.mask.mean())
+
     def _compute_native_energy_elec(self, sequence, elec_data):
         """Dispatch electrostatic native energy to sparse or dense version."""
         if elec_data.get('indicator') is None:
@@ -222,14 +236,8 @@ class Frustratometer:
                 if _elec_data is not None:
                     fluctuation = frustration.apply_elec_correction_mutational(fluctuation, self.sparse_potts_model, _elec_data)
             elif kind == 'pseudoconfigurational':
-                from .Structure import SparseMatrix as _SM
-                if isinstance(self.mask, _SM):
-                    if self.distance_cutoff is None:
-                        _mask_mean = frustration.mask_mean(self.mask.shape, self.sequence_cutoff, self.chain_breaks)
-                    else:
-                        _mask_mean = float(len(self.mask)) / (self.mask.shape * self.mask.shape)
-                else:
-                    _mask_mean = float(self.mask.mean())
+                # Use the helper method to get mask mean, handling both sparse and dense
+                _mask_mean = self._get_mask_mean()
                 fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, _mask_mean)
                 if _elec_data is not None:
                     fluctuation = frustration.apply_elec_correction_pseudoconfigurational(fluctuation, self.sparse_potts_model, _elec_data)
@@ -439,6 +447,7 @@ class Frustratometer:
             Array of frequencies of all 21 possible amino acids within sequence
         """
         import py3Dmol
+        from .Structure import SparseMatrix as _SM
 
         if sequence is None:
             sequence=self.sequence
@@ -446,11 +455,22 @@ class Frustratometer:
         pdb_filename = self.pdb_file
         shift=self.init_index_shift+1
 
-        pair_frustration=self.frustration(sequence=sequence, kind=pair)*np.triu(self.mask)
-        residues=np.arange(len(sequence))
-
-        r1, r2 = np.meshgrid(residues, residues, indexing='ij')
-        sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel()]).T
+        pair_frustration = self.frustration(sequence=sequence, kind=pair)
+        
+        # Handle sparse or dense mask/frustration
+        if isinstance(self.mask, _SM):
+            # Sparse mask - iterate only over stored pairs
+            mask_indices_i = self.mask.row
+            mask_indices_j = self.mask.col
+            pair_frust_values = pair_frustration[mask_indices_i, mask_indices_j] if isinstance(pair_frustration, np.ndarray) else np.array([pair_frustration[i, j] if pair_frustration[i, j] is not None else 0 for i, j in zip(mask_indices_i, mask_indices_j)])
+            sel_frustration = np.column_stack((mask_indices_i, mask_indices_j, pair_frust_values))
+        else:
+            # Dense mask - use meshgrid as before
+            residues = np.arange(len(sequence))
+            r1, r2 = np.meshgrid(residues, residues, indexing='ij')
+            pair_frustration_triu = pair_frustration * np.triu(self.mask)
+            sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration_triu.ravel()]).T
+        
         minimally_frustrated = sel_frustration[sel_frustration[:, -1] > 1]
         frustrated = sel_frustration[sel_frustration[:, -1] < -self.minimally_frustrated_threshold]
         
@@ -549,6 +569,8 @@ class Frustratometer:
         r_m : np.array
             Array of midpoints between evaluated spherical shells
         """
+        from .Structure import SparseMatrix as _SM
+
         if sequence==None:
             sequence=self.sequence
         frustration_values=self.frustration(sequence=sequence,kind=kind)
@@ -564,9 +586,19 @@ class Frustratometer:
             sel_frustration = np.column_stack((residue_cb_coordinates,np.expand_dims(frustration_values, axis=1)))
             
         elif kind in ["configurational","pseudoconfigurational","mutational"]:
-            i,j=np.meshgrid(range(0,len(self.sequence)),range(0,len(self.sequence)))
-            midpoint_coordinates=(residue_cb_coordinates[i.flatten(),:]+ residue_cb_coordinates[j.flatten(),:])/2
-            sel_frustration = np.column_stack((midpoint_coordinates, frustration_values.ravel()))
+            # Handle sparse or dense frustration matrix
+            if isinstance(frustration_values, _SM):
+                # For sparse frustration, only compute coordinates for stored pairs
+                i_indices = frustration_values.row
+                j_indices = frustration_values.col
+                frust_vals = frustration_values.data if frustration_values.data is not None else np.ones(len(i_indices))
+                midpoint_coords = (residue_cb_coordinates[i_indices, :] + residue_cb_coordinates[j_indices, :]) / 2
+                sel_frustration = np.column_stack((midpoint_coords, frust_vals))
+            else:
+                # Dense frustration - use full meshgrid
+                i,j=np.meshgrid(range(0,len(self.sequence)),range(0,len(self.sequence)))
+                midpoint_coordinates=(residue_cb_coordinates[i.flatten(),:]+ residue_cb_coordinates[j.flatten(),:])/2
+                sel_frustration = np.column_stack((midpoint_coordinates, frustration_values.ravel()))
 
         r=np.linspace(1,maximum_shell_radius,bins)
         r_m=(r[1:]+r[:-1])/2
