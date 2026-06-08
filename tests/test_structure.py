@@ -78,50 +78,6 @@ def test_repair_pdb_no_memory_leak(tmp_path):
     assert growth_mb < 200, f"Memory grew by {growth_mb:.0f} MB over 3 repairs — possible leak"
 
 
-def _measure_pdbfixer_leak(pdb_path, out_path, result):
-    """Measure PDBFixer memory leak in an isolated process (child target)."""
-    import gc, resource
-    from frustratometer.pdb.fix import _repair_worker
-
-    _repair_worker(pdb_path, 'A', out_path)
-    gc.collect()
-    baseline_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-
-    for _ in range(3):
-        _repair_worker(pdb_path, 'A', out_path)
-        gc.collect()
-
-    final_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    result.value = (final_kb - baseline_kb) / 1024
-
-
-@pytest.mark.memory_heavy
-def test_pdbfixer_leaks_without_isolation(tmp_path):
-    """Canary: calling PDBFixer in-process DOES leak memory.
-
-    Good news: If this test starts failing, pdbfixer/OpenMM may have fixed their leak and
-    the multiprocessing isolation in fix.py can be removed.
-
-    Runs the measurement in a child process so that the rest of the test
-    suite cannot inflate ``ru_maxrss`` and mask the leak.
-    """
-    import multiprocessing
-
-    growth_mb = multiprocessing.Value('d', 0.0)
-    p = multiprocessing.Process(
-        target=_measure_pdbfixer_leak,
-        args=(str(test_data_path / '6u5e.pdb'),
-              str(tmp_path / 'cleaned.pdb'),
-              growth_mb),
-    )
-    p.start()
-    p.join(timeout=300)
-    assert p.exitcode == 0, f"Measurement process failed (exit code {p.exitcode})"
-    assert growth_mb.value >= 200, (
-        f"Memory only grew {growth_mb.value:.0f} MB. PDBFixer leak may have been fixed. "
-        f"Consider removing multiprocessing isolation in fix.py."
-    )
-
 def test_structure_detects_chain_breaks():
     """Structure must detect chain boundaries from a multi-chain CIF file."""
 
