@@ -935,67 +935,58 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     selection = structure.select('protein', chain=chain)
     residues = np.unique(selection.getResindices())
 
+    # Precompute per-residue coordinates once, aligned to `residues` (NaN where an
+    # atom is missing). Lines are drawn CA->CA; the Cbeta coords (CB, or CA for
+    # glycine -- mirroring pdb.distance._select_cb) decide the solid/dashed style.
+    ca_sel = selection.select('name CA')
+    cb_sel = selection.select('name CB or (resname GLY and name CA)')
+    ca_xyz = np.full((len(residues), 3), np.nan)
+    cb_xyz = np.full((len(residues), 3), np.nan)
+    ca_xyz[np.searchsorted(residues, ca_sel.getResindices())] = ca_sel.getCoords()
+    cb_xyz[np.searchsorted(residues, cb_sel.getResindices())] = cb_sel.getCoords()
+
     fo.write(f'[atomselect top all] set beta 0\n')
     # Single residue frustration
     for r, f in zip(residues, single_frustration):
-        # print(f)
         fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
 
-    # Mutational frustration:
-    r1, r2 = np.meshgrid(residues, residues, indexing='ij')
-    sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel(),distance_matrix.ravel(), mask.ravel()]).T
-    #Filter with mask and distance
+    ii, jj = np.triu_indices(len(residues), k=1)
+    keep = mask[ii, jj] > 0
     if distance_cutoff:
-        mask_dist=(sel_frustration[:, -2] <= distance_cutoff)
-    else:
-        mask_dist=np.ones(len(sel_frustration),dtype=bool)
-    sel_frustration = sel_frustration[mask_dist & (sel_frustration[:, -1] > 0)]
-    
-    minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -0.78]
-    #minimally_frustrated = sel_frustration[sel_frustration[:, 2] < -1.78]
-    sort_index = np.argsort(minimally_frustrated[:, 2])
-    minimally_frustrated = minimally_frustrated[sort_index]
-    if max_connections:
-        minimally_frustrated = minimally_frustrated[:max_connections]
-    fo.write('draw color green\n')
-    
+        keep &= distance_matrix[ii, jj] <= distance_cutoff
+    ii, jj = ii[keep], jj[keep]
+    frust = pair_frustration[ii, jj]
+    dist = distance_matrix[ii, jj]
 
-    for (r1, r2, f, d ,m) in minimally_frustrated:
-        r1=int(r1)
-        r2=int(r2)
-        if abs(r1-r2) == 1: # don't draw interactions between residues adjacent in sequence
-            continue
-        pos1 = selection.select(f'resindex {r1} and (name CB or (resname GLY and name CA))').getCoords()[0]
-        pos2 = selection.select(f'resindex {r2} and (name CB or (resname GLY and name CA))').getCoords()[0]
-        distance = np.linalg.norm(pos1 - pos2)
-        if d > 9.5 or d < 3.5:
-            continue
-        fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
-        if 3.5 <= distance <= 6.5:
-            fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
-        else:
-            fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
+    # Green = minimally frustrated (most negative first); red = frustrated (most positive
+    # first). For each: sort, cap at max_connections, then draw the in-range contacts.
+    for color, group, reverse in (
+        ('green', frust < -0.78, False),
+        ('red',   frust > 1,     True),
+    ):
+        gi, gj, gd, gf = ii[group], jj[group], dist[group], frust[group]
+        order = np.argsort(gf)
+        if reverse:
+            order = order[::-1]
+        gi, gj, gd = gi[order], gj[order], gd[order]
+        if max_connections:
+            gi, gj, gd = gi[:max_connections], gj[:max_connections], gd[:max_connections]
 
-    frustrated = sel_frustration[sel_frustration[:, 2] > 1]
-    #frustrated = sel_frustration[sel_frustration[:, 2] > 0]
-    sort_index = np.argsort(frustrated[:, 2])[::-1]
-    frustrated = frustrated[sort_index]
-    if max_connections:
-        frustrated = frustrated[:max_connections]
-    fo.write('draw color red\n')
-    for (r1, r2, f ,d, m) in frustrated:
-        r1=int(r1)
-        r2=int(r2)
-        if d > 9.5 or d < 3.5:
-            continue
-        fo.write(f'lassign [[atomselect top "residue {r1} and name CA"] get {{x y z}}] pos1\n')
-        fo.write(f'lassign [[atomselect top "residue {r2} and name CA"] get {{x y z}}] pos2\n')
-        if 3.5 <= d <= 6.5:
-            fo.write(f'draw line $pos1 $pos2 style solid width 2\n')
-        else:
-            fo.write(f'draw line $pos1 $pos2 style dashed width 2\n')
-    
+        draw = (gd >= 3.5) & (gd <= 9.5)
+        draw &= np.abs(residues[gi] - residues[gj]) != 1 # Skip adjacent residues, which are often connected by a covalent bond and thus always close in space, but not necessarily frustrated.
+        draw &= ~(np.isnan(ca_xyz[gi]).any(1) | np.isnan(ca_xyz[gj]).any(1) |
+                  np.isnan(cb_xyz[gi]).any(1) | np.isnan(cb_xyz[gj]).any(1))
+        gi, gj = gi[draw], gj[draw]
+
+        cb_dist = np.linalg.norm(cb_xyz[gi] - cb_xyz[gj], axis=1)   # Cbeta-Cbeta -> dashing
+        styles = np.where((cb_dist >= 3.5) & (cb_dist <= 6.5), 'solid', 'dashed')
+
+        fo.write(f'draw color {color}\n')
+        for a, b, style in zip(gi, gj, styles):
+            p1, p2 = ca_xyz[a], ca_xyz[b]
+            fo.write("draw line {%.3f %.3f %.3f} {%.3f %.3f %.3f} style %s width 2\n"
+                     % (p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], style))
+
     fo.write('''mol delrep top 0
             mol color Beta
             mol representation NewCartoon 0.300000 10.000000 4.100000 0
@@ -1004,7 +995,7 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
             mol addrep top
             color scale method GWR
             ''')
-    
+
     if movie_name:
         fo.write('''axes location Off
             color Display Background white
