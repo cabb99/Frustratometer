@@ -101,6 +101,22 @@ class SparseMatrix:
         kind = 'mask' if self.data is None else 'distance'
         return f"SparseMatrix({kind}, nnz={len(self)}, L={self.shape})"
 
+    def __iter__(self):
+        # check that our attributes all make sense
+        assert self.row.shape == self.col.shape == (self.row.shape[0],) # tuple of length 1
+        if type(self.data) == np.ndarray:
+            assert self.data.shape == self.row.shape
+        elif not (self.data is None):
+            raise AssertionError(f'self.data was {self.data}')
+        N = self.row.shape[0]
+        counter = 0
+        while counter < N:
+            if self.data is None:
+                yield (self.row[counter], self.col[counter], self.data) 
+            else: # numpy.ndarray
+                yield (self.row[counter], self.col[counter], self.data[counter])
+            counter += 1
+
 class Structure:
 
     def __init__(self, pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
