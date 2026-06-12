@@ -104,7 +104,7 @@ class SparseMatrix:
     def __iter__(self):
         # check that our attributes all make sense
         assert self.row.shape == self.col.shape == (self.row.shape[0],) # tuple of length 1
-        if type(self.data) == np.ndarray:
+        if isinstance(self.data, np.ndarray):
             assert self.data.shape == self.row.shape
         elif not (self.data is None):
             raise AssertionError(f'self.data was {self.data}')
