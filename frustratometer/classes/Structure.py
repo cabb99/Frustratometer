@@ -109,13 +109,56 @@ class SparseMatrix:
         elif not (self.data is None):
             raise AssertionError(f'self.data was {self.data}')
         N = self.row.shape[0]
-        counter = 0
-        while counter < N:
-            if self.data is None:
-                yield (self.row[counter], self.col[counter], self.data) 
-            else: # numpy.ndarray
-                yield (self.row[counter], self.col[counter], self.data[counter])
-            counter += 1
+        n = 0
+        while n < N:
+            yield (self.row[n], self.col[n], None if self.data is None else self.data[n]) 
+            n += 1
+
+    def __and__(self, other):
+        # create a new SparseMatrix that acts as a boolean mask
+        # for the indices present in self and other
+        if not isinstance(other, SparseMatrix):
+            return NotImplemented
+        else:
+            if self.shape != other.shape:
+                raise ValueError("intersection of two boolean arrays of different shapes is ill-defined")
+            new_row, new_col = self._and_helper(other)
+            return SparseMatrix(new_row, new_col)
+
+    def __rand__(self, other):
+        if not isinstance(other, SparseMatrix):
+            return NotImplemented
+        else:
+            return self.__and__(other)
+
+    def __iand__(self, other):
+        # in-place modification of self
+        if not isinstance(other, SparseMatrix):
+            return NotImplemented
+        if self.shape != other.shape:
+            raise ValueError("intersection of two boolean arrays of different shapes is ill-defined")
+        self.row, self.col = self._and_helper(other) # modify self.row and self.col in place
+        self.data = None
+        return self
+
+    def _and_helper(self, other):
+        #new_row = []
+        #new_col = []
+        #other_set = set(zip(other.row, other.col))
+        #for i, j in zip(self.row, self.col):
+        #    if (i,j) in other_set:
+        #        new_row.append(i)
+        #        new_col.append(j)
+        #return np.array(new_row), np.array(new_col)
+        
+        # Vectorized membership using 64-bit integer keys; preserves order of self.
+        # Similar speed to the above option, may be more memory-efficient
+        # if numpy significantly outperforms native python
+        L = self.shape 
+        keys_self = (self.row.astype(np.int64) * L) + self.col.astype(np.int64)
+        keys_other = (other.row.astype(np.int64) * L) + other.col.astype(np.int64)
+        mask = np.in1d(keys_self, keys_other, assume_unique=False)
+        return self.row[mask].astype(np.intp), self.col[mask].astype(np.intp)
 
 class Structure:
 
