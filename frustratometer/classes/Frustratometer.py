@@ -434,9 +434,18 @@ class Frustratometer:
                     perform the computation that you intend to perform.")
         
 
+        from .Structure import SparseMatrix as _SM
+        want_sparse = isinstance(self.mask, _SM)
+        single_frustration = -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq)
+        pair_frustration = self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq, dense=not want_sparse)
+        if isinstance(pair_frustration, _SM):
+            pair_frustration = _SM(pair_frustration.row, pair_frustration.col,
+                                   data=-np.asarray(pair_frustration.data), shape=pair_frustration.shape)
+        else:
+            pair_frustration = -pair_frustration
+
         tcl_script = frustration.write_tcl_script(self.pdb_file, self.chain, self.mask, self.distance_matrix, self.distance_cutoff,
-                                      -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq),
-                                      -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq),
+                                      single_frustration, pair_frustration,
                                       max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name)
         frustration.call_vmd(self.pdb_file, tcl_script)
 
@@ -462,11 +471,26 @@ class Frustratometer:
         pdb_filename = self.pdb_file
         shift=self.init_index_shift+1
 
-        pair_frustration=self.frustration(sequence=sequence, kind=pair)*np.triu(self.mask)
-        residues=np.arange(len(sequence))
-
-        r1, r2 = np.meshgrid(residues, residues, indexing='ij')
-        sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel()]).T
+        from .Structure import SparseMatrix as _SM
+        if isinstance(self.mask, _SM):
+            sm = self.frustration(sequence=sequence, kind=pair, dense=False)
+            if isinstance(sm, _SM):
+                # Sparse-native: take the upper-triangle contacts directly (no (L, L) matrix).
+                up = np.asarray(sm.row) < np.asarray(sm.col)
+                sel_frustration = np.array([np.asarray(sm.row)[up],
+                                            np.asarray(sm.col)[up],
+                                            np.asarray(sm.data)[up]]).T
+            else:
+                # e.g. configurational returns a dense (L, L)
+                pair_frustration = sm * np.triu(self.mask.to_dense(fill=0.0))
+                residues = np.arange(len(sequence))
+                r1, r2 = np.meshgrid(residues, residues, indexing='ij')
+                sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel()]).T
+        else:
+            pair_frustration=self.frustration(sequence=sequence, kind=pair)*np.triu(self.mask)
+            residues=np.arange(len(sequence))
+            r1, r2 = np.meshgrid(residues, residues, indexing='ij')
+            sel_frustration = np.array([r1.ravel(), r2.ravel(), pair_frustration.ravel()]).T
         minimally_frustrated = sel_frustration[sel_frustration[:, -1] > 1]
         frustrated = sel_frustration[sel_frustration[:, -1] < -self.minimally_frustrated_threshold]
         

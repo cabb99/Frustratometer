@@ -950,9 +950,10 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     """
     fo = open(tcl_script, 'w+')
     single_frustration = np.nan_to_num(single_frustration,nan=0,posinf=0,neginf=0)
-    pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
-    
-    
+
+    from ..classes.Structure import SparseMatrix
+    pair_is_sparse = isinstance(pair_frustration, SparseMatrix)
+
     structure = prody.parsePDB(str(pdb_file))
     selection = structure.select('protein', chain=chain)
     residues = np.unique(selection.getResindices())
@@ -972,13 +973,32 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     for r, f in zip(residues, single_frustration):
         fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
 
-    ii, jj = np.triu_indices(len(residues), k=1)
-    keep = mask[ii, jj] > 0
-    if distance_cutoff:
-        keep &= distance_matrix[ii, jj] <= distance_cutoff
-    ii, jj = ii[keep], jj[keep]
-    frust = pair_frustration[ii, jj]
-    dist = distance_matrix[ii, jj]
+    if pair_is_sparse:
+        # Sparse-native: iterate per-contact frustration directly (upper triangle),
+        # looking up distances from the sparse distance matrix; no (L, L) allocation.
+        ii = np.asarray(pair_frustration.row)
+        jj = np.asarray(pair_frustration.col)
+        frust = np.nan_to_num(np.asarray(pair_frustration.data), nan=0, posinf=0, neginf=0)
+        up = ii < jj
+        ii, jj, frust = ii[up], jj[up], frust[up]
+        if isinstance(distance_matrix, SparseMatrix):
+            dist = distance_matrix.lookup(ii, jj)
+        else:
+            dist = distance_matrix[ii, jj]
+        if distance_cutoff:
+            keep = dist <= distance_cutoff
+            ii, jj, frust, dist = ii[keep], jj[keep], frust[keep], dist[keep]
+    else:
+        pair_frustration = np.nan_to_num(pair_frustration, nan=0, posinf=0, neginf=0)
+        mask_dense = mask.to_dense(fill=0.0) if isinstance(mask, SparseMatrix) else mask
+        dm_dense = distance_matrix.to_dense(fill=np.inf) if isinstance(distance_matrix, SparseMatrix) else distance_matrix
+        ii, jj = np.triu_indices(len(residues), k=1)
+        keep = mask_dense[ii, jj] > 0
+        if distance_cutoff:
+            keep &= dm_dense[ii, jj] <= distance_cutoff
+        ii, jj = ii[keep], jj[keep]
+        frust = pair_frustration[ii, jj]
+        dist = dm_dense[ii, jj]
 
     # Green = minimally frustrated (most negative first); red = frustrated (most positive
     # first). For each: sort, cap at max_connections, then draw the in-range contacts.

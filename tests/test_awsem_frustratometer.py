@@ -571,6 +571,25 @@ def test_frustration_dense_false_returns_sparse(kind, awsem_6u5e_density):
     np.testing.assert_allclose(sparse.to_dense(fill=0.0), dense, atol=1e-6)
 
 
+def test_vmd_sparse_writes_tcl(tmp_path, monkeypatch):
+    """vmd() works on a sparse-mask model: frustration(dense=False) flows through the
+    sparse write_tcl_script path (no (L, L) mask/distance indexing) and writes a tcl file."""
+    from frustratometer.classes.Structure import SparseMatrix
+    # Absolute pdb path so prody still resolves it after chdir into tmp_path.
+    structure = frustratometer.Structure((test_data_path / '6u5e.pdb').resolve(), "A", sparse=True)
+    model = frustratometer.AWSEM(structure, k_electrostatics=0)
+    assert isinstance(model.mask, SparseMatrix), "sparse Structure should give a SparseMatrix mask"
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(frustratometer.frustration, "call_vmd", lambda *a, **k: None)
+    model.vmd(pair='mutational')
+
+    tcl = tmp_path / 'frustration.tcl'
+    assert tcl.exists() and tcl.stat().st_size > 0
+    # 'mol delrep' is written after the contact-drawing loop -> the sparse pair branch ran to completion.
+    assert 'mol delrep' in tcl.read_text()
+
+
 @pytest.fixture(scope="module")
 def elec_setup(awsem_6u5e_density, sparse_6u5e_density):
     """
