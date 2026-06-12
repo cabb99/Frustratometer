@@ -553,6 +553,24 @@ def test_sparse_frustration_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_
     np.testing.assert_allclose(dense_from_sparse[ci, cj], dense_frust[ci, cj], atol=1e-4)
 
 
+@pytest.mark.parametrize("kind", ["mutational", "contact", "pseudoconfigurational"])
+def test_frustration_dense_false_returns_sparse(kind, awsem_6u5e_density):
+    """frustration(dense=False) on a sparse model returns a SparseMatrix aligned to the
+    Potts contacts that round-trips (.to_dense(fill=0.0)) to the dense (L, L) result."""
+    from frustratometer.classes.Structure import SparseMatrix
+    model = awsem_6u5e_density
+    assert model._is_sparse, "fixture must be a sparse-Potts model for this contract"
+
+    dense = model.frustration(kind=kind, dense=True)
+    sparse = model.frustration(kind=kind, dense=False)
+
+    assert isinstance(sparse, SparseMatrix)
+    spm = model.sparse_potts_model
+    np.testing.assert_array_equal(sparse.row, spm['contact_i'])
+    np.testing.assert_array_equal(sparse.col, spm['contact_j'])
+    np.testing.assert_allclose(sparse.to_dense(fill=0.0), dense, atol=1e-6)
+
+
 @pytest.fixture(scope="module")
 def elec_setup(awsem_6u5e_density, sparse_6u5e_density):
     """

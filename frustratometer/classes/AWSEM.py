@@ -779,11 +779,11 @@ class AWSEM(Frustratometer):
     def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42):
         """Frustration index for the native sequence.
 
-        In fast mode, ``kind='mutational'`` with ``dense=False`` returns a
-        :class:`SparseMatrix` (``row``=contact_i, ``col``=contact_j,
-        ``data``=frustration values, ``shape``=L) instead of the (L, L) matrix,
-        avoiding the full-matrix allocation for large proteins. Expand it with
-        ``.to_dense(fill=0.0)``. ``dense`` only affects ``kind='mutational'``.
+        For the pair kinds ("mutational," "pseudoconfigurational," "contact") on a sparse
+        model, ``dense=False`` returns a :class:`SparseMatrix` (``row``=contact_i,
+        ``col``=contact_j, ``data``=frustration values, ``shape``=L) instead of the (L, L)
+        matrix, avoiding the full-matrix allocation for large proteins. Expand it with
+        ``.to_dense(fill=0.0)``. ``dense`` is ignored for "singleresidue" and "configurational".
         """
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
             fmod = self._get_fast_module()
@@ -798,7 +798,7 @@ class AWSEM(Frustratometer):
                 return fmod.mutational_frustration_dense(data, correction=float(correction))
             elif kind == 'configurational':
                 return self.configurational_frustration(aa_freq=aa_freq, correction=correction, seed=seed)
-        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction, seed=seed)
+        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction, seed=seed, dense=dense)
 
     def native_energy(self, sequence=None, ignore_couplings_of_gaps=False, ignore_fields_of_gaps=False):
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):

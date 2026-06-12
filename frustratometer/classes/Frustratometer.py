@@ -298,24 +298,31 @@ class Frustratometer:
         self._ensure_dense_potts_model()
         return frustration.compute_scores(self.potts_model)
 
-    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0, seed:int = 42) -> np.array:
+    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0, seed:int = 42, dense:bool = True) -> np.array:
         """
         Calculates frustration index values.
-        
+
         Parameters
         ----------
         sequence : str
             The amino acid sequence of the protein. The sequence is assumed to be in one-letter code. Gaps are represented as '-'. The length of the sequence (L) should match the dimensions of the Potts model.
         kind : str
-            Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," "configurational," and "contact." 
+            Kind of decoys generated. Options: "singleresidue," "mutational," "pseudoconfigurational," "configurational," and "contact."
         mask : np.array
             A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
         aa_freq: np.array
             Array of frequencies of all 21 possible amino acids within sequence
+        dense : bool
+            For the pair kinds ("mutational," "pseudoconfigurational," "contact") on a sparse
+            model, ``dense=False`` returns a :class:`SparseMatrix` of per-contact values
+            (``row``=contact_i, ``col``=contact_j, ``data``=values, ``shape``=L) instead of the
+            full (L, L) matrix, avoiding the dense allocation for large proteins. Expand it with
+            ``.to_dense(fill=0.0)``. Ignored for "singleresidue" and for dense models, which always
+            return the (L,) / (L, L) array.
 
         Returns
         -------
-        frustration_values: np.array
+        frustration_values: np.array or SparseMatrix
             Frustration index values.
         """
         if sequence is None:
@@ -342,15 +349,18 @@ class Frustratometer:
         elif kind in ['mutational', 'pseudoconfigurational', 'contact']:
             if aa_freq is None:
                 aa_freq = self.contact_freq
-            # Sparse decoy fluctuation has shape (N_contacts, 21, 21) — use sparse pair frustration, then densify
+            # Sparse decoy fluctuation has shape (N_contacts, 21, 21) — use sparse pair frustration.
             _use_sparse = self._is_sparse
             if _use_sparse and decoy_fluctuation.ndim == 3:
                 sparse_frust = frustration.compute_pair_frustration_sparse(decoy_fluctuation, aa_freq, correction)
+                contact_i = self.sparse_potts_model['contact_i']
+                contact_j = self.sparse_potts_model['contact_j']
+                L = self.sparse_potts_model['L']
+                if not dense:
+                    from .Structure import SparseMatrix as _SM
+                    return _SM(contact_i, contact_j, data=sparse_frust, shape=L)
                 frustration_values = frustration.sparse_frustration_to_dense(
-                    sparse_frust,
-                    self.sparse_potts_model['contact_i'],
-                    self.sparse_potts_model['contact_j'],
-                    self.sparse_potts_model['L'],
+                    sparse_frust, contact_i, contact_j, L,
                 )
             else:
                 frustration_values=frustration.compute_pair_frustration(decoy_fluctuation, aa_freq, correction)
