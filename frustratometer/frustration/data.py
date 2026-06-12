@@ -10,6 +10,8 @@ alphabet (gap at index 0, zeroed).
 from dataclasses import dataclass
 import numpy as np
 
+from .frustration import compute_seq_index
+
 # ─── Alphabet & constants ─────────────────────────────────────────────────────
 
 AA = '-ACDEFGHIKLMNPQRSTVWY'  # DCA 21-letter, gap at index 0
@@ -269,7 +271,7 @@ class FrustrationData:
         dist_col = np.asarray(dist_col, dtype=np.intp)
         dist_data = np.asarray(dist_data, dtype=np.float64)
 
-        seq_index = np.array([AA.find(aa) for aa in sequence], dtype=np.int32)
+        seq_index = compute_seq_index(sequence, dtype=np.int32)
 
         # Structural computations
         rho_r = compute_rho(dist_row, dist_col, dist_data, L,

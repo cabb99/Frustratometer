@@ -19,10 +19,32 @@ All functions assume `len(seq) == potts_model['h'].shape[0] == potts_model['J'].
 import prody
 import scipy.spatial.distance as sdist
 import numpy as np
+import warnings
 from typing import Union
 from pathlib import Path
 
 _AA = '-ACDEFGHIKLMNPQRSTVWY'
+
+
+def compute_seq_index(seq, alphabet: str = _AA, dtype=np.int64) -> np.ndarray:
+    """Map a one-letter sequence to integer indices in ``alphabet`` (gap '-' at 0).
+
+    Letters absent from the alphabet (e.g. 'X', 'B', 'Z', 'U') are mapped to the
+    gap index (0) and a warning is emitted. This avoids ``str.find`` returning -1,
+    which would otherwise silently alias an unknown residue to the last alphabet
+    entry ('Y') under numpy/numba indexing.
+    """
+    idx = np.array([alphabet.find(aa) for aa in seq], dtype=dtype)
+    unknown = idx < 0
+    if unknown.any():
+        bad = sorted({seq[i] for i in np.nonzero(unknown)[0]})
+        warnings.warn(
+            f"Unknown residue(s) {bad} not in alphabet {alphabet!r}; "
+            f"mapping to gap ('-', index 0).",
+            stacklevel=2,
+        )
+        idx[unknown] = 0
+    return idx
 
 def compute_mask(distance_matrix: np.array,
                  maximum_contact_distance: Union[float, None] = None,
@@ -132,7 +154,7 @@ def compute_native_energy(seq: str,
     .. todo:: Optimize the computation.
     """
         
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
@@ -190,7 +212,7 @@ def compute_fields_energy(seq: str,
     >>> fields_energy = compute_fields_energy(seq, potts_model)
     >>> print(f"Computed fields energy: {fields_energy:.2f}")
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     h = -potts_model['h'][range(seq_len), seq_index]
@@ -248,7 +270,7 @@ def compute_couplings_energy(seq: str,
 
     .. todo:: Optimize the computation.
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
     aa1, aa2 = np.meshgrid(seq_index, seq_index, indexing='ij', sparse=True)
@@ -313,7 +335,7 @@ def compute_sequences_energy(seqs: list,
     .. todo:: Optimize the computation.
     """
 
-    seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in seqs])
+    seq_index = np.array([compute_seq_index(s) for s in seqs])
     N_seqs, seq_len = seq_index.shape
     pos_index=np.repeat([np.arange(seq_len)], N_seqs,axis=0)
 
@@ -379,7 +401,7 @@ def compute_singleresidue_decoy_energy_fluctuation(seq: str,
 
     .. todo:: Optimize the computation.
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     # Create decoys
@@ -443,7 +465,7 @@ def compute_mutational_decoy_energy_fluctuation(seq: str,
 
     .. todo:: Optimize the computation.
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     # Create masked decoys
@@ -534,7 +556,7 @@ def compute_pseudoconfigurational_decoy_energy_fluctuation(seq: str,
 
     .. todo:: Optimize the computation.
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     # Create masked decoys
@@ -581,7 +603,7 @@ def compute_contact_decoy_energy_fluctuation(seq: str,
     :return:
     """
 
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     # Create decoys
@@ -665,7 +687,7 @@ def compute_aa_freq(seq, include_gaps=True):
     aa_freq: np.array
         Array of frequencies of all 21 possible amino acids within sequence
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     aa_freq = np.array([(seq_index == i).sum() for i in range(21)])
     if not include_gaps:
         aa_freq[0] = 0
@@ -686,7 +708,7 @@ def compute_contact_freq(seq):
     contact_freq: np.array
         21x21 array of frequencies of all possible contacts within sequence.
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     aa_freq = np.array([(seq_index == i).sum() for i in range(21)], dtype=np.float64)
     aa_freq /= aa_freq.sum()
     contact_freq = (aa_freq[:, np.newaxis] * aa_freq[np.newaxis, :])
@@ -1180,7 +1202,7 @@ def compute_fragment_total_native_energy(seq: str,
     """   
     
     
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
@@ -1245,7 +1267,7 @@ def compute_fragment_total_decoy_energy(decoy_seqs: list,
         Decoy energies.
     """   
     
-    seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in decoy_seqs])
+    seq_index = np.array([compute_seq_index(s) for s in decoy_seqs])
     N_seqs, seq_len = seq_index.shape
     pos_index=np.repeat([np.arange(seq_len)], N_seqs,axis=0)
     
@@ -1383,7 +1405,7 @@ def compute_native_h_J(seq: str,
         Values of the coupling field for the sequence. 
     """
     
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     seq_len = len(seq_index)
 
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
@@ -1427,7 +1449,7 @@ def compute_decoy_h_J(decoy_seqs: list,
         Values of the coupling field for each decoy sequence. 
     """
     
-    seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in decoy_seqs])
+    seq_index = np.array([compute_seq_index(s) for s in decoy_seqs])
     N_seqs, seq_len = seq_index.shape
     pos_index=np.repeat([np.arange(seq_len)], N_seqs,axis=0)
     
@@ -1843,7 +1865,7 @@ def compute_native_energy_sparse(seq: str,
     -------
     energy : float
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     L = len(seq_index)
 
     h = -sparse_potts_model['h'][np.arange(L), seq_index].copy()
@@ -1885,7 +1907,7 @@ def compute_couplings_energy_sparse(seq: str,
     -------
     couplings_energy : float
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     contact_i = sparse_potts_model['contact_i']
     contact_j = sparse_potts_model['contact_j']
     J_sparse = sparse_potts_model['J']
@@ -1920,7 +1942,7 @@ def compute_sequences_energy_sparse(seqs: list,
     -------
     energy : np.ndarray (N_seqs,) or (2, N_seqs)
     """
-    seq_index = np.array([[_AA.find(aa) for aa in seq] for seq in seqs])
+    seq_index = np.array([compute_seq_index(s) for s in seqs])
     N_seqs, L = seq_index.shape
     contact_i = sparse_potts_model['contact_i']
     contact_j = sparse_potts_model['contact_j']
@@ -1957,7 +1979,7 @@ def compute_singleresidue_decoy_energy_fluctuation_sparse(seq: str,
     -------
     decoy_energy : np.ndarray (L, 21)
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     L = len(seq_index)
     h = sparse_potts_model['h']
     J_sparse = sparse_potts_model['J']
@@ -2000,7 +2022,7 @@ def compute_mutational_decoy_energy_fluctuation_sparse(seq: str,
     decoy_energy : np.ndarray (N_contacts, 21, 21)
         Energy changes for each contact upon mutating both residues.
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     L = len(seq_index)
     h = sparse_potts_model['h']
     J_sparse = sparse_potts_model['J']
@@ -2062,7 +2084,7 @@ def compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(seq: str,
     -------
     decoy_energy : np.ndarray (N_contacts, 21, 21)
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     L = len(seq_index)
     h = sparse_potts_model['h']
     J_sparse = sparse_potts_model['J']
@@ -2122,7 +2144,7 @@ def compute_contact_decoy_energy_fluctuation_sparse(seq: str,
     -------
     decoy_energy : np.ndarray (N_contacts, 21, 21)
     """
-    seq_index = np.array([_AA.find(aa) for aa in seq])
+    seq_index = compute_seq_index(seq)
     J_sparse = sparse_potts_model['J']
     contact_i = sparse_potts_model['contact_i']
     contact_j = sparse_potts_model['contact_j']
@@ -2291,7 +2313,7 @@ def build_elec_data(distance_matrix: np.ndarray,
         - 'mask_at_contacts': (N_contacts,) mask values at contacts
         - 'mask_mean': scalar, mean of mask
     """
-    seq_index = np.array([_AA.find(aa) for aa in sequence])
+    seq_index = compute_seq_index(sequence)
     L = len(seq_index)
     charges = _CHARGES
     q_native = charges[seq_index]
@@ -2401,7 +2423,7 @@ def build_elec_data_sparse(elec_dm,
     mask_i = mask_dm.row
     mask_j = mask_dm.col
 
-    seq_index = np.array([_AA.find(aa) for aa in sequence])
+    seq_index = compute_seq_index(sequence)
     L = len(seq_index)
     charges = _CHARGES
     q_native = charges[seq_index]
@@ -2450,9 +2472,12 @@ def build_elec_data_sparse(elec_dm,
         sort_idx_mk = np.argsort(mask_key)
         sorted_mask_key = mask_key[sort_idx_mk]
         filt_lookup_key = filt_ci.astype(np.int64) * L + filt_cj.astype(np.int64)
-        filt_pos = np.searchsorted(sorted_mask_key, filt_lookup_key)
-        filt_pos = np.clip(filt_pos, 0, len(sorted_mask_key) - 1)
-        filt_in_mask = sorted_mask_key[filt_pos] == filt_lookup_key
+        if len(sorted_mask_key) == 0:
+            filt_in_mask = np.zeros(len(filt_lookup_key), dtype=bool)
+        else:
+            filt_pos = np.searchsorted(sorted_mask_key, filt_lookup_key)
+            filt_pos = np.clip(filt_pos, 0, len(sorted_mask_key) - 1)
+            filt_in_mask = sorted_mask_key[filt_pos] == filt_lookup_key
     ind_masked[~filt_in_mask] = 0.0
 
     # phi = indicator * mask @ q_native  per row i
@@ -2467,18 +2492,24 @@ def build_elec_data_sparse(elec_dm,
 
     sort_idx_filt = np.argsort(filt_key)
     sorted_filt_key = filt_key[sort_idx_filt]
-    potts_pos = np.searchsorted(sorted_filt_key, potts_key)
-    potts_pos = np.clip(potts_pos, 0, len(sorted_filt_key) - 1)
-    found = sorted_filt_key[potts_pos] == potts_key
-    indicator_at_contacts = np.where(found, ind_vals[sort_idx_filt[potts_pos]], 0.0)
+    if len(sorted_filt_key) == 0:
+        indicator_at_contacts = np.zeros(len(potts_key))
+    else:
+        potts_pos = np.searchsorted(sorted_filt_key, potts_key)
+        potts_pos = np.clip(potts_pos, 0, len(sorted_filt_key) - 1)
+        found = sorted_filt_key[potts_pos] == potts_key
+        indicator_at_contacts = np.where(found, ind_vals[sort_idx_filt[potts_pos]], 0.0)
 
     if mask_sequence_cutoff is not None:
         mask_at_contacts = _check_seqsep(potts_ci, potts_cj, mask_sequence_cutoff, mask_chain_breaks).astype(float)
     else:
         # mask_key and sorted_mask_key already computed in the filt_in_mask branch above
-        mask_pos = np.searchsorted(sorted_mask_key, potts_key)
-        mask_pos = np.clip(mask_pos, 0, len(sorted_mask_key) - 1)
-        mask_at_contacts = (sorted_mask_key[mask_pos] == potts_key).astype(float)
+        if len(sorted_mask_key) == 0:
+            mask_at_contacts = np.zeros(len(potts_key))
+        else:
+            mask_pos = np.searchsorted(sorted_mask_key, potts_key)
+            mask_pos = np.clip(mask_pos, 0, len(sorted_mask_key) - 1)
+            mask_at_contacts = (sorted_mask_key[mask_pos] == potts_key).astype(float)
 
     if mask_sequence_cutoff is not None:
         _mask_mean = mask_mean(L, mask_sequence_cutoff, mask_chain_breaks)

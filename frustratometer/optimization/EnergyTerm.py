@@ -80,10 +80,9 @@ class EnergyTerm(abc.ABC):
                 self.__dict__.pop(attr, None)
     
     def clear_cache(self):
-        # Clear the cache for all cached properties
-        for attr in ['energies_function', 'energy_function', 'denergy_mutation_function', 'denergy_swap_function']:
-            if hasattr(self, attr):
-                getattr(self, attr).cache_clear()
+        # Drop memoized cached_property values so they recompute on next access.
+        for attr in ('energies_function', 'energy_function', 'denergy_mutation_function', 'denergy_swap_function'):
+            self.__dict__.pop(attr, None)
 
     @property
     def numbify(self):

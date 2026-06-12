@@ -369,8 +369,11 @@ class AWSEM(Frustratometer):
             try:
                 from ..frustration.cuda import FrustrationCUDA
                 self._device_data = FrustrationCUDA(self._frustration_data)
-            except Exception:
-                pass
+            except Exception as e:
+                raise RuntimeError(
+                    f"backend='cuda' was requested but the CUDA backend could not be "
+                    f"initialized: {e}. Use backend='numba' to run on CPU."
+                ) from e
 
     def _start_indicator_exposure(self, p):
         """Set up burial indicators and gamma arrays (common to sparse and dense)."""
@@ -765,15 +768,15 @@ class AWSEM(Frustratometer):
             return self._device_data
         return self._frustration_data
 
-    def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000):
+    def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000, seed=42):
         if self._frustration_data is not None:
             fmod = self._get_fast_module()
             return fmod.configurational_frustration(
-                self._get_fast_data(), n_decoys=n_decoys, correction=float(correction))
+                self._get_fast_data(), n_decoys=n_decoys, seed=seed, correction=float(correction))
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
-    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True):
+    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42):
         """Frustration index for the native sequence.
 
         In fast mode, ``kind='mutational'`` with ``dense=False`` returns a
@@ -794,8 +797,8 @@ class AWSEM(Frustratometer):
                     return SparseMatrix(fd.contact_i, fd.contact_j, data=values, shape=fd.L)
                 return fmod.mutational_frustration_dense(data, correction=float(correction))
             elif kind == 'configurational':
-                return self.configurational_frustration(aa_freq=aa_freq, correction=correction)
-        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction)
+                return self.configurational_frustration(aa_freq=aa_freq, correction=correction, seed=seed)
+        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction, seed=seed)
 
     def native_energy(self, sequence=None, ignore_couplings_of_gaps=False, ignore_fields_of_gaps=False):
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):

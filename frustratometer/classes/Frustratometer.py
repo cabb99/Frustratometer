@@ -204,10 +204,11 @@ class Frustratometer:
         fluctuation : np.array
             The computed couplings energy of the protein sequence.
         """
+        is_native = sequence is None or sequence == self.sequence
         if sequence is None:
             sequence=self.sequence
-            if kind in self._decoy_fluctuation:
-                return self._decoy_fluctuation[kind]
+        if is_native and kind in self._decoy_fluctuation:
+            return self._decoy_fluctuation[kind]
         if not isinstance(mask, np.ndarray):
             mask=self.mask
         # Use sparse path when available
@@ -250,7 +251,8 @@ class Frustratometer:
                 fluctuation = frustration.compute_contact_decoy_energy_fluctuation(sequence, self.potts_model, mask)
             else:
                 raise Exception("Wrong kind of decoy generation selected")
-        self._decoy_fluctuation[kind] = fluctuation
+        if is_native:
+            self._decoy_fluctuation[kind] = fluctuation
         return fluctuation
 
     def decoy_energy(self, kind:str = 'singleresidue',sequence: str =None) ->np.array:
@@ -296,7 +298,7 @@ class Frustratometer:
         self._ensure_dense_potts_model()
         return frustration.compute_scores(self.potts_model)
 
-    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0) -> np.array:
+    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:int = 0, seed:int = 42) -> np.array:
         """
         Calculates frustration index values.
         
@@ -322,9 +324,15 @@ class Frustratometer:
             mask=self.mask
         # Configurational frustration has its own dedicated method (e.g. in AWSEM);
         # dispatch before computing decoy_fluctuation which doesn't handle 'configurational'.
-        if kind == 'configurational' and 'configurational_frustration' in dir(self):
-            #TODO: Correct this function for different aa_freq than WT
-            return self.configurational_frustration(aa_freq, correction)
+        if kind == 'configurational':
+            if 'configurational_frustration' in dir(self):
+                #TODO: Correct this function for different aa_freq than WT
+                return self.configurational_frustration(aa_freq, correction, seed=seed)
+            raise ValueError(
+                "kind='configurational' (Monte-Carlo configurational frustration) is only "
+                "available on models that implement configurational_frustration (e.g. AWSEM). "
+                "For this model use kind='pseudoconfigurational' (analytic approximation)."
+            )
         decoy_fluctuation = self.decoy_fluctuation(sequence=sequence,kind=kind, mask=mask)
         if kind == 'singleresidue':
             if aa_freq is None:
