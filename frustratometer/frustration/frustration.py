@@ -894,6 +894,10 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
                     pair_frustration: np.array, tcl_script: Union[Path, str] ='frustration.tcl',max_connections: int =None, movie_name: Union[Path, str] =None, still_image_name: Union[Path, str] =None) -> Union[Path, str]:
     """
     Writes a tcl script that can be run with VMD to superimpose the frustration patterns onto the corresponding PDB structure. 
+    
+    This function is fastest when distance_matrix and mask inputs are dense.
+    Converting the matrices from sparse to dense or alternatively following the sparse matrix-
+    based logic adds about 0.4 seconds to this function call for NFKB (615 residues).
 
     Parameters
     ----------
@@ -902,9 +906,9 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     chain : str
         Select chain from pdb
     mask : np.array
-        A 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
+        SparseMatrix or 2D Boolean array that determines which residue pairs should be considered in the energy computation. The mask should have dimensions (L, L), where L is the length of the sequence.
     distance_matrix : np.array
-        LxL array for sequence of length L, describing distances between contacts
+        SparseMatrix or LxL array for sequence of length L, describing distances between contacts
     distance_cutoff : float
         Maximum distance at which a contact occurs
     single_frustration : np.array
@@ -950,13 +954,47 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     for r, f in zip(residues, single_frustration):
         fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
 
-    ii, jj = np.triu_indices(len(residues), k=1)
-    keep = mask[ii, jj] > 0
-    if distance_cutoff:
-        keep &= distance_matrix[ii, jj] <= distance_cutoff
-    ii, jj = ii[keep], jj[keep]
-    frust = pair_frustration[ii, jj]
-    dist = distance_matrix[ii, jj]
+    # if we're really worried about memory,
+    # we should loop over elements of mask
+    # and distance_matrix and check their indices
+    # and values, but distance_matrix shouldn't
+    # be very big (10^4 residues -> 10^8
+    # elements in distance matrix -> 800 MB,
+    # assuming 8-byte floats)
+    try:
+        mask = mask.to_dense(fill=False)
+    except AttributeError:
+        pass # it's already a numpy array
+    try:
+        distance_matrix = distance_matrix.to_dense(fill=np.inf)
+    except AttributeError:
+        pass # it's already a numpy array
+    def process_dense_arrays():
+        ii, jj = np.triu_indices(len(residues), k=1)
+        keep = mask[ii, jj] > 0
+        if distance_cutoff:
+            keep &= distance_matrix[ii, jj] <= distance_cutoff
+        ii, jj = ii[keep], jj[keep]
+        frust = pair_frustration[ii, jj]
+        dist = distance_matrix[ii, jj]
+        return frust, dist, ii, jj
+    if isinstance(distance_matrix,np.ndarray) and isinstance(mask,np.ndarray):
+        frust, dist, ii, jj = process_dense_arrays()
+    elif isinstance(distance_matrix,np.ndarray) and not isinstance(mask,np.ndarray):
+        mask = mask.to_dense(fill=False)
+        frust, dist, ii, jj = process_dense_arrays()
+    elif (not isinstance(distance_matrix,np.ndarray)) and isinstance(mask,np.ndarray):
+        distance_matrix = distance_matrix.to_dense(fill=np.inf)
+        frust, dist, ii, jj = process_dense_arrays()
+    else: # This is about the same speed as converting to dense matrix for NFKB (615 residues)
+          # note that this code is currently unreachable
+        if distance_cutoff:
+            mask &= distance_matrix.compute_mask(maximum_contact_distance=distance_cutoff)
+        upper_triangular_part = np.unique(np.sort(np.array([mask.row, mask.col]),axis=0),axis=1)
+        ii = upper_triangular_part[0,:]
+        jj = upper_triangular_part[1,:]
+        frust = pair_frustration[ii,jj] # pair_frustration is always dense
+        dist = distance_matrix.lookup(ii,jj)
 
     # Green = minimally frustrated (most negative first); red = frustrated (most positive
     # first). For each: sort, cap at max_connections, then draw the in-range contacts.
