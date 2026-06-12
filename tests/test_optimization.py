@@ -343,7 +343,6 @@ def test_diff_mean_inner_product_1_by_1(n_elements = 10):
 _AA = '-ACDEFGHIKLMNPQRSTVWY'
 
 @pytest.fixture(params=[(10, 2, 0.0), (10, 2, 4.15), (None, 10, 4.15)])
-@pytest.mark.parametrize(["distance_cutoff_contact", "min_sequence_separation_contact", "k_electrostatics"], [])
 def model(request):
     native_pdb = "tests/data/1bfz.pdb"
     distance_cutoff_contact, min_sequence_separation_contact, k_electrostatics = request.param
@@ -476,3 +475,69 @@ def test_awsem_energy_variance(model, reduced_alphabet, use_numba):
 #     contact_energy_predicted = (contact_gamma * np.concatenate([a.ravel() for a in true_indicator2D])).sum()
 #     contact_energy_expected = model.couplings_energy()
 #     assert np.isclose(contact_energy_predicted,contact_energy_expected), f"Expected energy {contact_energy_expected} but got {contact_energy_predicted}"
+
+###################################
+# Virtual Move Parallel Tempering #
+###################################
+
+def _vmpt_model():
+    structure = Structure.full_pdb("tests/data/1r69.pdb", "A")
+    return AWSEM(structure, distance_cutoff_contact=10, min_sequence_separation_contact=2)
+
+
+def test_vmpt_adaptive_bias(tmp_path):
+    """Contract for VMPT: the adaptive bias must (A) grow into a healthy, bounded,
+    non-saturated potential, (B) fill a non-degenerate production histogram, and
+    (C) collapse to ordinary parallel tempering when umbrella=0."""
+    VISITED = -1e20
+    model = _vmpt_model()
+    energy = AwsemEnergy(model=model, alphabet=_AA, use_numba=True)
+    temperatures = np.geomspace(0.3, 20.0, 8) / 0.008314
+    energy_range = (-1400.0, 600.0, 20.0)
+    het_range = (80.0, 170.0, 2.0)
+
+    sampler = VirtualMoveParallelTempering(
+        sequence=model.sequence, energy=energy, Ep=20.0,
+        energy_range=energy_range, het_range=het_range, umbrella=0.05, alphabet=_AA)
+    sampler.parallel_tempering(
+        temperatures=temperatures, n_steps=60000, n_steps_per_cycle=500,
+        n_equilibration_steps=10000, bias_update_interval=5, record_interval=20,
+        csv_filename=str(tmp_path / "vmpt.csv"))
+
+    Wpot, Histo = sampler.Wpot, sampler.Histo
+    # A: bias healthy (finite, grew, not saturated-degenerate like the old run)
+    assert np.all(np.isfinite(Wpot))
+    assert Wpot.max() > 0.0
+    frac_at_max = np.mean(np.abs(Wpot - Wpot.max()) < 1e-6)
+    assert frac_at_max < 0.9, f"bias looks saturated/degenerate (frac_at_max={frac_at_max})"
+    # B: production histogram non-degenerate (real weight, not the ~1e-12 floor)
+    nonempty = int(np.sum(Histo > VISITED))
+    assert nonempty > 20, f"only {nonempty} non-empty histogram bins"
+    assert Histo[Histo > VISITED].max() > 0.0
+
+    # C: umbrella=0 must reduce to plain parallel tempering (no bias)
+    plain = VirtualMoveParallelTempering(
+        sequence=model.sequence, energy=energy, Ep=20.0,
+        energy_range=energy_range, het_range=het_range, umbrella=0.0, alphabet=_AA)
+    plain.parallel_tempering(
+        temperatures=temperatures, n_steps=30000, n_steps_per_cycle=500,
+        n_equilibration_steps=5000, bias_update_interval=5, record_interval=20,
+        csv_filename=str(tmp_path / "vmpt_umbrella0.csv"))
+    assert np.abs(plain.Wpot).max() < 1e-9
+    assert int(np.sum(plain.Histo > VISITED)) > 20
+
+
+def test_vmpt_runs_without_numba(tmp_path):
+    """The pure-Python path (use_numba=False) must execute end to end."""
+    model = _vmpt_model()
+    energy = AwsemEnergy(model=model, alphabet=_AA, use_numba=False)
+    sampler = VirtualMoveParallelTempering(
+        sequence=model.sequence, energy=energy, Ep=20.0,
+        energy_range=(-1400.0, 600.0, 50.0), het_range=(80.0, 170.0, 5.0),
+        umbrella=0.05, alphabet=_AA, use_numba=False)
+    sampler.parallel_tempering(
+        temperatures=np.geomspace(0.5, 15.0, 3) / 0.008314,
+        n_steps=600, n_steps_per_cycle=200, n_equilibration_steps=200,
+        bias_update_interval=2, record_interval=1, csv_filename=str(tmp_path / "vmpt_nonumba.csv"))
+    assert np.all(np.isfinite(sampler.Wpot))
+    assert int(np.sum(sampler.Histo > -1e20)) > 0

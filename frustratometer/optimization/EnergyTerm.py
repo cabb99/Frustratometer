@@ -80,45 +80,65 @@ class EnergyTerm(abc.ABC):
         return func
 
     @property
-    #@lru_cache(maxsize=None)
     def energies_function(self):
-        """ Returns the energy function as a numba dispatcher. """
-        energy_function = self.energy_function
-        def compute_energies(seq_indices:np.ndarray):
-            """Compute the energies of multiple sequences."""
-            energies = np.zeros(len(seq_indices))
-            for i in numba.prange(len(seq_indices)):
-                energies[i] = energy_function(seq_indices[i])
-            return energies
-        
-        if self.use_numba:
-            return numba.njit(types.Array(types.float64, 1, 'C')(types.Array(types.int64, 2, 'A', readonly=True)), parallel=True)(compute_energies)
-        else:
-            return compute_energies
+        if not hasattr(self, '_energies_function_cache'):
+            energy_function = self.energy_function
+
+            def compute_energies(seq_indices: np.ndarray):
+                energies = np.zeros(len(seq_indices))
+                for i in numba.prange(len(seq_indices)):
+                    energies[i] = energy_function(seq_indices[i])
+                return energies
+
+            if self.use_numba:
+                self._energies_function_cache = numba.njit(
+                    types.Array(types.float64, 1, 'C')(types.Array(types.int64, 2, 'A', readonly=True)),
+                    parallel=True
+                )(compute_energies)
+            else:
+                self._energies_function_cache = compute_energies
+        return self._energies_function_cache
 
     @property
-    #@lru_cache(maxsize=None)
     def energy_function(self):
-        """ Returns the energy function as a numba dispatcher. """
-        if self.use_numba:
-            return numba.njit(types.float64(types.Array(types.int64, 1, 'A', readonly=True)))(self.compute_energy)
-        return self.compute_energy
-    
-    @property
-    #@lru_cache(maxsize=None)
-    def denergy_mutation_function(self):
-        """ Returns the mutation energy change function as a numba dispatcher. """
-        if self.use_numba:
-            return numba.njit(types.float64(types.Array(types.int64, 1, 'A', readonly=True),types.int64,types.int64))(self.compute_denergy_mutation)
-        return self.compute_denergy_mutation
+        if not hasattr(self, '_energy_function_cache'):
+            if self.use_numba:
+                self._energy_function_cache = numba.njit(
+                    types.float64(types.Array(types.int64, 1, 'A', readonly=True))
+                )(self.compute_energy)
+            else:
+                self._energy_function_cache = self.compute_energy
+        return self._energy_function_cache
 
     @property
-    #@lru_cache(maxsize=None)
+    def denergy_mutation_function(self):
+        if not hasattr(self, '_denergy_mutation_function_cache'):
+            if self.use_numba:
+                self._denergy_mutation_function_cache = numba.njit(
+                    types.float64(
+                        types.Array(types.int64, 1, 'A', readonly=True),
+                        types.int64,
+                        types.int64
+                    )
+                )(self.compute_denergy_mutation)
+            else:
+                self._denergy_mutation_function_cache = self.compute_denergy_mutation
+        return self._denergy_mutation_function_cache
+
+    @property
     def denergy_swap_function(self):
-        """ Returns the swap energy change function as a numba dispatcher. """
-        if self.use_numba:
-            return numba.njit(types.float64(types.Array(types.int64, 1, 'A', readonly=True),types.int64,types.int64))(self.compute_denergy_swap)
-        return self.compute_denergy_swap
+        if not hasattr(self, '_denergy_swap_function_cache'):
+            if self.use_numba:
+                self._denergy_swap_function_cache = numba.njit(
+                    types.float64(
+                        types.Array(types.int64, 1, 'A', readonly=True),
+                        types.int64,
+                        types.int64
+                    )
+                )(self.compute_denergy_swap)
+            else:
+                self._denergy_swap_function_cache = self.compute_denergy_swap
+        return self._denergy_swap_function_cache
     
     @staticmethod
     #@abc.abstractmethod #TODO: Add abstract method decorator. Currently not working due to the late initialization of the methods.
