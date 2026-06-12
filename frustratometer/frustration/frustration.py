@@ -930,7 +930,8 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     tcl_script : Path or str
         tcl script file
     """
-    fo = open(tcl_script, 'w+')
+    to_write = []
+    #fo = open(tcl_script, 'w+')
     single_frustration = np.nan_to_num(single_frustration,nan=0,posinf=0,neginf=0)
     pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
     
@@ -949,10 +950,10 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
     ca_xyz[np.searchsorted(residues, ca_sel.getResindices())] = ca_sel.getCoords()
     cb_xyz[np.searchsorted(residues, cb_sel.getResindices())] = cb_sel.getCoords()
 
-    fo.write(f'[atomselect top all] set beta 0\n')
+    to_write.append(f'[atomselect top all] set beta 0\n')
     # Single residue frustration
     for r, f in zip(residues, single_frustration):
-        fo.write(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
+        to_write.append(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
 
     # if we're really worried about memory,
     # we should loop over elements of mask
@@ -1019,13 +1020,13 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
         cb_dist = np.linalg.norm(cb_xyz[gi] - cb_xyz[gj], axis=1)   # Cbeta-Cbeta -> dashing
         styles = np.where((cb_dist >= 3.5) & (cb_dist <= 6.5), 'solid', 'dashed')
 
-        fo.write(f'draw color {color}\n')
+        to_write.append(f'draw color {color}\n')
         for a, b, style in zip(gi, gj, styles):
             p1, p2 = ca_xyz[a], ca_xyz[b]
-            fo.write("draw line {%.3f %.3f %.3f} {%.3f %.3f %.3f} style %s width 2\n"
+            to_write.append("draw line {%.3f %.3f %.3f} {%.3f %.3f %.3f} style %s width 2\n"
                      % (p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], style))
 
-    fo.write('''mol delrep top 0
+        to_write.append('''mol delrep top 0
             mol color Beta
             mol representation NewCartoon 0.300000 10.000000 4.100000 0
             mol selection all
@@ -1035,7 +1036,7 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
             ''')
 
     if movie_name:
-        fo.write('''axes location Off
+            to_write.append('''axes location Off
             color Display Background white
             display resize 800 800
             display projection Orthographic
@@ -1090,11 +1091,18 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
             exit
         ''')
     elif still_image_name:
-        fo.write(f'set output "{still_image_name}"' + '''
+        to_write.append(f'set output "{still_image_name}"' + '''
             render snapshot $output
             exit
         ''')
-    fo.close()
+    # Write the tcl script once at the end
+    try:
+        with open(tcl_script, 'w+') as _fo:
+            _fo.write(''.join(to_write))
+    except Exception:
+        # Fallback: ensure we raise the original error if file write fails
+        with open(str(tcl_script), 'w+') as _fo:
+            _fo.write(''.join(to_write))
     return tcl_script
 
 
