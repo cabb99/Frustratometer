@@ -1393,10 +1393,47 @@ def compute_total_frustration(seq,
 
     total_frustration = (native_energy - decoy_energy_average)/ decoy_energy_std
     if output_kind == 'frustration':
-    
+
         return total_frustration
     else:
         return native_energy, decoy_energy_average, decoy_energy_std
+
+
+def compute_total_frustration_sparse(seq,
+                                     sparse_potts_model,
+                                     ndecoys=1000,
+                                     output_kind='frustration'):
+    """
+    Total frustration of a full protein from a sparse Potts model (mutational decoys).
+
+    Sparse-native counterpart of ``compute_total_frustration`` for the full-protein,
+    mutational-decoy case: reuses ``compute_native_energy_sparse`` and
+    ``compute_sequences_energy_sparse`` so neither the (L, L, Q, Q) coupling tensor nor
+    the (N_decoys, L, L) decoy-coupling array is ever materialized. Fragment masking,
+    pseudoconfigurational (shuffled) decoys, and an MSA mask are not handled here; the
+    caller routes those to the dense path.
+
+    Parameters
+    ----------
+    seq : str
+        Amino acid sequence (length L).
+    sparse_potts_model : dict
+        Sparse Potts model with keys 'h', 'J', 'contact_i', 'contact_j', 'L'.
+    ndecoys : int
+        Number of permuted decoy sequences.
+    output_kind : str
+        If 'frustration', return the z-scored total frustration; otherwise return
+        (native_energy, decoy_energy_average, decoy_energy_std).
+    """
+    native_energy = compute_native_energy_sparse(seq, sparse_potts_model)
+    decoy_seqs = make_decoy_seqs(seq, ndecoys=ndecoys)
+    decoy_energies = compute_sequences_energy_sparse(decoy_seqs, sparse_potts_model)
+    decoy_energy_average = decoy_energies.mean()
+    decoy_energy_std = decoy_energies.std()
+
+    if output_kind == 'frustration':
+        return (native_energy - decoy_energy_average) / decoy_energy_std
+    return native_energy, decoy_energy_average, decoy_energy_std
 
 
 

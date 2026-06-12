@@ -678,9 +678,20 @@ class Frustratometer:
             Standard deviation of the decoy energy distribution
         """
 
+        from .Structure import SparseMatrix as _SM
+        simple = (not config_decoys and not fragment_in_context and fragment_pos is None
+                  and np.isscalar(msa_mask) and msa_mask == 1)
+        if self._is_sparse and simple:
+            # Sparse-native: full protein, mutational decoys — no dense (L, L, Q, Q) / (N, L, L).
+            return frustration.compute_total_frustration_sparse(
+                self.sequence, self.sparse_potts_model, n_decoys, output_kind)
+
+        # Dense path (fragments / pseudoconfigurational decoys / MSA mask). Densify a sparse
+        # mask so compute_fragment_mask can index it.
+        mask = self.mask.to_dense(fill=0.0) if isinstance(self.mask, _SM) else self.mask
         return frustration.compute_total_frustration(self.sequence,
                                                      self.potts_model,
-                                                     self.mask,
+                                                     mask,
                                                      n_decoys,
                                                      config_decoys,
                                                      msa_mask,

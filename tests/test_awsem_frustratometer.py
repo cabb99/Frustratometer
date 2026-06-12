@@ -590,6 +590,36 @@ def test_vmd_sparse_writes_tcl(tmp_path, monkeypatch):
     assert 'mol delrep' in tcl.read_text()
 
 
+def test_total_frustration_sparse_energy_matches_dense(awsem_6u5e_density):
+    """Sparse total-frustration energy pieces match the dense fragment-energy functions
+    (full protein, mutational decoys) on a fixed decoy set."""
+    from frustratometer.frustration.frustration import (
+        compute_native_energy_sparse, compute_sequences_energy_sparse,
+        compute_fragment_total_native_energy, compute_fragment_total_decoy_energy,
+    )
+    model = awsem_6u5e_density
+    spm = model.sparse_potts_model
+    pm = model.potts_model  # triggers lazy densification for the dense reference
+    seq = model.sequence
+
+    native_sparse = compute_native_energy_sparse(seq, spm)
+    native_dense = compute_fragment_total_native_energy(seq, pm, model.mask)
+    np.testing.assert_allclose(native_sparse, native_dense, atol=1e-6)
+
+    decoy_seqs = [seq, seq[::-1], 'A' * len(seq)]
+    e_sparse = compute_sequences_energy_sparse(decoy_seqs, spm)
+    e_dense = compute_fragment_total_decoy_energy(decoy_seqs, pm, model.mask)
+    np.testing.assert_allclose(e_sparse, e_dense, atol=1e-6)
+
+
+def test_total_frustration_sparse_runs(awsem_6u5e_density):
+    """total_frustration() runs on a sparse model via the sparse-native path."""
+    model = awsem_6u5e_density
+    assert model._is_sparse
+    val = model.total_frustration(n_decoys=200)
+    assert np.isfinite(val)
+
+
 @pytest.fixture(scope="module")
 def elec_setup(awsem_6u5e_density, sparse_6u5e_density):
     """
