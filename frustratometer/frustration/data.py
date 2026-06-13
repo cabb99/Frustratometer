@@ -217,6 +217,7 @@ class FrustrationData:
     # Per-residue
     burial_indicator: np.ndarray    # (L, 3)
     rho_r: np.ndarray               # (L,)
+    h_struct: np.ndarray            # (L, 21) precomputed field: burial (+ membrane/Zim/static)
 
     # Gammas (DCA 21-letter): [direct, water, protein]
     gammas: np.ndarray              # (3, 21, 21)
@@ -289,6 +290,10 @@ class FrustrationData:
 
         # Gammas → DCA 21-letter
         bg = remap_burial_gamma(burial_gamma)
+
+        # Precomputed burial field h_struct[i, a] = 0.5*k_contact*Σ_w bg[a,w]*burial_indicator[i,w]
+        # (the frozen kernels read this directly; membrane/Zim/static fold into it later).
+        h_struct = 0.5 * float(k_contact) * (burial_indicator @ bg.T)
         dg = remap_gamma(direct_gamma)
         wg = remap_gamma(water_gamma)
         pg = remap_gamma(protein_gamma)
@@ -327,6 +332,7 @@ class FrustrationData:
             coeff=C(np.stack([theta, tsw, tsp], axis=1)),
             burial_indicator=C(burial_indicator),
             rho_r=C(rho_r),
+            h_struct=C(h_struct),
             gammas=C(gammas), bg=bg,
             aa_freq=aa_freq, contact_freq=C(contact_freq),
             charges=CHARGES.copy(),

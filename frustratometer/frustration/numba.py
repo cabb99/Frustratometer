@@ -71,12 +71,11 @@ def _compute_V(seq_index, contact_i, contact_j, Nc, L,
 
 @njit(cache=True)
 def _native_energy(seq_index, contact_i, contact_j, Nc, L,
-                   coeff,
-                   burial_indicator, gammas, bg, k_contact,
+                   coeff, h_struct, gammas, k_contact,
                    charges, elec_phi):
     e_burial = 0.0
     for i in range(L):
-        e_burial -= _burial_h(seq_index[i], i, bg, burial_indicator, k_contact)
+        e_burial -= h_struct[i, seq_index[i]]
 
     e_contact = 0.0
     for c in range(Nc):
@@ -96,8 +95,7 @@ def _native_energy(seq_index, contact_i, contact_j, Nc, L,
 
 @njit(parallel=True, cache=True)
 def _singleresidue(seq_index, contact_i, contact_j, Nc, L,
-                   coeff,
-                   burial_indicator, gammas, bg, k_contact,
+                   coeff, h_struct, gammas, k_contact,
                    aa_freq, charges, elec_phi, correction):
     V = _compute_V(seq_index, contact_i, contact_j, Nc, L,
                    coeff, gammas, k_contact)
@@ -108,11 +106,11 @@ def _singleresidue(seq_index, contact_i, contact_j, Nc, L,
         V_nat = V[i, si]
         phi_i = elec_phi[i]
         qn_i = charges[si]
-        h_nat = _burial_h(si, i, bg, burial_indicator, k_contact)
+        h_nat = h_struct[i, si]
 
         sum_w = 0.0; sum_we = 0.0; sum_we2 = 0.0
         for a in range(21):
-            db = h_nat - _burial_h(a, i, bg, burial_indicator, k_contact)
+            db = h_nat - h_struct[i, a]
             dc = V_nat - V[i, a]
             de_el = -(charges[a] - qn_i) * phi_i
             de = db + dc + de_el
@@ -127,8 +125,7 @@ def _singleresidue(seq_index, contact_i, contact_j, Nc, L,
 
 @njit(parallel=True, cache=True)
 def _mutational(seq_index, contact_i, contact_j, Nc, L,
-                coeff,
-                burial_indicator, gammas, bg, k_contact,
+                coeff, h_struct, gammas, k_contact,
                 contact_freq, charges, elec_phi, elec_ind_contacts, correction):
     V = _compute_V(seq_index, contact_i, contact_j, Nc, L,
                    coeff, gammas, k_contact)
@@ -145,19 +142,19 @@ def _mutational(seq_index, contact_i, contact_j, Nc, L,
         G_nat = _J_val_block(s1, s2, cc, gammas, k_contact)
         const_c = V[p1, s1] + V[p2, s2] - G_nat
 
-        h_nat_p1 = _burial_h(s1, p1, bg, burial_indicator, k_contact)
-        h_nat_p2 = _burial_h(s2, p2, bg, burial_indicator, k_contact)
+        h_nat_p1 = h_struct[p1, s1]
+        h_nat_p2 = h_struct[p2, s2]
 
         term_a = np.empty(21); dqa = np.empty(21)
         for a in range(21):
-            db1 = h_nat_p1 - _burial_h(a, p1, bg, burial_indicator, k_contact)
+            db1 = h_nat_p1 - h_struct[p1, a]
             Ga2 = _J_val_block(a, s2, cc, gammas, k_contact)
             dqa[a] = charges[a] - qn1
             term_a[a] = db1 - V[p1, a] + Ga2 - dqa[a] * phi1
 
         term_b = np.empty(21); dqb = np.empty(21)
         for b in range(21):
-            db2 = h_nat_p2 - _burial_h(b, p2, bg, burial_indicator, k_contact)
+            db2 = h_nat_p2 - h_struct[p2, b]
             G1b = _J_val_block(s1, b, cc, gammas, k_contact)
             dqb[b] = charges[b] - qn2
             term_b[b] = db2 - V[p2, b] + G1b - dqb[b] * phi2
@@ -268,8 +265,7 @@ def native_energy(data):
     """
     return _native_energy(
         data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
-        data.coeff,
-        data.burial_indicator, data.gammas, data.bg, data.k_contact,
+        data.coeff, data.h_struct, data.gammas, data.k_contact,
         data.charges, data.elec_phi,
     )
 
@@ -283,8 +279,7 @@ def singleresidue_frustration(data, correction=0.0):
     """
     return _singleresidue(
         data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
-        data.coeff,
-        data.burial_indicator, data.gammas, data.bg, data.k_contact,
+        data.coeff, data.h_struct, data.gammas, data.k_contact,
         data.aa_freq, data.charges, data.elec_phi,
         float(correction),
     )
@@ -301,8 +296,7 @@ def mutational_frustration(data, correction=0.0):
     """
     return _mutational(
         data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
-        data.coeff,
-        data.burial_indicator, data.gammas, data.bg, data.k_contact,
+        data.coeff, data.h_struct, data.gammas, data.k_contact,
         data.contact_freq, data.charges, data.elec_phi,
         data.elec_ind_contacts,
         float(correction),

@@ -142,9 +142,8 @@ def _native_energy_kernel(
     contact_i,
     contact_j,
     coeff,
-    burial_indicator,
+    h_struct,
     gammas,
-    bg,
     charges,
     elec_phi,
     k_contact,
@@ -164,7 +163,7 @@ def _native_energy_kernel(
 
     if idx < seq_index.shape[0]:
         seq_i = seq_index[idx]
-        local_burial = -_burial_h(seq_i, idx, bg, burial_indicator, k_contact)
+        local_burial = -h_struct[idx, seq_i]
         local_elec = -0.5 * charges[seq_i] * elec_phi[idx]
 
     if idx < contact_i.shape[0]:
@@ -197,9 +196,8 @@ def _native_energy_kernel(
 @cuda.jit
 def _singleresidue_kernel(
     seq_index,
-    burial_indicator,
+    h_struct,
     gammas,
-    bg,
     aa_freq,
     charges,
     elec_phi,
@@ -216,14 +214,14 @@ def _singleresidue_kernel(
     v_native = V[i, native_aa]
     phi_i = elec_phi[i]
     q_native = charges[native_aa]
-    h_native = _burial_h(native_aa, i, bg, burial_indicator, k_contact)
+    h_native = h_struct[i, native_aa]
 
     sum_w = 0.0
     sum_we = 0.0
     sum_we2 = 0.0
 
     for a in range(ALPHABET):
-        delta_burial = h_native - _burial_h(a, i, bg, burial_indicator, k_contact)
+        delta_burial = h_native - h_struct[i, a]
         delta_contact = v_native - V[i, a]
         delta_elec = -(charges[a] - q_native) * phi_i
         delta_e = delta_burial + delta_contact + delta_elec
@@ -248,9 +246,8 @@ def _mutational_kernel(
     contact_i,
     contact_j,
     coeff,
-    burial_indicator,
+    h_struct,
     gammas,
-    bg,
     contact_freq,
     charges,
     elec_phi,
@@ -278,8 +275,8 @@ def _mutational_kernel(
 
     g_native = _j_val_block(s1, s2, coeff, c, gammas, k_contact)
     const_term = V[p1, s1] + V[p2, s2] - g_native
-    h1_native = _burial_h(s1, p1, bg, burial_indicator, k_contact)
-    h2_native = _burial_h(s2, p2, bg, burial_indicator, k_contact)
+    h1_native = h_struct[p1, s1]
+    h2_native = h_struct[p2, s2]
 
     term_a = cuda.local.array(ALPHABET, dtype=np.float64)  # type: ignore[arg-type]
     dq_a = cuda.local.array(ALPHABET, dtype=np.float64)  # type: ignore[arg-type]
@@ -287,13 +284,13 @@ def _mutational_kernel(
     dq_b = cuda.local.array(ALPHABET, dtype=np.float64)  # type: ignore[arg-type]
 
     for a in range(ALPHABET):
-        delta_burial = h1_native - _burial_h(a, p1, bg, burial_indicator, k_contact)
+        delta_burial = h1_native - h_struct[p1, a]
         g_a2 = _j_val_block(a, s2, coeff, c, gammas, k_contact)
         dq_a[a] = charges[a] - q1_native
         term_a[a] = delta_burial - V[p1, a] + g_a2 - dq_a[a] * phi1
 
     for b in range(ALPHABET):
-        delta_burial = h2_native - _burial_h(b, p2, bg, burial_indicator, k_contact)
+        delta_burial = h2_native - h_struct[p2, b]
         g_1b = _j_val_block(s1, b, coeff, c, gammas, k_contact)
         dq_b[b] = charges[b] - q2_native
         term_b[b] = delta_burial - V[p2, b] + g_1b - dq_b[b] * phi2
@@ -524,6 +521,7 @@ class FrustrationCUDA:
         self.contact_i = cuda.to_device(data.contact_i)
         self.contact_j = cuda.to_device(data.contact_j)
         self.coeff = cuda.to_device(data.coeff)
+        self.h_struct = cuda.to_device(data.h_struct)
         self.burial_indicator = cuda.to_device(data.burial_indicator)
         self.rho_r = cuda.to_device(data.rho_r)
         self.gammas = cuda.to_device(data.gammas)
@@ -590,9 +588,8 @@ class FrustrationCUDA:
             self.contact_i,
             self.contact_j,
             self.coeff,
-            self.burial_indicator,
+            self.h_struct,
             self.gammas,
-            self.bg,
             self.charges,
             self.elec_phi,
             self.k_contact,
@@ -605,9 +602,8 @@ class FrustrationCUDA:
         blocks = self._blocks(self.L, THREADS_SINGLERESIDUE)
         _singleresidue_kernel[blocks, THREADS_SINGLERESIDUE](
             self.seq_index,
-            self.burial_indicator,
+            self.h_struct,
             self.gammas,
-            self.bg,
             self.aa_freq,
             self.charges,
             self.elec_phi,
@@ -625,9 +621,8 @@ class FrustrationCUDA:
             self.contact_i,
             self.contact_j,
             self.coeff,
-            self.burial_indicator,
+            self.h_struct,
             self.gammas,
-            self.bg,
             self.contact_freq,
             self.charges,
             self.elec_phi,
