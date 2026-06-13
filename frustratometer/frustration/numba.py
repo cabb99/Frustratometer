@@ -18,6 +18,19 @@ def _J_val(a, b, theta_c, tsw_c, tsp_c, gammas, k):
 
 
 @njit(inline='always')
+def _J_val_block(a, b, coeff_c, gammas, k):
+    """Generic contact coupling k·Σ_t coeff_c[t]·gammas[t, a, b] over T channels.
+
+    ``coeff_c`` is the per-contact channel vector (T,); ``gammas`` is (T, 21, 21).
+    Channel count is read from ``coeff_c`` so physics features add channels without
+    touching this accessor."""
+    s = 0.0
+    for t in range(coeff_c.shape[0]):
+        s += gammas[t, a, b] * coeff_c[t]
+    return k * s
+
+
+@njit(inline='always')
 def _burial_h(a, i, bg, bi, k):
     """Burial field for amino acid *a* at position *i* (positive; energy = −h)."""
     e = 0.0
@@ -42,15 +55,15 @@ def _frustration_index(sum_w, sum_we, sum_we2, correction):
 
 @njit(cache=True)
 def _compute_V(seq_index, contact_i, contact_j, Nc, L,
-               theta, tsw, tsp, gammas, k_contact):
+               coeff, gammas, k_contact):
     """V[j, a] = Σ_{c: cj=j} J(seq[ci], a, c)."""
     V = np.zeros((L, 21))
     for c in range(Nc):
         si = seq_index[contact_i[c]]
         j = contact_j[c]
-        th = theta[c]; tw = tsw[c]; tp = tsp[c]
+        cc = coeff[c]
         for a in range(21):
-            V[j, a] += _J_val(si, a, th, tw, tp, gammas, k_contact)
+            V[j, a] += _J_val_block(si, a, cc, gammas, k_contact)
     return V
 
 
@@ -58,7 +71,7 @@ def _compute_V(seq_index, contact_i, contact_j, Nc, L,
 
 @njit(cache=True)
 def _native_energy(seq_index, contact_i, contact_j, Nc, L,
-                   theta, tsw, tsp,
+                   coeff,
                    burial_indicator, gammas, bg, k_contact,
                    charges, elec_phi):
     e_burial = 0.0
@@ -67,8 +80,8 @@ def _native_energy(seq_index, contact_i, contact_j, Nc, L,
 
     e_contact = 0.0
     for c in range(Nc):
-        e_contact -= _J_val(seq_index[contact_i[c]], seq_index[contact_j[c]],
-                            theta[c], tsw[c], tsp[c], gammas, k_contact)
+        e_contact -= _J_val_block(seq_index[contact_i[c]], seq_index[contact_j[c]],
+                                  coeff[c], gammas, k_contact)
     e_contact *= 0.5
 
     e_elec = 0.0
@@ -83,11 +96,11 @@ def _native_energy(seq_index, contact_i, contact_j, Nc, L,
 
 @njit(parallel=True, cache=True)
 def _singleresidue(seq_index, contact_i, contact_j, Nc, L,
-                   theta, tsw, tsp,
+                   coeff,
                    burial_indicator, gammas, bg, k_contact,
                    aa_freq, charges, elec_phi, correction):
     V = _compute_V(seq_index, contact_i, contact_j, Nc, L,
-                   theta, tsw, tsp, gammas, k_contact)
+                   coeff, gammas, k_contact)
     result = np.empty(L)
 
     for i in prange(L):
@@ -114,22 +127,22 @@ def _singleresidue(seq_index, contact_i, contact_j, Nc, L,
 
 @njit(parallel=True, cache=True)
 def _mutational(seq_index, contact_i, contact_j, Nc, L,
-                theta, tsw, tsp,
+                coeff,
                 burial_indicator, gammas, bg, k_contact,
                 contact_freq, charges, elec_phi, elec_ind_contacts, correction):
     V = _compute_V(seq_index, contact_i, contact_j, Nc, L,
-                   theta, tsw, tsp, gammas, k_contact)
+                   coeff, gammas, k_contact)
     result = np.empty(Nc)
 
     for c in prange(Nc):
         p1 = contact_i[c]; p2 = contact_j[c]
         s1 = seq_index[p1]; s2 = seq_index[p2]
-        th = theta[c]; tw = tsw[c]; tp = tsp[c]
+        cc = coeff[c]
         ind_c = elec_ind_contacts[c]
         phi1 = elec_phi[p1]; phi2 = elec_phi[p2]
         qn1 = charges[s1]; qn2 = charges[s2]
 
-        G_nat = _J_val(s1, s2, th, tw, tp, gammas, k_contact)
+        G_nat = _J_val_block(s1, s2, cc, gammas, k_contact)
         const_c = V[p1, s1] + V[p2, s2] - G_nat
 
         h_nat_p1 = _burial_h(s1, p1, bg, burial_indicator, k_contact)
@@ -138,21 +151,21 @@ def _mutational(seq_index, contact_i, contact_j, Nc, L,
         term_a = np.empty(21); dqa = np.empty(21)
         for a in range(21):
             db1 = h_nat_p1 - _burial_h(a, p1, bg, burial_indicator, k_contact)
-            Ga2 = _J_val(a, s2, th, tw, tp, gammas, k_contact)
+            Ga2 = _J_val_block(a, s2, cc, gammas, k_contact)
             dqa[a] = charges[a] - qn1
             term_a[a] = db1 - V[p1, a] + Ga2 - dqa[a] * phi1
 
         term_b = np.empty(21); dqb = np.empty(21)
         for b in range(21):
             db2 = h_nat_p2 - _burial_h(b, p2, bg, burial_indicator, k_contact)
-            G1b = _J_val(s1, b, th, tw, tp, gammas, k_contact)
+            G1b = _J_val_block(s1, b, cc, gammas, k_contact)
             dqb[b] = charges[b] - qn2
             term_b[b] = db2 - V[p2, b] + G1b - dqb[b] * phi2
 
         sum_w = 0.0; sum_we = 0.0; sum_we2 = 0.0
         for a in range(21):
             for b in range(21):
-                Gab = _J_val(a, b, th, tw, tp, gammas, k_contact)
+                Gab = _J_val_block(a, b, cc, gammas, k_contact)
                 de = const_c + term_a[a] + term_b[b] - Gab - ind_c * dqa[a] * dqb[b]
                 w = contact_freq[a, b]
                 sum_w += w; sum_we += w * de; sum_we2 += w * de * de
@@ -236,7 +249,7 @@ def _configurational(seq_index, L,
 def compute_V(data):
     """Compute coupling environment matrix V (L, 21)."""
     return _compute_V(data.seq_index, data.contact_i, data.contact_j,
-                      data.Nc, data.L, data.theta, data.tsw, data.tsp,
+                      data.Nc, data.L, data.coeff,
                       data.gammas, data.k_contact)
 
 
@@ -249,7 +262,7 @@ def native_energy(data):
     """
     return _native_energy(
         data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
-        data.theta, data.tsw, data.tsp,
+        data.coeff,
         data.burial_indicator, data.gammas, data.bg, data.k_contact,
         data.charges, data.elec_phi,
     )
@@ -264,7 +277,7 @@ def singleresidue_frustration(data, correction=0.0):
     """
     return _singleresidue(
         data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
-        data.theta, data.tsw, data.tsp,
+        data.coeff,
         data.burial_indicator, data.gammas, data.bg, data.k_contact,
         data.aa_freq, data.charges, data.elec_phi,
         float(correction),
@@ -282,7 +295,7 @@ def mutational_frustration(data, correction=0.0):
     """
     return _mutational(
         data.seq_index, data.contact_i, data.contact_j, data.Nc, data.L,
-        data.theta, data.tsw, data.tsp,
+        data.coeff,
         data.burial_indicator, data.gammas, data.bg, data.k_contact,
         data.contact_freq, data.charges, data.elec_phi,
         data.elec_ind_contacts,

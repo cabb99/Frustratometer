@@ -212,6 +212,7 @@ class FrustrationData:
     theta: np.ndarray               # (Nc,)
     tsw: np.ndarray                 # (Nc,)
     tsp: np.ndarray                 # (Nc,)
+    coeff: np.ndarray               # (Nc, T) per-contact channel coefficients [theta, tsw, tsp]
 
     # Per-residue
     burial_indicator: np.ndarray    # (L, 3)
@@ -323,6 +324,7 @@ class FrustrationData:
             k_electrostatics=float(k_electrostatics),
             contact_i=C(ci), contact_j=C(cj),
             theta=C(theta), tsw=C(tsw), tsp=C(tsp),
+            coeff=C(np.stack([theta, tsw, tsp], axis=1)),
             burial_indicator=C(burial_indicator),
             rho_r=C(rho_r),
             gammas=C(gammas), bg=bg,

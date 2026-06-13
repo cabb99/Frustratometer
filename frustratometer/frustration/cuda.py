@@ -47,6 +47,18 @@ def _j_val(a, b, theta_c, tsw_c, tsp_c, gammas, k_contact):
 
 
 @cuda.jit(device=True)
+def _j_val_block(a, b, coeff, c, gammas, k_contact):
+    """Generic contact coupling k·Σ_t coeff[c, t]·gammas[t, a, b] over T channels.
+
+    ``coeff`` is (Nc, T) and ``gammas`` is (T, 21, 21); channel count is read from
+    ``coeff`` so physics features add channels without touching this accessor."""
+    s = 0.0
+    for t in range(coeff.shape[1]):
+        s += gammas[t, a, b] * coeff[c, t]
+    return k_contact * s
+
+
+@cuda.jit(device=True)
 def _burial_h(a, i, bg, burial_indicator, k_contact):
     total = 0.0
     for w in range(3):
@@ -111,7 +123,7 @@ def _clear_kernel(arr):
 
 
 @cuda.jit
-def _build_v_kernel(seq_index, contact_i, contact_j, theta, tsw, tsp, gammas, k_contact, V):
+def _build_v_kernel(seq_index, contact_i, contact_j, coeff, gammas, k_contact, V):
     """Build V[j, a] = sum_c J(seq[contact_i[c]], a, ...) over contacts hitting j."""
     c = cuda.grid(1)
     if c >= contact_i.shape[0]:
@@ -119,12 +131,9 @@ def _build_v_kernel(seq_index, contact_i, contact_j, theta, tsw, tsp, gammas, k_
 
     seq_a = seq_index[contact_i[c]]
     j = contact_j[c]
-    theta_c = theta[c]
-    tsw_c = tsw[c]
-    tsp_c = tsp[c]
 
     for a in range(ALPHABET):
-        cuda.atomic.add(V, (j, a), _j_val(seq_a, a, theta_c, tsw_c, tsp_c, gammas, k_contact))
+        cuda.atomic.add(V, (j, a), _j_val_block(seq_a, a, coeff, c, gammas, k_contact))
 
 
 @cuda.jit
@@ -132,9 +141,7 @@ def _native_energy_kernel(
     seq_index,
     contact_i,
     contact_j,
-    theta,
-    tsw,
-    tsp,
+    coeff,
     burial_indicator,
     gammas,
     bg,
@@ -165,7 +172,7 @@ def _native_energy_kernel(
         j = contact_j[idx]
         seq_i = seq_index[i]
         seq_j = seq_index[j]
-        local_contact = -0.5 * _j_val(seq_i, seq_j, theta[idx], tsw[idx], tsp[idx], gammas, k_contact)
+        local_contact = -0.5 * _j_val_block(seq_i, seq_j, coeff, idx, gammas, k_contact)
 
     s_burial[tid] = local_burial
     s_contact[tid] = local_contact
@@ -240,9 +247,7 @@ def _mutational_kernel(
     seq_index,
     contact_i,
     contact_j,
-    theta,
-    tsw,
-    tsp,
+    coeff,
     burial_indicator,
     gammas,
     bg,
@@ -264,9 +269,6 @@ def _mutational_kernel(
     s1 = seq_index[p1]
     s2 = seq_index[p2]
 
-    theta_c = theta[c]
-    tsw_c = tsw[c]
-    tsp_c = tsp[c]
     elec_indicator = elec_ind_contacts[c]
 
     phi1 = elec_phi[p1]
@@ -274,7 +276,7 @@ def _mutational_kernel(
     q1_native = charges[s1]
     q2_native = charges[s2]
 
-    g_native = _j_val(s1, s2, theta_c, tsw_c, tsp_c, gammas, k_contact)
+    g_native = _j_val_block(s1, s2, coeff, c, gammas, k_contact)
     const_term = V[p1, s1] + V[p2, s2] - g_native
     h1_native = _burial_h(s1, p1, bg, burial_indicator, k_contact)
     h2_native = _burial_h(s2, p2, bg, burial_indicator, k_contact)
@@ -286,13 +288,13 @@ def _mutational_kernel(
 
     for a in range(ALPHABET):
         delta_burial = h1_native - _burial_h(a, p1, bg, burial_indicator, k_contact)
-        g_a2 = _j_val(a, s2, theta_c, tsw_c, tsp_c, gammas, k_contact)
+        g_a2 = _j_val_block(a, s2, coeff, c, gammas, k_contact)
         dq_a[a] = charges[a] - q1_native
         term_a[a] = delta_burial - V[p1, a] + g_a2 - dq_a[a] * phi1
 
     for b in range(ALPHABET):
         delta_burial = h2_native - _burial_h(b, p2, bg, burial_indicator, k_contact)
-        g_1b = _j_val(s1, b, theta_c, tsw_c, tsp_c, gammas, k_contact)
+        g_1b = _j_val_block(s1, b, coeff, c, gammas, k_contact)
         dq_b[b] = charges[b] - q2_native
         term_b[b] = delta_burial - V[p2, b] + g_1b - dq_b[b] * phi2
 
@@ -302,7 +304,7 @@ def _mutational_kernel(
 
     for a in range(ALPHABET):
         for b in range(ALPHABET):
-            g_ab = _j_val(a, b, theta_c, tsw_c, tsp_c, gammas, k_contact)
+            g_ab = _j_val_block(a, b, coeff, c, gammas, k_contact)
             delta_e = (
                 const_term
                 + term_a[a]
@@ -521,9 +523,7 @@ class FrustrationCUDA:
         self.seq_index = cuda.to_device(data.seq_index)
         self.contact_i = cuda.to_device(data.contact_i)
         self.contact_j = cuda.to_device(data.contact_j)
-        self.theta = cuda.to_device(data.theta)
-        self.tsw = cuda.to_device(data.tsw)
-        self.tsp = cuda.to_device(data.tsp)
+        self.coeff = cuda.to_device(data.coeff)
         self.burial_indicator = cuda.to_device(data.burial_indicator)
         self.rho_r = cuda.to_device(data.rho_r)
         self.gammas = cuda.to_device(data.gammas)
@@ -559,9 +559,7 @@ class FrustrationCUDA:
             self.seq_index,
             self.contact_i,
             self.contact_j,
-            self.theta,
-            self.tsw,
-            self.tsp,
+            self.coeff,
             self.gammas,
             self.k_contact,
             self.d_V,
@@ -591,9 +589,7 @@ class FrustrationCUDA:
             self.seq_index,
             self.contact_i,
             self.contact_j,
-            self.theta,
-            self.tsw,
-            self.tsp,
+            self.coeff,
             self.burial_indicator,
             self.gammas,
             self.bg,
@@ -628,9 +624,7 @@ class FrustrationCUDA:
             self.seq_index,
             self.contact_i,
             self.contact_j,
-            self.theta,
-            self.tsw,
-            self.tsp,
+            self.coeff,
             self.burial_indicator,
             self.gammas,
             self.bg,
