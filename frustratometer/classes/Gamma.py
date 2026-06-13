@@ -26,10 +26,10 @@ class Gamma:
             self._init_from_file(data)
         else:
             raise TypeError("Unsupported type for initializing Gamma.")
-        
-        self.alphabet = alphabet if alphabet is not None else self.default_alphabet.copy()
-        self.segment_definition = segment_definition if segment_definition is not None else self.default_segment_definition.copy()
-        self.description = description
+
+        self.alphabet = alphabet if alphabet is not None else getattr(self, "alphabet", self.default_alphabet.copy())
+        self.segment_definition = segment_definition if segment_definition is not None else getattr(self, "segment_definition", self.default_segment_definition.copy())
+        self.description = description if description is not None else getattr(self, "description", None)
 
         self._validate_segments()
 
@@ -48,7 +48,7 @@ class Gamma:
             raise FileNotFoundError(f"The file {filepath} does not exist.")
         with open(filepath, 'r') as file:
             data = json.load(file)
-        self.gamma_array = np.array(data["gamma_array"])
+        self.gamma_array = np.asarray(data["gamma_array"], dtype=np.float64)
         self.description = data.get("description")
         file_segment_definition = data.get("segment_definition", {})
         self.segment_definition = {key: tuple(value) for key, value in file_segment_definition.items()}
@@ -86,7 +86,7 @@ class Gamma:
 
         # Ensure gamma_array is of type float64, raise error if conversion is not possible
         try:
-            gamma_array = np.array(data["gamma_array"], dtype=np.float64)
+            gamma_array = np.asarray(data["gamma_array"], dtype=np.float64)
         except ValueError as e:
             raise TypeError(f"Gamma array contains non-numeric data that cannot be converted to float64: {e}")
 
@@ -100,29 +100,43 @@ class Gamma:
         
         return cls(gamma_array, segment_definition, description, alphabet)
 
-    def to_file(self, filepath: str, allow_overwrite: bool = False):
+    def to_file(self, filepath: str, allow_overwrite: bool = False, chunk_size: int = None):
         """
         Saves the instance in JSON format.
 
         Args:
             filepath (str): The path to the file where the Gamma object will be saved.
             allow_overwrite (bool): Whether to allow overwriting if the file already exists. Default is False.
+            chunk_size (int): Values per row in JSON output. Defaults to len(alphabet).
 
         Returns:
-            None
+            str: The filepath that was written.
         """
-        
         if not allow_overwrite and Path(filepath).exists():
             raise FileExistsError(f"File '{filepath}' already exists. Set 'allow_overwrite' to True to overwrite.")
 
-        data = {
-            "gamma_array": self.gamma_array.tolist(),
-            "segment_definition": self.segment_definition,
-            "description": self.description,
-            "alphabet": self.alphabet
-        }
-        with open(filepath, 'w') as file:
-            json.dump(data, file)
+        if chunk_size is None:
+            chunk_size = len(self.alphabet)
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer.")
+
+        gamma_flat = self.gamma_array.ravel().tolist()
+        chunks = [gamma_flat[i:i + chunk_size] for i in range(0, len(gamma_flat), chunk_size)]
+
+        seg_def = {key: list(value) for key, value in self.segment_definition.items()}
+
+        with open(filepath, 'w') as f:
+            f.write('{\n')
+            f.write(f'  "description": {json.dumps(self.description)},\n')
+            f.write(f'  "alphabet": {json.dumps(self.alphabet)},\n')
+            f.write(f'  "segment_definition": {json.dumps(seg_def)},\n')
+            f.write('  "gamma_array": [\n')
+            for i, chunk in enumerate(chunks):
+                row = ', '.join(repr(v) for v in chunk)
+                comma = ',' if i < len(chunks) - 1 else ''
+                f.write(f'    {row}{comma}\n')
+            f.write('  ]\n')
+            f.write('}\n')
 
         return filepath
 
@@ -174,11 +188,12 @@ class Gamma:
     def deepcopy(self):
         """Creates a deep copy of this Gamma instance."""
         # Utilize the __init__ method to ensure a deep copy of each attribute
-        return Gamma(self.gamma_array.copy(), 
-                     segment_definition=copy.deepcopy(self.segment_definition), 
-                     alphabet = self.alphabet[:],
-                     description=self.description
-                    )
+        new_instance = Gamma(self.gamma_array.copy(), 
+                             segment_definition=copy.deepcopy(self.segment_definition), 
+                             alphabet = self.alphabet[:],
+                             description=self.description
+                            )
+        return new_instance
 
 
     #Dividing and reordering

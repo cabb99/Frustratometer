@@ -1,0 +1,6 @@
+{
+    "description": "Wimley-White whole-residue octanol hydrophobicity scale (ΔG_woct, kcal/mol), transfer from water to n-octanol. Charged states: ARG+, LYS+, HIS+, ASP-, GLU-. Values ordered in AWSEM 20-letter amino acid order.",
+    "source": "Wimley, Creamer & White (1996) Biochemistry 35:5109-5124; summarized in White lab whole-residue hydrophobicity scale table https://blanco.biomol.uci.edu/hydrophobicity_scales.html",
+    "alphabet": ["A", "R", "N", "D", "C", "Q", "E", "G", "H", "I", "L", "K", "M", "F", "P", "S", "T", "W", "Y", "V"],
+    "DGwoct": [0.50, 1.81, 0.85, 3.64, -0.02, 0.77, 3.63, 1.15, 2.33, -1.12, -1.25, 2.80, -0.67, -1.71, 0.14, 0.46, 0.25, -2.09, -0.71, -0.46]
+    }

@@ -1,6 +1,8 @@
+import json
 import numpy as np
 from ..utils import _path
 from .. import frustration
+from ..frustration.frustration import _AA as _AA_21
 from .Structure import Structure, SparseMatrix
 from .Frustratometer import Frustratometer
 from .Gamma import Gamma
@@ -41,8 +43,16 @@ class AWSEMParameters(BaseModel):
     
 
     #Membrane
+    membrane: bool = Field(False, description="Enable membrane-aware energy calculation.")
     membrane_gamma: Union[Path,Gamma] = Field(_path/'data'/'AWSEM_membrane_2015.json', description="File or Gamma object containing the membrane Gamma values (for membrane proteins)")
-    eta_switching: int = Field(10, description="Switching distance for the membrane switching function")
+    eta_switching: float = Field(1.0, description="Sharpness of the alpha switching function for membrane contact blending (Angstrom^-1).")
+    z_m: float = Field(15.0, description="Membrane half-thickness (Angstrom).")
+    z_source: str = Field("Auto", description="Atom name used for membrane Z-coordinate reference (e.g. Auto, CB or CA).")
+    membrane_center: float = Field(0.0, description="Z-coordinate of membrane center (Angstrom).")
+    k_membrane: float = Field(4.184, description="Strength of Zim membrane potential (kJ/mol).")
+    k_m: float = Field(2.0, description="Sharpness of Zim boundary switching function (Angstrom^-1).")
+    k_relative_mem: float = Field(1.0, description="Scalar multiplier for membrane gamma matrices (amplifies membrane contact interactions).")
+    zim: Optional[List[float]] = Field(None, description="Per-residue hydrophobicity values (DGwoct). If None, computed from Wimley-White scale.")
 
     #Electrostatics
     min_sequence_separation_electrostatics: Optional[int] = Field(1, description="Minimum sequence separation for electrostatics calculation.")
@@ -98,8 +108,20 @@ class AWSEM(Frustratometer):
         #Gamma parameters
         if isinstance(p.gamma, Gamma):
             gamma = p.gamma
-        elif isinstance(p.gamma, Path):
-            gamma = Gamma(p.gamma)
+        elif isinstance(p.gamma, (Path, str)):
+            gamma_path = Path(p.gamma)
+            local_candidate = Path.cwd() / p.gamma
+            if local_candidate.exists():   
+                gamma_path = local_candidate
+            elif gamma_path.suffix == '' and gamma_path.parent == Path('.'):
+                data_candidate = _path / 'data' / p.gamma.with_suffix('.json')
+                if data_candidate.exists():
+                    gamma_path = data_candidate
+                else:
+                    raise FileNotFoundError(f"Did not found the gamma file: {str(data_candidate)}")
+            else:
+                raise FileNotFoundError(f"Did not found the gamma file: {p.gamma}")
+            gamma = Gamma(gamma_path)
         else:
             raise ValueError("Gamma parameter must be a path or a Gamma object.")
                 
@@ -109,6 +131,19 @@ class AWSEM(Frustratometer):
         self.protein_gamma = gamma['Protein'][0]
         self.water_gamma = gamma['Water'][0]
         self.burial_in_context=p.burial_in_context
+
+        # Membrane gamma loading
+        if p.membrane:
+            if isinstance(p.membrane_gamma, Gamma):
+                membrane_gamma_obj = p.membrane_gamma
+            elif isinstance(p.membrane_gamma, Path):
+                membrane_gamma_obj = Gamma(p.membrane_gamma)
+            else:
+                raise ValueError("membrane_gamma parameter must be a path or a Gamma object.")
+            self.membrane_burial_gamma = membrane_gamma_obj['Burial'].T
+            self.membrane_direct_gamma = membrane_gamma_obj['Direct'][0] * p.k_relative_mem
+            self.membrane_protein_gamma = membrane_gamma_obj['Protein'][0] * p.k_relative_mem
+            self.membrane_water_gamma = membrane_gamma_obj['Water'][0] * p.k_relative_mem
 
         #Structure details
         self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
@@ -147,12 +182,62 @@ class AWSEM(Frustratometer):
         else:
             self._sparse_distance_matrix = None
             self._sparse_distance_matrix_elec = None
+        selection_CA = self.structure.select('name CA')
         selection_CB = self.structure.select('name CB or (resname GLY IGL and name CA)')
 
         resid = selection_CB.getResindices()
         self.resid=resid
         self.N=len(self.resid)
         assert self.N == len(self.sequence), "The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object."
+
+        # Membrane alpha and phi_z computation
+        if p.membrane:
+            # OpenAWSEM has two membrane Zim behaviors:
+            # - membrane_preassigned_term: CB (or CA fallback)
+            # - membrane_term (simple, no preassigned file): CA
+            # May need to adjust in the future to set custom z_source
+            if p.z_source == "Auto":
+                z_source = selection_CB if p.zim is not None else selection_CA
+            elif p.z_source == "CB":
+                z_source = selection_CB
+            elif p.z_source == "CA":
+                z_source = selection_CA
+            else:
+                raise ValueError(f"Invalid z_source value: {p.z_source}. Must be 'Auto', 'CB', or 'CA'.")
+            z_coords = z_source.getCoords()[:, 2] - p.membrane_center
+            self.z_coords = z_coords
+            # alpha_i ≈ 1 inside membrane, ≈ 0 outside
+            self.alpha = 0.5 * np.tanh(p.eta_switching * (z_coords + p.z_m)) + 0.5 * np.tanh(p.eta_switching * (p.z_m - z_coords))
+            # phi_z for Zim potential (same shape but sharper boundary via k_m)
+            self.phi_z = 0.5 * np.tanh(p.k_m * (z_coords + p.z_m)) + 0.5 * np.tanh(p.k_m * (p.z_m - z_coords))
+            # Per-residue DGwoct values
+            # Load Wimley-White DGwoct scale (20 values in AWSEM aa order)
+            _AA = 'ARNDCQEGHILKMFPSTWYV'
+            with open(_path / 'data' / 'wimley_white_dgwoct.json') as f:
+                ww = json.load(f)
+            self._dgwoct_scale = np.array(ww['DGwoct'], dtype=np.float64)  # (20,)
+            if p.zim is not None:
+                self.dgwoct = np.array(p.zim, dtype=np.float64)
+            else:
+                self.dgwoct = np.array([self._dgwoct_scale[_AA.index(aa)] for aa in self.sequence], dtype=np.float64)
+            # Per-residue, per-aa Zim contribution to h, shape (N, 21).
+            # Build paths add this to h; zim_energy() reads it at the native sequence.
+            if p.zim is not None:
+                # Preassigned dgwoct is per-position, independent of aa type.
+                zim_col = p.k_membrane * self.dgwoct * self.phi_z  # (N,)
+                self._zim_h = np.broadcast_to(zim_col[:, None],
+                                              (self.N, len(self.aa_map_awsem_list))).copy()
+            else:
+                # dgwoct_scale (length 20) reshuffled into the 21-letter alphabet.
+                zim_h_20 = p.k_membrane * self._dgwoct_scale[None, :] * self.phi_z[:, None]
+                self._zim_h = zim_h_20[:, self.aa_map_awsem_list]
+        else:
+            self.alpha = None
+            self.phi_z = None
+            self.dgwoct = None
+            self.z_coords = None
+            self._dgwoct_scale = None
+            self._zim_h = None
 
         self._decoy_fluctuation = {}
         self.minimally_frustrated_threshold=.78
@@ -404,19 +489,43 @@ class AWSEM(Frustratometer):
     def _start_indicator_exposure(self, p):
         """Set up burial indicators and gamma arrays (common to sparse and dense)."""
         burial_indicator = self._burial_indicator
+
+        # Burial indicators and gammas are the same regardless of membrane flag
         self.indicators = [burial_indicator[:, 0], burial_indicator[:, 1], burial_indicator[:, 2]]
 
-        temp_burial_gamma = self.burial_gamma[self.aa_map_awsem_list]
+        temp_burial_gamma = self.burial_gamma[self.aa_map_awsem_list].copy()
         temp_burial_gamma[0] = 0
         temp_burial_gamma *= -0.5 * p.k_contact
         self.gamma_array = [temp_burial_gamma[:, 0], temp_burial_gamma[:, 1], temp_burial_gamma[:, 2]]
 
-        for contact_gamma in [self.direct_gamma, self.protein_gamma, self.water_gamma]:
-            temp_gamma = contact_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y].copy()
-            temp_gamma[0, :] = 0
-            temp_gamma[:, 0] = 0
-            temp_gamma *= -0.5 * self.k_contact
-            self.gamma_array.append(temp_gamma)
+        if p.membrane:
+            # Add phi_z indicator and zim gamma
+            zim_gamma = p.k_membrane * self._dgwoct_scale[self.aa_map_awsem_list].copy()
+            zim_gamma[0] = 0
+            self.indicators.append(self.phi_z)
+            self.gamma_array.append(zim_gamma)
+
+            # Water contact gammas
+            for contact_gamma in [self.direct_gamma, self.protein_gamma, self.water_gamma]:
+                temp_gamma = contact_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y].copy()
+                temp_gamma[0, :] = 0
+                temp_gamma[:, 0] = 0
+                temp_gamma *= -0.5 * p.k_contact
+                self.gamma_array.append(temp_gamma)
+            # Membrane contact gammas
+            for contact_gamma in [self.membrane_direct_gamma, self.membrane_protein_gamma, self.membrane_water_gamma]:
+                temp_gamma = contact_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y].copy()
+                temp_gamma[0, :] = 0
+                temp_gamma[:, 0] = 0
+                temp_gamma *= -0.5 * p.k_contact
+                self.gamma_array.append(temp_gamma)
+        else:
+            for contact_gamma in [self.direct_gamma, self.protein_gamma, self.water_gamma]:
+                temp_gamma = contact_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y].copy()
+                temp_gamma[0, :] = 0
+                temp_gamma[:, 0] = 0
+                temp_gamma *= -0.5 * p.k_contact
+                self.gamma_array.append(temp_gamma)
 
     def _build_dense(self, p, sequence_mask_contact, theta, thetaII, burial_energy, expose):
         """Build dense Potts model with full (N, N, Q, Q) coupling tensors."""
@@ -433,7 +542,21 @@ class AWSEM(Frustratometer):
         direct = direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
         water_mediated = water_indicator * self.water_gamma[J_index[2], J_index[3]]
         protein_mediated = protein_indicator * self.protein_gamma[J_index[2], J_index[3]]
-        contact_energy = p.k_contact * np.array([direct, water_mediated, protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+        contact_energy_water = p.k_contact * np.array([direct, water_mediated, protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+
+        if p.membrane:
+            # Membrane contact gammas
+            m_direct = direct_indicator * self.membrane_direct_gamma[J_index[2], J_index[3]]
+            m_water_mediated = water_indicator * self.membrane_water_gamma[J_index[2], J_index[3]]
+            m_protein_mediated = protein_indicator * self.membrane_protein_gamma[J_index[2], J_index[3]]
+            contact_energy_membrane = p.k_contact * np.array([m_direct, m_water_mediated, m_protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
+
+            # alpha_ij blending: (1-alpha_ij)*water + alpha_ij*membrane
+            alpha_ij = self.alpha[:, np.newaxis] * self.alpha[np.newaxis, :]  # (N, N)
+            alpha_ij_4d = alpha_ij[np.newaxis, :, :, np.newaxis, np.newaxis]
+            contact_energy = (1 - alpha_ij_4d) * contact_energy_water + alpha_ij_4d * contact_energy_membrane
+        else:
+            contact_energy = contact_energy_water
 
         # Electrostatics
         if p.k_electrostatics != 0:
@@ -451,6 +574,8 @@ class AWSEM(Frustratometer):
         # Dense Potts model
         self._potts_model = {}
         self._potts_model['h'] = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
+        if self._zim_h is not None:
+            self._potts_model['h'] += self._zim_h
         self._potts_model['J'] = contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
         self._potts_model['h'][:, 0] = 0
         self._potts_model['J'][:, :, 0, :] = 0
@@ -460,9 +585,20 @@ class AWSEM(Frustratometer):
         # Indicator exposure
         if expose:
             self._start_indicator_exposure(p)
-            self.indicators.append(direct_indicator[:, :, 0, 0] * sequence_mask_contact)
-            self.indicators.append(protein_indicator[:, :, 0, 0] * sequence_mask_contact)
-            self.indicators.append(water_indicator[:, :, 0, 0] * sequence_mask_contact)
+            if p.membrane:
+                alpha_ij_2d = self.alpha[:, np.newaxis] * self.alpha[np.newaxis, :]
+                # Water pairwise indicators (multiplied by 1-alpha_ij)
+                self.indicators.append((1 - alpha_ij_2d) * direct_indicator[:, :, 0, 0] * sequence_mask_contact)
+                self.indicators.append((1 - alpha_ij_2d) * protein_indicator[:, :, 0, 0] * sequence_mask_contact)
+                self.indicators.append((1 - alpha_ij_2d) * water_indicator[:, :, 0, 0] * sequence_mask_contact)
+                # Membrane pairwise indicators (multiplied by alpha_ij)
+                self.indicators.append(alpha_ij_2d * direct_indicator[:, :, 0, 0] * sequence_mask_contact)
+                self.indicators.append(alpha_ij_2d * protein_indicator[:, :, 0, 0] * sequence_mask_contact)
+                self.indicators.append(alpha_ij_2d * water_indicator[:, :, 0, 0] * sequence_mask_contact)
+            else:
+                self.indicators.append(direct_indicator[:, :, 0, 0] * sequence_mask_contact)
+                self.indicators.append(protein_indicator[:, :, 0, 0] * sequence_mask_contact)
+                self.indicators.append(water_indicator[:, :, 0, 0] * sequence_mask_contact)
             self.indicator_contact_i = None
             self.indicator_contact_j = None
             self.burial_indicator = self._burial_indicator
@@ -496,14 +632,35 @@ class AWSEM(Frustratometer):
         pg21[0, :] = 0; pg21[:, 0] = 0
 
         # Build J_sparse directly in DCA 21-letter alphabet: (N_c, 21, 21)
-        J_sparse_21 = p.k_contact * (
+        J_water = p.k_contact * (
             dg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
             + wg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
             + pg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
         )
 
+        if p.membrane:
+            mdg21 = self.membrane_direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+            mwg21 = self.membrane_water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+            mpg21 = self.membrane_protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+            mdg21[0, :] = 0; mdg21[:, 0] = 0
+            mwg21[0, :] = 0; mwg21[:, 0] = 0
+            mpg21[0, :] = 0; mpg21[:, 0] = 0
+
+            J_membrane = p.k_contact * (
+                mdg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
+                + mwg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
+                + mpg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
+            )
+
+            alpha_ij = (self.alpha[ci] * self.alpha[cj])[:, np.newaxis, np.newaxis]
+            J_sparse_21 = (1 - alpha_ij) * J_water + alpha_ij * J_membrane
+        else:
+            J_sparse_21 = J_water
+
         # Sparse Potts model
         h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
+        if self._zim_h is not None:
+            h += self._zim_h
         h[:, 0] = 0
         self.sparse_potts_model = {
             'h': h,
@@ -539,9 +696,21 @@ class AWSEM(Frustratometer):
             dense_protein[ci, cj] = thetaII_c * sigma_protein_c
             dense_water = np.zeros((L, L))
             dense_water[ci, cj] = thetaII_c * sigma_water_c
-            self.indicators.append(dense_theta)
-            self.indicators.append(dense_protein)
-            self.indicators.append(dense_water)
+            if p.membrane:
+                alpha_ij_dense = np.zeros((L, L))
+                alpha_ij_dense[ci, cj] = self.alpha[ci] * self.alpha[cj]
+                # Water pairwise (multiplied by 1-alpha_ij)
+                self.indicators.append((1 - alpha_ij_dense) * dense_theta)
+                self.indicators.append((1 - alpha_ij_dense) * dense_protein)
+                self.indicators.append((1 - alpha_ij_dense) * dense_water)
+                # Membrane pairwise (multiplied by alpha_ij)
+                self.indicators.append(alpha_ij_dense * dense_theta)
+                self.indicators.append(alpha_ij_dense * dense_protein)
+                self.indicators.append(alpha_ij_dense * dense_water)
+            else:
+                self.indicators.append(dense_theta)
+                self.indicators.append(dense_protein)
+                self.indicators.append(dense_water)
             self.indicator_contact_i = None
             self.indicator_contact_j = None
             if p.k_electrostatics != 0:
@@ -573,14 +742,37 @@ class AWSEM(Frustratometer):
         pg21[0, :] = 0; pg21[:, 0] = 0
 
         # Build J_sparse directly in DCA 21-letter alphabet: (N_c, 21, 21)
-        J_sparse_21 = p.k_contact * (
+        J_water = p.k_contact * (
             dg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
             + wg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
             + pg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
         )
 
+        if p.membrane:
+            # Membrane gamma matrices in 21-letter alphabet
+            mdg21 = self.membrane_direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+            mwg21 = self.membrane_water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+            mpg21 = self.membrane_protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
+            mdg21[0, :] = 0; mdg21[:, 0] = 0
+            mwg21[0, :] = 0; mwg21[:, 0] = 0
+            mpg21[0, :] = 0; mpg21[:, 0] = 0
+
+            J_membrane = p.k_contact * (
+                mdg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
+                + mwg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
+                + mpg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
+            )
+
+            # alpha_ij at contact positions
+            alpha_ij = (self.alpha[ci] * self.alpha[cj])[:, np.newaxis, np.newaxis]
+            J_sparse_21 = (1 - alpha_ij) * J_water + alpha_ij * J_membrane
+        else:
+            J_sparse_21 = J_water
+
         # Sparse Potts model
         h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
+        if self._zim_h is not None:
+            h += self._zim_h
         h[:, 0] = 0
         self.sparse_potts_model = {
             'h': h,
@@ -618,9 +810,19 @@ class AWSEM(Frustratometer):
             dense_protein[ci, cj] = thetaII_c * sigma_protein_c
             dense_water = np.zeros((L, L))
             dense_water[ci, cj] = thetaII_c * sigma_water_c
-            self.indicators.append(dense_theta)
-            self.indicators.append(dense_protein)
-            self.indicators.append(dense_water)
+            if p.membrane:
+                alpha_ij_dense = np.zeros((L, L))
+                alpha_ij_dense[ci, cj] = self.alpha[ci] * self.alpha[cj]
+                self.indicators.append((1 - alpha_ij_dense) * dense_theta)
+                self.indicators.append((1 - alpha_ij_dense) * dense_protein)
+                self.indicators.append((1 - alpha_ij_dense) * dense_water)
+                self.indicators.append(alpha_ij_dense * dense_theta)
+                self.indicators.append(alpha_ij_dense * dense_protein)
+                self.indicators.append(alpha_ij_dense * dense_water)
+            else:
+                self.indicators.append(dense_theta)
+                self.indicators.append(dense_protein)
+                self.indicators.append(dense_water)
             self.indicator_contact_i = None
             self.indicator_contact_j = None
             if p.k_electrostatics != 0:
@@ -726,12 +928,29 @@ class AWSEM(Frustratometer):
             
             burial_energy1 = (-0.5 * self.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
             burial_energy2 = (-0.5 * self.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+            if self.alpha is not None:
+                # Blend burial with membrane gamma
+                m_burial1 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+                m_burial2 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+                burial_energy1 = (1 - self.alpha[n1]) * burial_energy1 + self.alpha[n1] * m_burial1
+                burial_energy2 = (1 - self.alpha[n2]) * burial_energy2 + self.alpha[n2] * m_burial2
+                # Zim membrane potential
+                burial_energy1 += self.k_membrane * self._dgwoct_scale[q1] * self.phi_z[n1]
+                burial_energy2 += self.k_membrane * self._dgwoct_scale[q2] * self.phi_z[n2]
             
             sigma_water_val, sigma_protein_val = self._compute_sigma_at_pairs(n1, n2)
             direct = theta[c] * self.direct_gamma[q1, q2]
             water_mediated = sigma_water_val * thetaII[c] * self.water_gamma[q1,q2]
             protein_mediated = sigma_protein_val * thetaII[c] * self.protein_gamma[q1,q2]
             contact_energy = -self.k_contact * (direct+water_mediated+protein_mediated)
+            if self.alpha is not None:
+                # Blend contact with membrane gamma
+                m_direct = theta[c] * self.membrane_direct_gamma[q1, q2]
+                m_water = sigma_water_val * thetaII[c] * self.membrane_water_gamma[q1, q2]
+                m_protein = sigma_protein_val * thetaII[c] * self.membrane_protein_gamma[q1, q2]
+                m_contact = -self.k_contact * (m_direct + m_water + m_protein)
+                alpha_ij = self.alpha[n1] * self.alpha[n2]
+                contact_energy = (1 - alpha_ij) * contact_energy + alpha_ij * m_contact
             electrostatics_energy = self.k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
 
             decoy_energies[i]=(burial_energy1+burial_energy2+contact_energy+electrostatics_energy)
@@ -765,12 +984,26 @@ class AWSEM(Frustratometer):
 
             burial_energy1 = (-0.5 * self.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
             burial_energy2 = (-0.5 * self.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+            if self.alpha is not None:
+                m_burial1 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+                m_burial2 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+                burial_energy1 = (1 - self.alpha[n1]) * burial_energy1 + self.alpha[n1] * m_burial1
+                burial_energy2 = (1 - self.alpha[n2]) * burial_energy2 + self.alpha[n2] * m_burial2
+                burial_energy1 += self.k_membrane * self._dgwoct_scale[q1] * self.phi_z[n1]
+                burial_energy2 += self.k_membrane * self._dgwoct_scale[q2] * self.phi_z[n2]
             
             sigma_water_val, sigma_protein_val = self._compute_sigma_at_pairs(n1, n2)
             direct = theta[c] * self.direct_gamma[q1, q2]
             water_mediated = sigma_water_val * thetaII[c] * self.water_gamma[q1,q2]
             protein_mediated = sigma_protein_val * thetaII[c] * self.protein_gamma[q1,q2]
             contact_energy = -self.k_contact * (direct+water_mediated+protein_mediated)
+            if self.alpha is not None:
+                m_direct = theta[c] * self.membrane_direct_gamma[q1, q2]
+                m_water = sigma_water_val * thetaII[c] * self.membrane_water_gamma[q1, q2]
+                m_protein = sigma_protein_val * thetaII[c] * self.membrane_protein_gamma[q1, q2]
+                m_contact = -self.k_contact * (m_direct + m_water + m_protein)
+                alpha_ij = self.alpha[n1] * self.alpha[n2]
+                contact_energy = (1 - alpha_ij) * contact_energy + alpha_ij * m_contact
             electrostatics_energy = self.k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
 
             energy=(burial_energy1+burial_energy2+contact_energy+electrostatics_energy)
@@ -837,3 +1070,13 @@ class AWSEM(Frustratometer):
                 self._native_energy = fmod.native_energy(self._get_fast_data())
             return self._native_energy
         return super().native_energy(sequence=sequence, ignore_couplings_of_gaps=ignore_couplings_of_gaps, ignore_fields_of_gaps=ignore_fields_of_gaps)
+
+    def zim_energy(self) -> float:
+        """Membrane Zim (insertion) potential energy for the native sequence,
+        in kJ/mol. Sign matches the contribution added to ``h`` (opposite of
+        :meth:`fields_energy`); ``fields_energy() + zim_energy()`` is the
+        burial-only contribution. Returns 0.0 outside membrane mode."""
+        if self._zim_h is None:
+            return 0.0
+        seq_index = np.array([_AA_21.index(aa) for aa in self.sequence])
+        return float(self._zim_h[np.arange(self.N), seq_index].sum())

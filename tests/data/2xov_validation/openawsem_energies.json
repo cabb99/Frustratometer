@@ -1,0 +1,54 @@
+{
+  "protein": "2xov chain A (GlpG rhomboid protease, 276 residues)",
+  "openawsem_version_note": "Generated with installed OpenAWSEM parameters and explicit membrane preassigned + simple term coverage.",
+  "water_only": {
+    "contact_burial_kJ_per_mol": -1671.2280355425683,
+    "contact_burial_kcal_per_mol": -399.43308688875914,
+    "contact_only_kJ_per_mol": -739.8935816267757,
+    "contact_only_kcal_per_mol": -176.83881014024274,
+    "burial_only_kJ_per_mol": -931.3344539157926,
+    "burial_only_kcal_per_mol": -222.5942767485164
+  },
+  "membrane": {
+    "contact_burial_kJ_per_mol": -1605.6986431841071,
+    "contact_burial_kcal_per_mol": -383.7711862294711,
+    "contact_only_kJ_per_mol": -674.364194260633,
+    "contact_only_kcal_per_mol": -161.17691067414745,
+    "burial_only_kJ_per_mol": -931.3344489234742,
+    "burial_only_kcal_per_mol": -222.59427555532363,
+    "zim_kJ_per_mol": -272.3708281918863,
+    "zim_kcal_per_mol": -65.09819029442788
+  },
+  "membrane_preassigned": {
+    "contact_burial_kJ_per_mol": -1605.6986431841071,
+    "contact_burial_kcal_per_mol": -383.7711862294711,
+    "contact_only_kJ_per_mol": -674.364194260633,
+    "contact_only_kcal_per_mol": -161.17691067414745,
+    "burial_only_kJ_per_mol": -931.3344489234742,
+    "burial_only_kcal_per_mol": -222.59427555532363,
+    "zim_kJ_per_mol": -272.3708281918863,
+    "zim_kcal_per_mol": -65.09819029442788
+  },
+  "membrane_simple": {
+    "contact_burial_kJ_per_mol": -1605.6986489375122,
+    "contact_burial_kcal_per_mol": -383.7711876045679,
+    "contact_only_kJ_per_mol": -674.3641945903212,
+    "contact_only_kcal_per_mol": -161.17691075294482,
+    "burial_only_kJ_per_mol": -931.334454347191,
+    "burial_only_kcal_per_mol": -222.59427685162308,
+    "zim_kJ_per_mol": -111.99828306264057,
+    "zim_kcal_per_mol": -26.768232089541243,
+    "note": "OpenAWSEM membrane_term with local zim file (no preassigned PredictedZim mapping)."
+  },
+  "parameters": {
+    "k_contact": "1 * 4.184 kJ/mol",
+    "k_relative_mem": 1.0,
+    "membrane_center": "0 Angstrom",
+    "min_sequence_separation": 10,
+    "z_dependent": true,
+    "burialPartOn": true,
+    "parameter_source": "/home/cb/Development/openawsem.worktrees/masterv2/openawsem/parameters",
+    "preassigned_zim_file": "PredictedZim",
+    "simple_zim_file": "zim"
+  }
+}
