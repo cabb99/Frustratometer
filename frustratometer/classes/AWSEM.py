@@ -164,7 +164,7 @@ class AWSEM(Frustratometer):
                 raise ValueError("fast=True requires a sparse Structure (sparse=True)")
             if backend not in ('numba', 'cuda'):
                 raise ValueError(f"backend must be 'numba' or 'cuda', got {backend!r}")
-            self._init_fast(p)
+            self._init_fast(p, pdb_structure)
         elif self._distance_is_sparse:
             self._init_from_sparse_distances(p, sparse, expose_indicator_functions, pdb_structure)
         else:
@@ -324,10 +324,16 @@ class AWSEM(Frustratometer):
         else:
             self._build_dense(p, sequence_mask_contact, theta, thetaII, burial_energy, expose)
 
-    def _init_fast(self, p):
-        """Initialize fast mode: build FrustrationData, skip Potts model construction."""
+    def _init_fast(self, p, pdb_structure):
+        """Initialize fast mode: build FrustrationData, skip Potts model construction.
+
+        ``p`` and ``pdb_structure`` are retained so the sparse Potts model can be
+        materialized lazily (``_ensure_potts_model``) if an inherited method needs it.
+        """
         from ..frustration.data import FrustrationData
 
+        self._init_params = p
+        self._init_pdb_structure = pdb_structure
         dm = self._sparse_distance_matrix
         self._frustration_data = FrustrationData.from_awsem(self)
 
@@ -374,6 +380,26 @@ class AWSEM(Frustratometer):
                     f"backend='cuda' was requested but the CUDA backend could not be "
                     f"initialized: {e}. Use backend='numba' to run on CPU."
                 ) from e
+
+    def _ensure_potts_model(self):
+        """Lazily build the sparse Potts model for a fast-mode model.
+
+        Fast mode keeps only ``_frustration_data`` and the sparse distance/gamma
+        arrays. Inherited Frustratometer methods (couplings/decoy energies,
+        total_frustration, scores, mutant-sequence evaluation) need a Potts model;
+        build it once, on demand, from the data already held — reusing the sparse
+        construction path so no dense (L, L, Q, Q) tensor is allocated.
+        """
+        if self.sparse_potts_model is not None or self._frustration_data is None:
+            return
+        if getattr(self, '_building_potts_model', False):
+            return
+        self._building_potts_model = True
+        try:
+            self._init_from_sparse_distances(self._init_params, sparse=True, expose=False,
+                                             pdb_structure=self._init_pdb_structure)
+        finally:
+            self._building_potts_model = False
 
     def _start_indicator_exposure(self, p):
         """Set up burial indicators and gamma arrays (common to sparse and dense)."""
@@ -770,6 +796,10 @@ class AWSEM(Frustratometer):
 
     def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000, seed=42):
         if self._frustration_data is not None:
+            if aa_freq is not None:
+                raise NotImplementedError(
+                    "Custom aa_freq is not supported by the fast (numba/cuda) configurational "
+                    "backend; rebuild the model with fast=False to use a custom aa_freq.")
             fmod = self._get_fast_module()
             return fmod.configurational_frustration(
                 self._get_fast_data(), n_decoys=n_decoys, seed=seed, correction=float(correction))

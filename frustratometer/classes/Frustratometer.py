@@ -41,14 +41,25 @@ class Frustratometer:
     #     self._native_energy = None
     #     self._decoy_fluctuation = {}
 
+    def _ensure_potts_model(self):
+        """Hook for subclasses to lazily materialize a (sparse) Potts model.
+
+        No-op by default. AWSEM fast-mode models override this to build
+        ``sparse_potts_model`` on first use, so inherited methods that need fields
+        and couplings work without a Potts model being built up front.
+        """
+        pass
+
     def _ensure_dense_potts_model(self):
         """Reconstruct dense J from sparse potts model if needed."""
+        self._ensure_potts_model()
         if self._potts_model.get('J') is None and getattr(self, 'sparse_potts_model', None) is not None:
             self._potts_model['J'] = frustration.potts_model_sparse_to_dense(self.sparse_potts_model)['J']
 
     @property
     def _is_sparse(self):
-        """True when a sparse Potts model is available."""
+        """True when a sparse Potts model is available (materializing it if deferred)."""
+        self._ensure_potts_model()
         return getattr(self, 'sparse_potts_model', None) is not None
 
     def _compute_native_energy_elec(self, sequence, elec_data):

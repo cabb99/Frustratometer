@@ -211,3 +211,59 @@ class TestFastAttributes:
 
     def test_no_potts_model(self, fast_model):
         assert fast_model.sparse_potts_model is None
+
+
+class TestFastFallback:
+    """Fast models lazily materialize a sparse Potts model for inherited operations.
+
+    Each test builds a *fresh* fast model so materialization does not leak into the
+    module-scoped ``fast_model`` fixture (which other tests assert is un-materialized).
+    """
+
+    @staticmethod
+    def _fresh_fast_model(k_electrostatics=0):
+        structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A", sparse=True)
+        return frustratometer.AWSEM(
+            structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
+            k_electrostatics=k_electrostatics, min_sequence_separation_electrostatics=1,
+            fast=True)
+
+    def test_materialized_potts_matches_nonfast(self, awsem_model):
+        m = self._fresh_fast_model()
+        assert m.sparse_potts_model is None
+        m._ensure_potts_model()
+        got, ref = m.sparse_potts_model, awsem_model.sparse_potts_model
+        np.testing.assert_array_equal(got['contact_i'], ref['contact_i'])
+        np.testing.assert_array_equal(got['contact_j'], ref['contact_j'])
+        np.testing.assert_allclose(got['J'], ref['J'], atol=1e-6)
+        np.testing.assert_allclose(got['h'], ref['h'], atol=1e-6)
+
+    def test_mutant_native_energy_matches_nonfast(self, awsem_model):
+        m = self._fresh_fast_model()
+        mutant = ('A' if m.sequence[0] != 'A' else 'C') + m.sequence[1:]
+        np.testing.assert_allclose(
+            m.native_energy(sequence=mutant), awsem_model.native_energy(sequence=mutant),
+            rtol=1e-5, atol=1e-5)
+
+    def test_mutant_native_energy_elec_matches_nonfast(self, awsem_model_elec):
+        m = self._fresh_fast_model(k_electrostatics=4.184)
+        mutant = ('A' if m.sequence[0] != 'A' else 'C') + m.sequence[1:]
+        np.testing.assert_allclose(
+            m.native_energy(sequence=mutant), awsem_model_elec.native_energy(sequence=mutant),
+            rtol=1e-4, atol=1e-4)
+
+    def test_couplings_energy_matches_nonfast(self, awsem_model):
+        m = self._fresh_fast_model()
+        np.testing.assert_allclose(
+            m.couplings_energy(), awsem_model.couplings_energy(), rtol=1e-5, atol=1e-5)
+
+    def test_total_frustration_runs(self):
+        m = self._fresh_fast_model()
+        assert m.sparse_potts_model is None
+        val = m.total_frustration(n_decoys=200)
+        assert np.isfinite(val)
+        assert m.sparse_potts_model is not None  # materialized on demand
+
+    def test_configurational_custom_aa_freq_raises(self, fast_model):
+        with pytest.raises(NotImplementedError):
+            fast_model.configurational_frustration(aa_freq=np.ones(21) / 21)
