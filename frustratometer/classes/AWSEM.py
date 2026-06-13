@@ -2,6 +2,7 @@ import json
 import numpy as np
 from ..utils import _path
 from .. import frustration
+from ..awsem import assembly
 from ..frustration.frustration import _AA as _AA_21
 from .Structure import Structure, SparseMatrix
 from .Frustratometer import Frustratometer
@@ -624,52 +625,9 @@ class AWSEM(Frustratometer):
         sigma_water_c = sigma_water[ci, cj]
         sigma_protein_c = sigma_protein[ci, cj]
 
-        dg21 = self.direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-        wg21 = self.water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-        pg21 = self.protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-        dg21[0, :] = 0; dg21[:, 0] = 0
-        wg21[0, :] = 0; wg21[:, 0] = 0
-        pg21[0, :] = 0; pg21[:, 0] = 0
-
-        # Build J_sparse directly in DCA 21-letter alphabet: (N_c, 21, 21)
-        J_water = p.k_contact * (
-            dg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
-            + wg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
-            + pg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
-        )
-
-        if p.membrane:
-            mdg21 = self.membrane_direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-            mwg21 = self.membrane_water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-            mpg21 = self.membrane_protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-            mdg21[0, :] = 0; mdg21[:, 0] = 0
-            mwg21[0, :] = 0; mwg21[:, 0] = 0
-            mpg21[0, :] = 0; mpg21[:, 0] = 0
-
-            J_membrane = p.k_contact * (
-                mdg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
-                + mwg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
-                + mpg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
-            )
-
-            alpha_ij = (self.alpha[ci] * self.alpha[cj])[:, np.newaxis, np.newaxis]
-            J_sparse_21 = (1 - alpha_ij) * J_water + alpha_ij * J_membrane
-        else:
-            J_sparse_21 = J_water
-
-        # Sparse Potts model
-        h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        if self._zim_h is not None:
-            h += self._zim_h
-        h[:, 0] = 0
-        self.sparse_potts_model = {
-            'h': h,
-            'J': J_sparse_21,
-            'contact_i': ci.astype(np.intp),
-            'contact_j': cj.astype(np.intp),
-            'L': self.N,
-        }
-        self._potts_model = {'h': h, 'J': None}
+        self.sparse_potts_model = assembly.build_sparse_potts(
+            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
+        self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
         self._native_energy = None
         self.contact_energy = None
 
@@ -689,28 +647,8 @@ class AWSEM(Frustratometer):
         if expose:
             self._start_indicator_exposure(p)
             # Always expose dense (L, L) indicators for optimization compatibility
-            L = self.N
-            dense_theta = np.zeros((L, L))
-            dense_theta[ci, cj] = theta_c
-            dense_protein = np.zeros((L, L))
-            dense_protein[ci, cj] = thetaII_c * sigma_protein_c
-            dense_water = np.zeros((L, L))
-            dense_water[ci, cj] = thetaII_c * sigma_water_c
-            if p.membrane:
-                alpha_ij_dense = np.zeros((L, L))
-                alpha_ij_dense[ci, cj] = self.alpha[ci] * self.alpha[cj]
-                # Water pairwise (multiplied by 1-alpha_ij)
-                self.indicators.append((1 - alpha_ij_dense) * dense_theta)
-                self.indicators.append((1 - alpha_ij_dense) * dense_protein)
-                self.indicators.append((1 - alpha_ij_dense) * dense_water)
-                # Membrane pairwise (multiplied by alpha_ij)
-                self.indicators.append(alpha_ij_dense * dense_theta)
-                self.indicators.append(alpha_ij_dense * dense_protein)
-                self.indicators.append(alpha_ij_dense * dense_water)
-            else:
-                self.indicators.append(dense_theta)
-                self.indicators.append(dense_protein)
-                self.indicators.append(dense_water)
+            self.indicators += assembly.pair_indicators_dense(
+                self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
             self.indicator_contact_i = None
             self.indicator_contact_j = None
             if p.k_electrostatics != 0:
@@ -732,56 +670,9 @@ class AWSEM(Frustratometer):
     def _build_sparse_from_contacts(self, p, ci, cj, theta_c, thetaII_c,
                                      sigma_water_c, sigma_protein_c, burial_energy, expose):
         """Build sparse Potts model from pre-computed contact-level values (sparse distance path)."""
-        # Pre-map gamma matrices to DCA 21-letter alphabet (21, 21) to avoid
-        # allocating the intermediate (N_c, 20, 20) tensor.
-        dg21 = self.direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-        wg21 = self.water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-        pg21 = self.protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-        dg21[0, :] = 0; dg21[:, 0] = 0
-        wg21[0, :] = 0; wg21[:, 0] = 0
-        pg21[0, :] = 0; pg21[:, 0] = 0
-
-        # Build J_sparse directly in DCA 21-letter alphabet: (N_c, 21, 21)
-        J_water = p.k_contact * (
-            dg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
-            + wg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
-            + pg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
-        )
-
-        if p.membrane:
-            # Membrane gamma matrices in 21-letter alphabet
-            mdg21 = self.membrane_direct_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-            mwg21 = self.membrane_water_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-            mpg21 = self.membrane_protein_gamma[self.aa_map_awsem_x, self.aa_map_awsem_y]
-            mdg21[0, :] = 0; mdg21[:, 0] = 0
-            mwg21[0, :] = 0; mwg21[:, 0] = 0
-            mpg21[0, :] = 0; mpg21[:, 0] = 0
-
-            J_membrane = p.k_contact * (
-                mdg21[np.newaxis, :, :] * theta_c[:, np.newaxis, np.newaxis]
-                + mwg21[np.newaxis, :, :] * (thetaII_c * sigma_water_c)[:, np.newaxis, np.newaxis]
-                + mpg21[np.newaxis, :, :] * (thetaII_c * sigma_protein_c)[:, np.newaxis, np.newaxis]
-            )
-
-            # alpha_ij at contact positions
-            alpha_ij = (self.alpha[ci] * self.alpha[cj])[:, np.newaxis, np.newaxis]
-            J_sparse_21 = (1 - alpha_ij) * J_water + alpha_ij * J_membrane
-        else:
-            J_sparse_21 = J_water
-
-        # Sparse Potts model
-        h = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        if self._zim_h is not None:
-            h += self._zim_h
-        h[:, 0] = 0
-        self.sparse_potts_model = {
-            'h': h,
-            'J': J_sparse_21,
-            'contact_i': ci.astype(np.intp),
-            'contact_j': cj.astype(np.intp),
-            'L': self.N,
-        }
-        self._potts_model = {'h': h, 'J': None}
+        self.sparse_potts_model = assembly.build_sparse_potts(
+            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
+        self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
         self._native_energy = None
         self.contact_energy = None
 
@@ -803,26 +694,8 @@ class AWSEM(Frustratometer):
         # Indicator exposure
         if expose:
             self._start_indicator_exposure(p)
-            L = self.N
-            dense_theta = np.zeros((L, L))
-            dense_theta[ci, cj] = theta_c
-            dense_protein = np.zeros((L, L))
-            dense_protein[ci, cj] = thetaII_c * sigma_protein_c
-            dense_water = np.zeros((L, L))
-            dense_water[ci, cj] = thetaII_c * sigma_water_c
-            if p.membrane:
-                alpha_ij_dense = np.zeros((L, L))
-                alpha_ij_dense[ci, cj] = self.alpha[ci] * self.alpha[cj]
-                self.indicators.append((1 - alpha_ij_dense) * dense_theta)
-                self.indicators.append((1 - alpha_ij_dense) * dense_protein)
-                self.indicators.append((1 - alpha_ij_dense) * dense_water)
-                self.indicators.append(alpha_ij_dense * dense_theta)
-                self.indicators.append(alpha_ij_dense * dense_protein)
-                self.indicators.append(alpha_ij_dense * dense_water)
-            else:
-                self.indicators.append(dense_theta)
-                self.indicators.append(dense_protein)
-                self.indicators.append(dense_water)
+            self.indicators += assembly.pair_indicators_dense(
+                self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
             self.indicator_contact_i = None
             self.indicator_contact_j = None
             if p.k_electrostatics != 0:
