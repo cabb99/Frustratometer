@@ -570,9 +570,11 @@ class FrustrationCUDA:
     def _ensure_decoys(self, n_decoys: int, seed: int) -> None:
         if self.d_config_decoy.shape[0] != n_decoys:
             self.d_config_decoy = cuda.device_array(n_decoys, dtype=np.float64)
-        if self._rng_states.shape[0] != n_decoys or self._rng_seed != seed:
-            self._rng_states = create_xoroshiro128p_states(n_decoys, seed=seed)
-            self._rng_seed = seed
+        # Re-seed on every call so repeated configurational() calls with the same seed are
+        # reproducible; the decoy kernel advances the states in place, and the numba backend
+        # likewise re-seeds per call via np.random.seed.
+        self._rng_states = create_xoroshiro128p_states(n_decoys, seed=seed)
+        self._rng_seed = seed
 
     @staticmethod
     def _to_dense_contact_map(values, row_index, col_index, L: int, *, symmetric: bool, fill_value: float):

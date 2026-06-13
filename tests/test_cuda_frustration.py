@@ -244,6 +244,15 @@ class TestFrustrationCUDAClass:
         dense = cuda_backend.configurational(n_decoys=1000, dense=True)
         assert dense.shape == (cuda_backend.L, cuda_backend.L)
 
+    def test_configurational_reseeds_per_call(self, cuda_backend):
+        """Repeated configurational() with the same seed is reproducible: the RNG states are
+        recreated per call instead of reusing states a prior call advanced. The decoy samples
+        are identical; only the atomic-reduction of the decoy statistics adds ~1e-14 noise,
+        so the results match to well within the ~few-percent spread of independent samplings."""
+        a = cuda_backend.configurational(n_decoys=1000, seed=7, dense=False)
+        b = cuda_backend.configurational(n_decoys=1000, seed=7, dense=False)
+        np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-6)
+
 
 # ── Backend reuse ─────────────────────────────────────────────────────────────
 

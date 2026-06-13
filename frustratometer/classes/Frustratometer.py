@@ -291,21 +291,11 @@ class Frustratometer:
         """
         Computes accuracy of DCA predicted contacts by calculating contact scores based on the Frobenius norm.
 
-        Note: In sparse mode, J is reconstructed from contacts only. Non-contact
-        couplings are zero, so scores at those positions will be zero. For full
-        DCA contact prediction, construct the model with ``sparse=False``.
-
         Returns
         -------
         corr_norm : np.array
             Contact score matrix (N x N)
         """
-        if self._is_sparse:
-            logging.warning(
-                "scores() called on a sparse model: non-contact couplings are "
-                "zero in sparse mode, so scores may differ from the full model. "
-                "Use sparse=False for accurate DCA contact prediction scores."
-            )
         self._ensure_dense_potts_model()
         return frustration.compute_scores(self.potts_model)
 

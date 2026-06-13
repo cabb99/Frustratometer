@@ -214,7 +214,7 @@ class DCA(Frustratometer):
                               reformat_potts_model: bool = False,
                               sequence_cutoff: Union[float, None] = None,
                               distance_cutoff: Union[float, None] = None,
-                              sparse: bool = True)->object:
+                              sparse: bool = False)->object:
 
         """
         Generate DCA object from previously generated potts model file.
@@ -251,7 +251,7 @@ class DCA(Frustratometer):
                         reformat_potts_model: bool = False,
                         sequence_cutoff: Union[float, None] = None,
                         distance_cutoff: Union[float, None] = None,
-                        sparse: bool = True)->object:
+                        sparse: bool = False)->object:
         """
         Generate DCA object from previously generated potts model.
 
@@ -307,7 +307,7 @@ class DCA(Frustratometer):
                             DCA_format : str = "plmDCA",
                             sequence_cutoff: Union[float, None] = None,
                             distance_cutoff: Union[float, None] = None,
-                            sparse: bool = True)->object:
+                            sparse: bool = False)->object:
         """
         Generate DCA object from a locally downloaded PFAM alignment file that will be used to generate a Potts Model file.
 
@@ -355,7 +355,7 @@ class DCA(Frustratometer):
                             DCA_format : str = "plmDCA",
                             sequence_cutoff: Union[float, None] = None,
                             distance_cutoff: Union[float, None] = None,
-                            sparse: bool = True)->object:
+                            sparse: bool = False)->object:
         """
         Generate DCA object from a locally generated jackhmmer alignment file that will be used to generate a Potts Model file.
         The protein sequence of the structure object will be used as the query sequence by the Jackhmmer algorithm.
@@ -412,6 +412,19 @@ class DCA(Frustratometer):
     #                                distance_matrix_method=distance_matrix_method)
 
 
+    def scores(self):
+        """DCA contact scores from the Frobenius norm of the couplings.
+
+        A sparse DCA model keeps only contact couplings, so the reconstructed J is zero
+        off-contact and the Frobenius-norm scores would be wrong. Contact prediction
+        therefore requires a dense model.
+        """
+        if self._is_sparse:
+            raise ValueError(
+                "scores()/roc() need the full coupling matrix, but this DCA model was "
+                "built with sparse=True (contact couplings only). Rebuild with "
+                "sparse=False for contact prediction.")
+        return super().scores()
 
     @property
     def sequence(self):

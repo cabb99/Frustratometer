@@ -392,6 +392,29 @@ def test_scores():
                                                                 sequence_cutoff=0, sparse=False)
     assert np.round(model.scores()[30, 40], 5) == -0.02234
 
+
+def test_scores_default_is_dense():
+    """DCA factories default to sparse=False, so scores() works out of the box."""
+    structure = frustratometer.Structure('examples/data/1cyo.pdb', 'A')
+    model = frustratometer.DCA.from_potts_model_file(
+        structure, 'examples/data/PottsModel1cyoA.mat', distance_cutoff=4, sequence_cutoff=0)
+    assert not model._is_sparse
+    assert np.round(model.scores()[30, 40], 5) == -0.02234
+
+
+def test_scores_sparse_raises():
+    """Sparse DCA keeps only contact couplings; scores()/roc() must refuse rather than
+    silently return zeroed off-contact scores."""
+    structure = frustratometer.Structure('examples/data/1cyo.pdb', 'A')
+    model = frustratometer.DCA.from_potts_model_file(
+        structure, 'examples/data/PottsModel1cyoA.mat', distance_cutoff=4, sequence_cutoff=0,
+        sparse=True)
+    assert model._is_sparse
+    with pytest.raises(ValueError):
+        model.scores()
+    with pytest.raises(ValueError):
+        model.roc()
+
 #####
 #Test DCA Decoy Energy Calculation
 #####
