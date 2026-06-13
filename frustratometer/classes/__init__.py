@@ -8,11 +8,10 @@ and energy values associated with this structure using either the DCA or AWSEM c
 
 from .DCA import DCA
 from .AWSEM import AWSEM
-from .AWSEM_membrane import AWSEM_membrane
 from .Structure import Structure, SparseMatrix
 from .Map import Map
 from .Gamma import Gamma
 
-__all__ = ['DCA', 'AWSEM', 'AWSEM_membrane', 'Structure', 'SparseMatrix', 'Map', 'Gamma']
+__all__ = ['DCA', 'AWSEM', 'Structure', 'SparseMatrix', 'Map', 'Gamma']
 # __all__.extend(DCA.__all__)
 # __all__.extend(AWSEM.__all__)
