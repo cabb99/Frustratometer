@@ -176,6 +176,25 @@ def _mutational(seq_index, contact_i, contact_j, Nc, L,
 
 # ─── 4. Configurational frustration ──────────────────────────────────────────
 
+@njit(inline='always')
+def _conf_pair_energy(q1, q2, n1, n2, c, bg, burial_indicator, gammas,
+                      conf_theta, conf_thetaII, rho_r, eta_sigma, rho_0,
+                      charges, conf_elec_ind, k_contact, k_elec):
+    """Configurational contact energy: burial at n1/n2 + contact (sigma resampled from
+    rho at n1/n2) at geometry c + electrostatics, for identities q1/q2. Shared by the
+    native and decoy loops."""
+    eb = -(_burial_h(q1, n1, bg, burial_indicator, k_contact)
+         + _burial_h(q2, n2, bg, burial_indicator, k_contact))
+    sw = (0.25
+          * (1.0 - np.tanh(eta_sigma * (rho_r[n1] - rho_0)))
+          * (1.0 - np.tanh(eta_sigma * (rho_r[n2] - rho_0))))
+    ec = -_J_val(q1, q2, conf_theta[c],
+                 sw * conf_thetaII[c], (1.0 - sw) * conf_thetaII[c],
+                 gammas, k_contact)
+    ee = k_elec * conf_elec_ind[c] * charges[q1] * charges[q2]
+    return eb + ec + ee
+
+
 @njit(parallel=True, cache=True)
 def _configurational(seq_index, L,
                      conf_ci, conf_cj, n_conf,
@@ -191,17 +210,10 @@ def _configurational(seq_index, L,
     native_e = np.empty(n_conf)
     for c in prange(n_conf):
         n1 = conf_ci[c]; n2 = conf_cj[c]
-        q1 = seq_index[n1]; q2 = seq_index[n2]
-        eb = -(_burial_h(q1, n1, bg, burial_indicator, k_contact)
-             + _burial_h(q2, n2, bg, burial_indicator, k_contact))
-        sw = (0.25
-              * (1.0 - np.tanh(eta_sigma * (rho_r[n1] - rho_0)))
-              * (1.0 - np.tanh(eta_sigma * (rho_r[n2] - rho_0))))
-        ec = -_J_val(q1, q2, conf_theta[c],
-                     sw * conf_thetaII[c], (1.0 - sw) * conf_thetaII[c],
-                     gammas, k_contact)
-        ee = k_elec * conf_elec_ind[c] * charges[q1] * charges[q2]
-        native_e[c] = eb + ec + ee
+        native_e[c] = _conf_pair_energy(
+            seq_index[n1], seq_index[n2], n1, n2, c, bg, burial_indicator, gammas,
+            conf_theta, conf_thetaII, rho_r, eta_sigma, rho_0,
+            charges, conf_elec_ind, k_contact, k_elec)
 
     # decoy statistics (serial for reproducible RNG)
     decoy_e = np.empty(n_decoys)
@@ -211,16 +223,10 @@ def _configurational(seq_index, L,
         n2 = np.random.randint(0, L)
         q1 = seq_index[np.random.randint(0, L)]
         q2 = seq_index[np.random.randint(0, L)]
-        eb = -(_burial_h(q1, n1, bg, burial_indicator, k_contact)
-              + _burial_h(q2, n2, bg, burial_indicator, k_contact))
-        sw = (0.25
-              * (1.0 - np.tanh(eta_sigma * (rho_r[n1] - rho_0)))
-              * (1.0 - np.tanh(eta_sigma * (rho_r[n2] - rho_0))))
-        ec = -_J_val(q1, q2, conf_theta[c],
-                     sw * conf_thetaII[c], (1.0 - sw) * conf_thetaII[c],
-                     gammas, k_contact)
-        ee = k_elec * conf_elec_ind[c] * charges[q1] * charges[q2]
-        decoy_e[i] = eb + ec + ee
+        decoy_e[i] = _conf_pair_energy(
+            q1, q2, n1, n2, c, bg, burial_indicator, gammas,
+            conf_theta, conf_thetaII, rho_r, eta_sigma, rho_0,
+            charges, conf_elec_ind, k_contact, k_elec)
 
     # mean / std
     mean_d = 0.0

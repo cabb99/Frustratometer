@@ -765,6 +765,38 @@ class AWSEM(Frustratometer):
         sw = 0.25 * (1 - np.tanh(self.eta_sigma * (rho1 - self.rho_0))) * (1 - np.tanh(self.eta_sigma * (rho2 - self.rho_0)))
         return sw, 1 - sw
 
+    def _configurational_pair_energy(self, c, n1, n2, q1, q2, theta, thetaII,
+                                     electrostatics_indicator, charges, burial_indicator):
+        """Energy of a configurational contact event: contact geometry ``c`` (theta/thetaII/
+        elec indicator at that contact), local environment at positions ``n1``/``n2`` (burial
+        and sigma resampled from rho), and identities ``q1``/``q2`` (AWSEM 20-letter). When
+        membrane is enabled, burial blends by per-residue alpha (plus the Zim field) and the
+        contact term blends by pairwise alpha. Shared by the native-energy and decoy loops."""
+        burial_energy1 = (-0.5 * self.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+        burial_energy2 = (-0.5 * self.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+        if self.alpha is not None:
+            m_burial1 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
+            m_burial2 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
+            burial_energy1 = (1 - self.alpha[n1]) * burial_energy1 + self.alpha[n1] * m_burial1
+            burial_energy2 = (1 - self.alpha[n2]) * burial_energy2 + self.alpha[n2] * m_burial2
+            burial_energy1 += self.k_membrane * self._dgwoct_scale[q1] * self.phi_z[n1]
+            burial_energy2 += self.k_membrane * self._dgwoct_scale[q2] * self.phi_z[n2]
+
+        sigma_water_val, sigma_protein_val = self._compute_sigma_at_pairs(n1, n2)
+        direct = theta[c] * self.direct_gamma[q1, q2]
+        water_mediated = sigma_water_val * thetaII[c] * self.water_gamma[q1, q2]
+        protein_mediated = sigma_protein_val * thetaII[c] * self.protein_gamma[q1, q2]
+        contact_energy = -self.k_contact * (direct + water_mediated + protein_mediated)
+        if self.alpha is not None:
+            m_direct = theta[c] * self.membrane_direct_gamma[q1, q2]
+            m_water = sigma_water_val * thetaII[c] * self.membrane_water_gamma[q1, q2]
+            m_protein = sigma_protein_val * thetaII[c] * self.membrane_protein_gamma[q1, q2]
+            m_contact = -self.k_contact * (m_direct + m_water + m_protein)
+            alpha_ij = self.alpha[n1] * self.alpha[n2]
+            contact_energy = (1 - alpha_ij) * contact_energy + alpha_ij * m_contact
+        electrostatics_energy = self.k_electrostatics * electrostatics_indicator[c] * charges[q1] * charges[q2]
+        return burial_energy1 + burial_energy2 + contact_energy + electrostatics_energy
+
     def compute_configurational_decoy_statistics(self, n_decoys=4000,aa_freq=None):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
         _AA='ARNDCQEGHILKMFPSTWYV'
@@ -797,37 +829,9 @@ class AWSEM(Frustratometer):
             qi2=np.random.randint(0,N)
             q1=seq_index[qi1]
             q2=seq_index[qi2]
+            decoy_energies[i] = self._configurational_pair_energy(
+                c, n1, n2, q1, q2, theta, thetaII, electrostatics_indicator, charges, burial_indicator)
 
-            
-            burial_energy1 = (-0.5 * self.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
-            burial_energy2 = (-0.5 * self.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
-            if self.alpha is not None:
-                # Blend burial with membrane gamma
-                m_burial1 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
-                m_burial2 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
-                burial_energy1 = (1 - self.alpha[n1]) * burial_energy1 + self.alpha[n1] * m_burial1
-                burial_energy2 = (1 - self.alpha[n2]) * burial_energy2 + self.alpha[n2] * m_burial2
-                # Zim membrane potential
-                burial_energy1 += self.k_membrane * self._dgwoct_scale[q1] * self.phi_z[n1]
-                burial_energy2 += self.k_membrane * self._dgwoct_scale[q2] * self.phi_z[n2]
-            
-            sigma_water_val, sigma_protein_val = self._compute_sigma_at_pairs(n1, n2)
-            direct = theta[c] * self.direct_gamma[q1, q2]
-            water_mediated = sigma_water_val * thetaII[c] * self.water_gamma[q1,q2]
-            protein_mediated = sigma_protein_val * thetaII[c] * self.protein_gamma[q1,q2]
-            contact_energy = -self.k_contact * (direct+water_mediated+protein_mediated)
-            if self.alpha is not None:
-                # Blend contact with membrane gamma
-                m_direct = theta[c] * self.membrane_direct_gamma[q1, q2]
-                m_water = sigma_water_val * thetaII[c] * self.membrane_water_gamma[q1, q2]
-                m_protein = sigma_protein_val * thetaII[c] * self.membrane_protein_gamma[q1, q2]
-                m_contact = -self.k_contact * (m_direct + m_water + m_protein)
-                alpha_ij = self.alpha[n1] * self.alpha[n2]
-                contact_energy = (1 - alpha_ij) * contact_energy + alpha_ij * m_contact
-            electrostatics_energy = self.k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
-
-            decoy_energies[i]=(burial_energy1+burial_energy2+contact_energy+electrostatics_energy)
-            
         mean_decoy_energy = np.mean(decoy_energies)
         std_decoy_energy = np.std(decoy_energies)
         return mean_decoy_energy, std_decoy_energy
@@ -854,37 +858,11 @@ class AWSEM(Frustratometer):
             n2=indices2[c]
             q1=seq_index[n1]
             q2=seq_index[n2]
-
-            burial_energy1 = (-0.5 * self.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
-            burial_energy2 = (-0.5 * self.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
-            if self.alpha is not None:
-                m_burial1 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
-                m_burial2 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
-                burial_energy1 = (1 - self.alpha[n1]) * burial_energy1 + self.alpha[n1] * m_burial1
-                burial_energy2 = (1 - self.alpha[n2]) * burial_energy2 + self.alpha[n2] * m_burial2
-                burial_energy1 += self.k_membrane * self._dgwoct_scale[q1] * self.phi_z[n1]
-                burial_energy2 += self.k_membrane * self._dgwoct_scale[q2] * self.phi_z[n2]
-            
-            sigma_water_val, sigma_protein_val = self._compute_sigma_at_pairs(n1, n2)
-            direct = theta[c] * self.direct_gamma[q1, q2]
-            water_mediated = sigma_water_val * thetaII[c] * self.water_gamma[q1,q2]
-            protein_mediated = sigma_protein_val * thetaII[c] * self.protein_gamma[q1,q2]
-            contact_energy = -self.k_contact * (direct+water_mediated+protein_mediated)
-            if self.alpha is not None:
-                m_direct = theta[c] * self.membrane_direct_gamma[q1, q2]
-                m_water = sigma_water_val * thetaII[c] * self.membrane_water_gamma[q1, q2]
-                m_protein = sigma_protein_val * thetaII[c] * self.membrane_protein_gamma[q1, q2]
-                m_contact = -self.k_contact * (m_direct + m_water + m_protein)
-                alpha_ij = self.alpha[n1] * self.alpha[n2]
-                contact_energy = (1 - alpha_ij) * contact_energy + alpha_ij * m_contact
-            electrostatics_energy = self.k_electrostatics * electrostatics_indicator[c]*charges[q1]*charges[q2]
-
-            energy=(burial_energy1+burial_energy2+contact_energy+electrostatics_energy)
+            energy = self._configurational_pair_energy(
+                c, n1, n2, q1, q2, theta, thetaII, electrostatics_indicator, charges, burial_indicator)
             configurational_energies[n1,n2]=energy
             configurational_energies[n2,n1]=energy
-            # decoy_data+=[[c, n1, n2, q1, q2, _AA[q1],_AA[q2], distances[c], self.rho_r[n1], self.rho_r[n2], contact_energy/4.184, burial_energy1/4.184, burial_energy2/4.184, electrostatics_energy/4.184, energy/4.184]]
-        # import pandas as pd
-        return configurational_energies #, pd.DataFrame(decoy_data, columns=decoy_data_columns)
+        return configurational_energies
     
     def _get_fast_module(self):
         """Return the numba or cuda frustration module based on self._fast_backend."""
