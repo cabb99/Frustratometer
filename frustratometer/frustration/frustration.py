@@ -1680,6 +1680,70 @@ def compute_energy_sliding_window(seq: str,
     return results
 
 
+def compute_energy_sliding_window_sparse(seq,
+                                         sparse_potts_model,
+                                         win_size,
+                                         ndecoys):
+    """
+    Sliding-window total frustration from a sparse Potts model (mutational decoys).
+
+    Sparse-native counterpart of ``compute_energy_sliding_window`` for the
+    ``config_decoys=False`` case. Keeps per-residue field (L,) and per-contact coupling
+    (N_contacts,) terms for the native and decoy sequences instead of the dense (L, L) and
+    (N_decoys, L, L) coupling tensors; each window then sums the fields inside it and the
+    couplings touching it. Pseudoconfigurational (shuffled-position) decoys are routed to
+    the dense path by the caller. Returns the same dict shape as the dense version.
+    """
+    h = sparse_potts_model['h']
+    contact_i = sparse_potts_model['contact_i']
+    contact_j = sparse_potts_model['contact_j']
+    J_sparse = sparse_potts_model['J']
+    L = sparse_potts_model['L']
+    nc_index = np.arange(len(contact_i))
+
+    seq_index = compute_seq_index(seq)
+    field_native = -h[np.arange(L), seq_index]                                          # (L,)
+    coupling_native = -J_sparse[nc_index, seq_index[contact_i], seq_index[contact_j]]   # (Nc,)
+
+    decoy_seqs = make_decoy_seqs(seq, ndecoys=ndecoys)
+    decoy_index = np.array([compute_seq_index(s) for s in decoy_seqs])                  # (N, L)
+    field_decoy = -h[np.arange(L)[np.newaxis, :], decoy_index]                          # (N, L)
+    coupling_decoy = -J_sparse[nc_index,
+                               decoy_index[:, contact_i],
+                               decoy_index[:, contact_j]]                               # (N, Nc)
+
+    dif = (win_size - 1) // 2
+    positions = np.arange(dif, len(seq) - dif)
+
+    e_native, e_decoy_av, e_decoy_std, frustration_sw = [], [], [], []
+    for i in positions:
+        lo, hi = i - dif, i + dif + 1
+        contact_in_window = (((contact_i >= lo) & (contact_i < hi))
+                             | ((contact_j >= lo) & (contact_j < hi)))
+
+        native_energy = field_native[lo:hi].sum() + coupling_native[contact_in_window].sum() / 2
+
+        decoy_energy = (field_decoy[:, lo:hi].sum(axis=1)
+                        + coupling_decoy[:, contact_in_window].sum(axis=1) / 2)
+        decoy_avg = decoy_energy.mean()
+        decoy_std = decoy_energy.std()
+        frustration_score = (native_energy - decoy_avg) / decoy_std if decoy_std != 0 else 0
+
+        e_native.append(native_energy)
+        e_decoy_av.append(decoy_avg)
+        e_decoy_std.append(decoy_std)
+        frustration_sw.append(frustration_score)
+
+    return {
+        'fragment_center': positions,
+        'win_size': [win_size] * len(positions),
+        'native_energy': e_native,
+        'decoy_energy_av': e_decoy_av,
+        'decoy_energy_std': e_decoy_std,
+        'frustration': frustration_sw,
+    }
+
+
 def compute_mask_sparse(contact_i: np.ndarray,
                         contact_j: np.ndarray,
                         contact_distances: np.ndarray,

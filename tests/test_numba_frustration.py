@@ -267,3 +267,10 @@ class TestFastFallback:
     def test_configurational_custom_aa_freq_raises(self, fast_model):
         with pytest.raises(NotImplementedError):
             fast_model.configurational_frustration(aa_freq=np.ones(21) / 21)
+
+    def test_sliding_window_runs(self):
+        m = self._fresh_fast_model()
+        res = m.sliding_window(win_size=5, ndecoys=100)
+        assert len(res['frustration']) == m.N - 4  # win_size=5 -> dif=2 -> L-4 windows
+        assert np.all(np.isfinite(res['frustration']))
+        assert m.sparse_potts_model is not None  # materialized on demand

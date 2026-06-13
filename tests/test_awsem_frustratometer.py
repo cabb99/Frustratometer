@@ -620,6 +620,24 @@ def test_total_frustration_sparse_runs(awsem_6u5e_density):
     assert np.isfinite(val)
 
 
+def test_sliding_window_sparse_matches_dense(awsem_6u5e_density):
+    """Sparse-native sliding_window matches the dense path on every per-window field
+    (decoys seeded identically so both draw the same set)."""
+    from frustratometer.frustration.frustration import compute_energy_sliding_window
+    model = awsem_6u5e_density
+    pm = model.potts_model  # densify reference outside the seeded region (no RNG)
+
+    np.random.seed(0)
+    sparse_res = model.sliding_window(win_size=5, ndecoys=200)
+    np.random.seed(0)
+    dense_res = compute_energy_sliding_window(model.sequence, pm, model.mask, 5, 200, False)
+
+    np.testing.assert_array_equal(sparse_res['fragment_center'], dense_res['fragment_center'])
+    for key in ('native_energy', 'decoy_energy_av', 'decoy_energy_std', 'frustration'):
+        np.testing.assert_allclose(sparse_res[key], dense_res[key], atol=1e-6,
+                                   err_msg=f"mismatch in {key}")
+
+
 @pytest.fixture(scope="module")
 def elec_setup(awsem_6u5e_density, sparse_6u5e_density):
     """

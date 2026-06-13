@@ -29,6 +29,7 @@ __all__ = ['compute_mask', 'compute_native_energy', 'compute_fields_energy', 'co
           'compute_couplings_energy_sparse',
           'compute_sequences_energy_sparse',
           'compute_total_frustration_sparse',
+          'compute_energy_sliding_window_sparse',
           'compute_singleresidue_decoy_energy_fluctuation_sparse',
           'compute_mutational_decoy_energy_fluctuation_sparse',
           'compute_pseudoconfigurational_decoy_energy_fluctuation_sparse',

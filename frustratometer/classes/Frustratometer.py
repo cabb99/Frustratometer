@@ -731,9 +731,17 @@ class Frustratometer:
 
         """
 
+        from .Structure import SparseMatrix as _SM
+        if self._is_sparse and not config_decoys:
+            # Sparse-native: per-residue field (L,) + per-contact coupling (Nc,), no (N, L, L).
+            return frustration.compute_energy_sliding_window_sparse(
+                self.sequence, self.sparse_potts_model, win_size, ndecoys)
+
+        # Dense path (pseudoconfigurational decoys); densify a sparse mask for compute_fragment_mask.
+        mask = self.mask.to_dense(fill=0.0) if isinstance(self.mask, _SM) else self.mask
         return frustration.compute_energy_sliding_window(self.sequence,
                                                          self.potts_model,
-                                                         self.mask,
+                                                         mask,
                                                          win_size,
                                                          ndecoys,
                                                          config_decoys)
