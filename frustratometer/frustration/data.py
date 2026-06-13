@@ -267,8 +267,18 @@ class FrustrationData:
         min_seq_sep_elec=1,
         chain_breaks=None,
         elec_dist_row=None, elec_dist_col=None, elec_dist_data=None,
+        membrane=False, alpha=None, zim_h=None,
+        membrane_direct_gamma=None, membrane_water_gamma=None, membrane_protein_gamma=None,
     ):
-        """Build FrustrationData from sparse distance arrays and AWSEM parameters."""
+        """Build FrustrationData from sparse distance arrays and AWSEM parameters.
+
+        When ``membrane`` is set, the contact coupling is lowered to six channels
+        (water direct/water/protein weighted by ``1-alpha_i*alpha_j`` plus membrane
+        direct/water/protein weighted by ``alpha_i*alpha_j``) so the frozen kernels
+        reproduce the membrane blend with no kernel changes, and the per-residue Zim
+        field ``zim_h`` (DCA-ordered, L,21) is added to ``h_struct``. Burial uses the
+        water gamma, matching the native/potts energy.
+        """
         dist_row = np.asarray(dist_row, dtype=np.intp)
         dist_col = np.asarray(dist_col, dtype=np.intp)
         dist_data = np.asarray(dist_data, dtype=np.float64)
@@ -292,12 +302,25 @@ class FrustrationData:
         bg = remap_burial_gamma(burial_gamma)
 
         # Precomputed burial field h_struct[i, a] = 0.5*k_contact*Σ_w bg[a,w]*burial_indicator[i,w]
-        # (the frozen kernels read this directly; membrane/Zim/static fold into it later).
+        # (the frozen kernels read this directly; membrane Zim / static fold into it).
         h_struct = 0.5 * float(k_contact) * (burial_indicator @ bg.T)
         dg = remap_gamma(direct_gamma)
         wg = remap_gamma(water_gamma)
         pg = remap_gamma(protein_gamma)
-        gammas = np.stack([dg, wg, pg])  # (3, 21, 21)
+
+        if membrane:
+            mdg = remap_gamma(membrane_direct_gamma)
+            mwg = remap_gamma(membrane_water_gamma)
+            mpg = remap_gamma(membrane_protein_gamma)
+            gammas = np.stack([dg, wg, pg, mdg, mwg, mpg])  # (6, 21, 21)
+            w = (np.asarray(alpha)[ci] * np.asarray(alpha)[cj]).astype(np.float64)  # (Nc,) pairwise blend
+            coeff = np.stack([theta * (1 - w), tsw * (1 - w), tsp * (1 - w),
+                              theta * w, tsw * w, tsp * w], axis=1)  # (Nc, 6)
+            if zim_h is not None:
+                h_struct = h_struct + np.asarray(zim_h, dtype=np.float64)
+        else:
+            gammas = np.stack([dg, wg, pg])  # (3, 21, 21)
+            coeff = np.stack([theta, tsw, tsp], axis=1)  # (Nc, 3)
 
         # Frequencies
         aa_freq, contact_freq = compute_frequencies(seq_index)
@@ -329,7 +352,7 @@ class FrustrationData:
             k_electrostatics=float(k_electrostatics),
             contact_i=C(ci), contact_j=C(cj),
             theta=C(theta), tsw=C(tsw), tsp=C(tsp),
-            coeff=C(np.stack([theta, tsw, tsp], axis=1)),
+            coeff=C(coeff),
             burial_indicator=C(burial_indicator),
             rho_r=C(rho_r),
             h_struct=C(h_struct),
@@ -360,6 +383,17 @@ class FrustrationData:
                 elec_dist_col=elec_dm.col,
                 elec_dist_data=elec_dm.data,
             )
+
+        membrane_kw = {}
+        if getattr(model, 'alpha', None) is not None:
+            membrane_kw = dict(
+                membrane=True,
+                alpha=model.alpha,
+                zim_h=model._zim_h,
+                membrane_direct_gamma=model.membrane_direct_gamma,
+                membrane_water_gamma=model.membrane_water_gamma,
+                membrane_protein_gamma=model.membrane_protein_gamma,
+            )
         return cls.from_sparse(
             dist_row=dm.row, dist_col=dm.col, dist_data=dm.data,
             L=model.N, sequence=model.sequence,
@@ -383,4 +417,5 @@ class FrustrationData:
             min_seq_sep_elec=model.min_sequence_separation_electrostatics,
             chain_breaks=model.chain_breaks,
             **elec_kw,
+            **membrane_kw,
         )
