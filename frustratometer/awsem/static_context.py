@@ -28,11 +28,43 @@ Contacts are stored symmetrically (both (i,j) and (j,i)); the 0.5 factors and th
 two directed active-static contributions combine to the unordered-pair field above.
 """
 import numpy as np
+from scipy.spatial.distance import cdist
 
-__all__ = ['fold_static_context']
+__all__ = ['fold_static_context', 'external_charge_field']
 
 
-def fold_static_context(potts, seq_index, active_index):
+def external_charge_field(residue_coords, charge_coords, charges, aa_charges,
+                          k_electrostatics, screening_length):
+    """Field on ``h`` from external static point charges (e.g. DNA), screened Coulomb.
+
+    Each external charge ``q_d`` at ``charge_coords[d]`` interacts with a protein residue
+    of identity ``a`` (charge ``aa_charges[a]``) at ``residue_coords[i]`` through the same
+    Debye-Hückel-screened Coulomb used for protein electrostatics:
+    ``E = k * Σ_i aa_charges[σ_i] · Σ_d q_d · exp(-r_id/L)/r_id``. Since the native energy
+    is ``-Σ_i h[i, σ_i]``, this returns the additive field
+
+        ``h_ext[i, a] = -k · aa_charges[a] · Σ_d q_d · exp(-r_id/L)/r_id``   shape (N, Q).
+
+    Parameters
+    ----------
+    residue_coords : (N, 3)   representative (CB; CA for Gly) coordinates of the protein residues.
+    charge_coords  : (M, 3)   coordinates of the external charges.
+    charges        : (M,)     external charge values (e.g. -1 per DNA phosphate).
+    aa_charges     : (Q,)     per-identity residue charge in the model alphabet.
+    k_electrostatics, screening_length : Coulomb prefactor and screening length (Angstrom).
+    """
+    residue_coords = np.asarray(residue_coords, dtype=np.float64)
+    charge_coords = np.asarray(charge_coords, dtype=np.float64)
+    charges = np.asarray(charges, dtype=np.float64)
+    d = cdist(residue_coords, charge_coords)  # (N, M)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ind = np.exp(-d / screening_length) / d
+    ind = np.nan_to_num(ind, nan=0.0, posinf=0.0, neginf=0.0)
+    phi = ind @ charges  # (N,) screened potential from the external charges at each residue
+    return -k_electrostatics * np.outer(phi, np.asarray(aa_charges, dtype=np.float64))
+
+
+def fold_static_context(potts, seq_index, active_index, extra_field=None):
     """Reduce a sparse Potts model to its active residues.
 
     Parameters
@@ -44,6 +76,10 @@ def fold_static_context(potts, seq_index, active_index):
         Native identity index of every residue; only the static entries are read.
     active_index : array-like
         Positions (subset of ``range(L)``) that remain active.
+    extra_field : np.ndarray (L, q), optional
+        An additional field on ``h`` over all residues (e.g. an external DNA/ligand
+        charge field from :func:`external_charge_field`). The active rows fold into the
+        reduced ``h``; the static rows (fixed identity) fold into ``offset``.
 
     Returns
     -------
@@ -55,6 +91,8 @@ def fold_static_context(potts, seq_index, active_index):
         Constant static contribution to the native energy.
     """
     h = np.asarray(potts['h'])
+    if extra_field is not None:
+        h = h + np.asarray(extra_field, dtype=np.float64)
     J = np.asarray(potts['J'])
     ci = np.asarray(potts['contact_i'])
     cj = np.asarray(potts['contact_j'])
@@ -67,7 +105,7 @@ def fold_static_context(potts, seq_index, active_index):
     local = np.full(L, -1, dtype=np.intp)
     local[active_index] = np.arange(active_index.size)
 
-    h_fold = h[active_index].copy()  # (L', q): active own fields
+    h_fold = h[active_index].copy()  # (L', q): active own fields (incl. extra_field)
 
     static_index = np.where(~is_active)[0]
     offset = -float(h[static_index, seq_index[static_index]].sum())

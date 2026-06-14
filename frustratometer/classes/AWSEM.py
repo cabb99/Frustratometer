@@ -13,6 +13,9 @@ from typing import List,Optional,Union
 
 __all__ = ['AWSEM']
 
+# Per-identity residue charge (one-letter): used for the external (DNA/ligand) charge field.
+_CHARGE = {'D': -1.0, 'E': -1.0, 'K': 1.0, 'R': 1.0}
+
 
 class AWSEMParameters(BaseModel):
     model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
@@ -188,6 +191,7 @@ class AWSEM(Frustratometer):
 
         resid = selection_CB['residue'].to_numpy()
         self.resid=resid
+        self._cb_coords = selection_CB.get_coordinates().to_numpy()  # (N, 3) CB (CA for GLY), residue order
         self.N=len(self.resid)
         assert self.N == len(self.sequence), "The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object."
 
@@ -888,7 +892,17 @@ class AWSEM(Frustratometer):
             return np.array([i for i in range(self.N) if i not in static], dtype=np.intp)
         raise ValueError("Provide one of active_residues, active_selection, or static_selection.")
 
-    def fold_static_context(self, active_residues=None, *, active_selection=None, static_selection=None):
+    def _charge_field(self, charge_coords, charges, charge_k, charge_screening):
+        """(N, 21) field on h from external static point charges (e.g. DNA phosphates)."""
+        from ..awsem.static_context import external_charge_field
+        aa_charges = np.array([_CHARGE.get(aa, 0.0) for aa in _AA_21])
+        k = 17.3636 if charge_k is None else charge_k
+        screening = self.electrostatics_screening_length if charge_screening is None else charge_screening
+        return external_charge_field(self._cb_coords, charge_coords, charges,
+                                     aa_charges, k, screening)
+
+    def fold_static_context(self, active_residues=None, *, active_selection=None, static_selection=None,
+                            charge_coords=None, charges=None, charge_k=None, charge_screening=None):
         """Reduce this model to a static-context model over the active residues.
 
         Residues outside the active set are held at their native identity (the "static
@@ -901,19 +915,28 @@ class AWSEM(Frustratometer):
         The active set is given by exactly one of ``active_residues`` (index array /
         boolean mask over ``range(N)``), ``active_selection`` (a molselect string), or
         ``static_selection`` (a molselect string; active = its complement).
-        Electrostatics are not yet folded; use ``k_electrostatics=0`` for now.
+
+        ``charge_coords`` (M, 3) and ``charges`` (M,) add an external static charge field
+        (e.g. DNA phosphates) to the active residues via a screened Coulomb potential
+        (constant ``charge_k`` kJ/mol, default 17.3636; ``charge_screening`` Angstrom,
+        default the model's electrostatics screening length).
+
+        Protein-protein electrostatics are not yet folded; use ``k_electrostatics=0``.
         """
         from ..awsem.static_context import fold_static_context as _fold
         if self.k_electrostatics != 0:
             raise NotImplementedError(
-                "Static-context folding does not yet include electrostatics; "
-                "rebuild with k_electrostatics=0.")
+                "Static-context folding does not yet include protein electrostatics; "
+                "rebuild with k_electrostatics=0 (external charge_coords are still supported).")
         self._ensure_potts_model()
         if getattr(self, 'sparse_potts_model', None) is None:
             raise ValueError("fold_static_context requires a sparse Potts model (sparse=True).")
         active = self._resolve_active(active_residues, active_selection, static_selection)
         seq_index = np.array([_AA_21.index(aa) for aa in self.sequence])
-        return _fold(self.sparse_potts_model, seq_index, active)
+        extra_field = None
+        if charge_coords is not None:
+            extra_field = self._charge_field(charge_coords, charges, charge_k, charge_screening)
+        return _fold(self.sparse_potts_model, seq_index, active, extra_field=extra_field)
 
     def _get_fast_module(self):
         """Return the frustration backend module for ``self._fast_backend`` via the registry."""
@@ -942,7 +965,8 @@ class AWSEM(Frustratometer):
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
-    def _static_context_frustration(self, active_residues, kind, aa_freq, correction, dense):
+    def _static_context_frustration(self, active_residues, kind, aa_freq, correction, dense,
+                                    charge_coords=None, charges=None):
         """Frustration of the active residues with the rest held as static context.
 
         Folds the static context into the active fields/offset, then runs the standard
@@ -955,7 +979,8 @@ class AWSEM(Frustratometer):
             raise NotImplementedError(
                 f"active_residues frustration supports kind in "
                 f"('singleresidue', 'mutational', 'contact'), got {kind!r}.")
-        reduced, _offset = self.fold_static_context(active_residues)
+        reduced, _offset = self.fold_static_context(
+            active_residues, charge_coords=charge_coords, charges=charges)
         active = np.asarray(active_residues)
         if active.dtype == bool:
             active = np.where(active)[0]
@@ -975,7 +1000,8 @@ class AWSEM(Frustratometer):
         return sub.frustration(kind=kind, aa_freq=aa_freq, correction=correction, dense=dense)
 
     def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42,
-                    active_residues=None, active_selection=None, static_selection=None):
+                    active_residues=None, active_selection=None, static_selection=None,
+                    charge_coords=None, charges=None):
         """Frustration index for the native sequence.
 
         For the pair kinds ("mutational," "pseudoconfigurational," "contact") on a sparse
@@ -989,11 +1015,16 @@ class AWSEM(Frustratometer):
         or ``static_selection`` (a molselect string; the active set is its complement) to
         measure frustration only on the active residues while the rest are held fixed as a
         static context (their couplings fold into the active fields). Returns values over
-        the active set, in ascending residue order.
+        the active set, in ascending residue order. ``charge_coords`` (M, 3) / ``charges``
+        (M,) add an external static charge field (e.g. DNA phosphates) on the active residues.
         """
-        if active_residues is not None or active_selection is not None or static_selection is not None:
-            active = self._resolve_active(active_residues, active_selection, static_selection)
-            return self._static_context_frustration(active, kind, aa_freq, correction, dense)
+        if (active_residues is not None or active_selection is not None
+                or static_selection is not None or charge_coords is not None):
+            active = self._resolve_active(active_residues, active_selection, static_selection) \
+                if (active_residues is not None or active_selection is not None or static_selection is not None) \
+                else np.arange(self.N)
+            return self._static_context_frustration(active, kind, aa_freq, correction, dense,
+                                                    charge_coords=charge_coords, charges=charges)
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
             fmod = self._get_fast_module()
             data = self._get_fast_data()

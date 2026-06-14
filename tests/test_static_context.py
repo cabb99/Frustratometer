@@ -168,6 +168,49 @@ def test_static_selection_is_active_complement(sparse_model):
     np.testing.assert_allclose(a, b, rtol=1e-9, atol=1e-9)
 
 
+def test_external_charge_field_formula():
+    from frustratometer.awsem.static_context import external_charge_field
+    from scipy.spatial.distance import cdist
+    rng = np.random.default_rng(0)
+    N, M, Q = 6, 3, 21
+    rc = rng.normal(size=(N, 3)) * 10
+    cc = rng.normal(size=(M, 3)) * 10
+    q = np.array([-1.0, -1.0, 1.0])
+    aac = np.zeros(Q); aac[3] = -1.0; aac[9] = 1.0
+    k, L = 17.3636, 10.0
+    f = external_charge_field(rc, cc, q, aac, k, L)
+    d = cdist(rc, cc); ind = np.exp(-d / L) / d; phi = ind @ q
+    np.testing.assert_allclose(f, -k * np.outer(phi, aac))
+
+
+def test_dna_charge_field_shifts_frustration(sparse_model):
+    m = sparse_model
+    active = np.arange(m.N)
+    base = m.frustration(kind='singleresidue', active_residues=active)
+    cc = m._cb_coords[:1] + np.array([3.0, 0.0, 0.0])  # a charge ~3 A from residue 0
+    with_dna = m.frustration(kind='singleresidue', active_residues=active,
+                             charge_coords=cc, charges=np.array([-1.0]))
+    assert not np.allclose(base, with_dna)
+
+
+def test_dna_charge_field_matches_explicit_potts(sparse_model):
+    """Frustration with an external charge field == frustration on a Potts model whose h has
+    the same field added (independent explicit-J computation)."""
+    from frustratometer.frustration import numba as fn
+    from frustratometer.frustration.frustration import compute_seq_index
+    m = sparse_model
+    rng = np.random.default_rng(7)
+    cc = m._cb_coords[[5, 20, 40]] + rng.normal(size=(3, 3))  # charges near a few residues
+    q = np.array([-1.0, -1.0, -1.0])
+    h_dna = m._charge_field(cc, q, None, None)
+    potts2 = {**m.sparse_potts_model, 'h': m.sparse_potts_model['h'] + h_dna}
+    si = compute_seq_index(m.sequence)
+    ref = fn.singleresidue_frustration_potts(si, potts2, m.aa_freq)
+    got = m.frustration(kind='singleresidue', active_residues=np.arange(m.N),
+                        charge_coords=cc, charges=q)
+    np.testing.assert_allclose(got, ref, atol=1e-6, rtol=1e-5)
+
+
 def test_electrostatics_not_supported():
     s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A', sparse=True)
     m = frustratometer.AWSEM(s, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
