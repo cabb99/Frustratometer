@@ -247,6 +247,107 @@ def _configurational(seq_index, L,
     return result
 
 
+# ─── Explicit-J kernels (generic Potts: DCA, static-context reduced model) ──────
+# These consume a raw sparse Potts model {h (L,21), J (Nc,21,21), contacts} with the
+# couplings given explicitly per contact (no AWSEM channels, no electrostatics). They
+# power any front-end that already holds an explicit J — DCA and the folded
+# static-context model — on the same fast kernels.
+
+@njit(cache=True)
+def _compute_V_explicit(seq_index, contact_i, contact_j, Nc, L, J):
+    V = np.zeros((L, 21))
+    for c in range(Nc):
+        si = seq_index[contact_i[c]]
+        j = contact_j[c]
+        for a in range(21):
+            V[j, a] += J[c, si, a]
+    return V
+
+
+@njit(cache=True)
+def _native_energy_explicit(seq_index, contact_i, contact_j, Nc, L, h, J):
+    e = 0.0
+    for i in range(L):
+        e -= h[i, seq_index[i]]
+    ec = 0.0
+    for c in range(Nc):
+        ec -= J[c, seq_index[contact_i[c]], seq_index[contact_j[c]]]
+    return e + 0.5 * ec
+
+
+@njit(parallel=True, cache=True)
+def _singleresidue_explicit(seq_index, contact_i, contact_j, Nc, L, h, J, aa_freq, correction):
+    V = _compute_V_explicit(seq_index, contact_i, contact_j, Nc, L, J)
+    result = np.empty(L)
+    for i in prange(L):
+        si = seq_index[i]
+        V_nat = V[i, si]
+        h_nat = h[i, si]
+        sum_w = 0.0; sum_we = 0.0; sum_we2 = 0.0
+        for a in range(21):
+            de = (h_nat - h[i, a]) + (V_nat - V[i, a])
+            w = aa_freq[a]
+            sum_w += w; sum_we += w * de; sum_we2 += w * de * de
+        result[i] = _frustration_index(sum_w, sum_we, sum_we2, correction)
+    return result
+
+
+@njit(parallel=True, cache=True)
+def _mutational_explicit(seq_index, contact_i, contact_j, Nc, L, h, J, contact_freq, correction):
+    V = _compute_V_explicit(seq_index, contact_i, contact_j, Nc, L, J)
+    result = np.empty(Nc)
+    for c in prange(Nc):
+        p1 = contact_i[c]; p2 = contact_j[c]
+        s1 = seq_index[p1]; s2 = seq_index[p2]
+        G_nat = J[c, s1, s2]
+        const_c = V[p1, s1] + V[p2, s2] - G_nat
+        h1 = h[p1, s1]; h2 = h[p2, s2]
+
+        term_a = np.empty(21)
+        for a in range(21):
+            term_a[a] = (h1 - h[p1, a]) - V[p1, a] + J[c, a, s2]
+        term_b = np.empty(21)
+        for b in range(21):
+            term_b[b] = (h2 - h[p2, b]) - V[p2, b] + J[c, s1, b]
+
+        sum_w = 0.0; sum_we = 0.0; sum_we2 = 0.0
+        for a in range(21):
+            for b in range(21):
+                de = const_c + term_a[a] + term_b[b] - J[c, a, b]
+                w = contact_freq[a, b]
+                sum_w += w; sum_we += w * de; sum_we2 += w * de * de
+        result[c] = _frustration_index(sum_w, sum_we, sum_we2, correction)
+    return result
+
+
+def _potts_arrays(potts):
+    h = np.ascontiguousarray(potts['h'], dtype=np.float64)
+    J = np.ascontiguousarray(potts['J'], dtype=np.float64)
+    ci = np.ascontiguousarray(potts['contact_i'], dtype=np.intp)
+    cj = np.ascontiguousarray(potts['contact_j'], dtype=np.intp)
+    return h, J, ci, cj, len(ci), int(potts.get('L', h.shape[0]))
+
+
+def native_energy_potts(seq_index, potts):
+    """Native energy of an explicit sparse Potts model for the given sequence indices."""
+    h, J, ci, cj, Nc, L = _potts_arrays(potts)
+    return _native_energy_explicit(np.asarray(seq_index, dtype=np.int32), ci, cj, Nc, L, h, J)
+
+
+def singleresidue_frustration_potts(seq_index, potts, aa_freq, correction=0.0):
+    """Single-residue frustration of an explicit sparse Potts model. Returns (L,)."""
+    h, J, ci, cj, Nc, L = _potts_arrays(potts)
+    return _singleresidue_explicit(np.asarray(seq_index, dtype=np.int32), ci, cj, Nc, L,
+                                   h, J, np.asarray(aa_freq, dtype=np.float64), float(correction))
+
+
+def mutational_frustration_potts(seq_index, potts, contact_freq, correction=0.0):
+    """Mutational frustration per contact (Nc,) of an explicit sparse Potts model."""
+    h, J, ci, cj, Nc, L = _potts_arrays(potts)
+    return _mutational_explicit(np.asarray(seq_index, dtype=np.int32), ci, cj, Nc, L,
+                                h, J, np.asarray(contact_freq, dtype=np.float64), float(correction))
+
+
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def compute_V(data):

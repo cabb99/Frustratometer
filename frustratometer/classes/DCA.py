@@ -412,6 +412,28 @@ class DCA(Frustratometer):
     #                                distance_matrix_method=distance_matrix_method)
 
 
+    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None,
+                    correction=0, seed=42, dense=True, backend=None):
+        """Frustration index. With ``backend`` in ('numba', 'cuda'), single-residue and
+        mutational frustration run on the fast Potts kernels — the DCA Potts model is
+        materialized to sparse form (contacts from the mask) if it is not already sparse.
+        Otherwise the numpy path is used (default)."""
+        if backend is not None and kind in ('singleresidue', 'mutational'):
+            from ..frustration import backends
+            from ..frustration.frustration import compute_seq_index
+            self._ensure_potts_model()
+            potts = self.sparse_potts_model
+            if potts is None:
+                potts = frustration.potts_model_dense_to_sparse(self.potts_model, self.mask)
+            seq = self.sequence if sequence is None else sequence
+            af = self.aa_freq if aa_freq is None else aa_freq
+            return backends.frustration_potts(
+                potts, compute_seq_index(seq), kind=kind, aa_freq=af,
+                contact_freq=self.contact_freq, correction=correction,
+                backend=backend, dense=dense)
+        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq,
+                                   correction=correction, seed=seed, dense=dense)
+
     def scores(self):
         """DCA contact scores from the Frobenius norm of the couplings.
 

@@ -890,12 +890,9 @@ class AWSEM(Frustratometer):
         return _fold(self.sparse_potts_model, seq_index, active_residues)
 
     def _get_fast_module(self):
-        """Return the numba or cuda frustration module based on self._fast_backend."""
-        if self._fast_backend == 'cuda':
-            from ..frustration import cuda as fmod
-        else:
-            from ..frustration import numba as fmod
-        return fmod
+        """Return the frustration backend module for ``self._fast_backend`` via the registry."""
+        from ..frustration.backends import get_backend
+        return get_backend(self._fast_backend or 'numba')
 
     def _get_fast_data(self):
         """Return cached FrustrationCUDA (CUDA) or FrustrationData for fast-path calls."""

@@ -723,6 +723,106 @@ class FrustrationCUDA:
 
 
 # -----------------------------------------------------------------------------
+# Explicit-J kernels (generic Potts: DCA, static-context reduced model)
+# -----------------------------------------------------------------------------
+
+@cuda.jit
+def _build_v_explicit_kernel(seq_index, contact_i, contact_j, J, V):
+    c = cuda.grid(1)
+    if c >= contact_i.shape[0]:
+        return
+    si = seq_index[contact_i[c]]
+    j = contact_j[c]
+    for a in range(ALPHABET):
+        cuda.atomic.add(V, (j, a), J[c, si, a])
+
+
+@cuda.jit
+def _singleresidue_explicit_kernel(seq_index, h, V, aa_freq, correction, result):
+    i = cuda.grid(1)
+    if i >= seq_index.shape[0]:
+        return
+    si = seq_index[i]
+    v_nat = V[i, si]
+    h_nat = h[i, si]
+    sum_w = 0.0; sum_we = 0.0; sum_we2 = 0.0
+    for a in range(ALPHABET):
+        de = (h_nat - h[i, a]) + (v_nat - V[i, a])
+        w = aa_freq[a]
+        sum_w += w; sum_we += w * de; sum_we2 += w * de * de
+    mean = sum_we / sum_w
+    var = sum_we2 / sum_w - mean * mean
+    if var < 0.0:
+        var = 0.0
+    denom = math.sqrt(var) + correction
+    result[i] = mean / denom if denom > 0.0 else 0.0
+
+
+@cuda.jit
+def _mutational_explicit_kernel(seq_index, contact_i, contact_j, h, J, V,
+                                contact_freq, correction, result):
+    c = cuda.grid(1)
+    if c >= contact_i.shape[0]:
+        return
+    p1 = contact_i[c]; p2 = contact_j[c]
+    s1 = seq_index[p1]; s2 = seq_index[p2]
+    const_term = V[p1, s1] + V[p2, s2] - J[c, s1, s2]
+    h1 = h[p1, s1]; h2 = h[p2, s2]
+    term_a = cuda.local.array(ALPHABET, dtype=np.float64)  # type: ignore[arg-type]
+    term_b = cuda.local.array(ALPHABET, dtype=np.float64)  # type: ignore[arg-type]
+    for a in range(ALPHABET):
+        term_a[a] = (h1 - h[p1, a]) - V[p1, a] + J[c, a, s2]
+    for b in range(ALPHABET):
+        term_b[b] = (h2 - h[p2, b]) - V[p2, b] + J[c, s1, b]
+    sum_w = 0.0; sum_we = 0.0; sum_we2 = 0.0
+    for a in range(ALPHABET):
+        for b in range(ALPHABET):
+            de = const_term + term_a[a] + term_b[b] - J[c, a, b]
+            w = contact_freq[a, b]
+            sum_w += w; sum_we += w * de; sum_we2 += w * de * de
+    mean = sum_we / sum_w
+    var = sum_we2 / sum_w - mean * mean
+    if var < 0.0:
+        var = 0.0
+    denom = math.sqrt(var) + correction
+    result[c] = mean / denom if denom > 0.0 else 0.0
+
+
+def _explicit_device(potts, seq_index):
+    h = cuda.to_device(np.ascontiguousarray(potts['h'], dtype=np.float64))
+    J = cuda.to_device(np.ascontiguousarray(potts['J'], dtype=np.float64))
+    ci = cuda.to_device(np.ascontiguousarray(potts['contact_i'], dtype=np.intp))
+    cj = cuda.to_device(np.ascontiguousarray(potts['contact_j'], dtype=np.intp))
+    si = cuda.to_device(np.ascontiguousarray(seq_index, dtype=np.int32))
+    L = int(potts.get('L', potts['h'].shape[0]))
+    Nc = len(potts['contact_i'])
+    V = cuda.device_array((L, ALPHABET), dtype=np.float64)
+    _clear_kernel[(V.size + THREADS_REDUCE - 1) // THREADS_REDUCE, THREADS_REDUCE](V.reshape(V.size))
+    if Nc:
+        _build_v_explicit_kernel[(Nc + THREADS_REDUCE - 1) // THREADS_REDUCE, THREADS_REDUCE](si, ci, cj, J, V)
+    return si, ci, cj, h, J, V, L, Nc
+
+
+def singleresidue_frustration_potts(seq_index, potts, aa_freq, correction=0.0):
+    si, ci, cj, h, J, V, L, Nc = _explicit_device(potts, seq_index)
+    d_aa = cuda.to_device(np.ascontiguousarray(aa_freq, dtype=np.float64))
+    result = cuda.device_array(L, dtype=np.float64)
+    _singleresidue_explicit_kernel[(L + THREADS_SINGLERESIDUE - 1) // THREADS_SINGLERESIDUE,
+                                   THREADS_SINGLERESIDUE](si, h, V, d_aa, float(correction), result)
+    return result.copy_to_host()
+
+
+def mutational_frustration_potts(seq_index, potts, contact_freq, correction=0.0):
+    si, ci, cj, h, J, V, L, Nc = _explicit_device(potts, seq_index)
+    d_cf = cuda.to_device(np.ascontiguousarray(contact_freq, dtype=np.float64))
+    result = cuda.device_array(max(Nc, 1), dtype=np.float64)
+    if Nc:
+        _mutational_explicit_kernel[(Nc + THREADS_MUTATIONAL - 1) // THREADS_MUTATIONAL,
+                                    THREADS_MUTATIONAL](si, ci, cj, h, J, V, d_cf, float(correction), result)
+    return result.copy_to_host()[:Nc]
+
+
+# -----------------------------------------------------------------------------
 # Module-level API (mirrors frustration.numba)
 # -----------------------------------------------------------------------------
 
