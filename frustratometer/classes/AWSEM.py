@@ -862,17 +862,45 @@ class AWSEM(Frustratometer):
             configurational_energies[n2,n1]=energy
         return configurational_energies
     
-    def fold_static_context(self, active_residues):
-        """Reduce this model to a static-context model over ``active_residues``.
+    def select_residues(self, selection):
+        """Resolve a residue selection to 0-based model residue indices.
 
-        Residues outside ``active_residues`` are held at their native identity (the
-        "static context"): their couplings to the active residues fold into the active
-        fields and their mutual couplings into a constant energy ``offset``. Returns
+        ``selection`` may be a molselect string evaluated on this model's structure
+        (e.g. ``'chain A'``, ``'resid 10 to 40'``, ``'resname GLY'``), a boolean mask
+        over ``range(N)``, or an integer index array (returned as-is)."""
+        if isinstance(selection, str):
+            chosen = set(np.unique(self.structure.select(selection)['residue'].to_numpy()).tolist())
+            return np.array([i for i, r in enumerate(self.resid) if r in chosen], dtype=np.intp)
+        sel = np.asarray(selection)
+        if sel.dtype == bool:
+            return np.where(sel)[0].astype(np.intp)
+        return sel.astype(np.intp)
+
+    def _resolve_active(self, active_residues=None, active_selection=None, static_selection=None):
+        """Resolve active residue indices from an index/mask, an active molselect string,
+        or a static molselect string (active = complement of static)."""
+        if active_residues is not None:
+            return self.select_residues(active_residues)
+        if active_selection is not None:
+            return self.select_residues(active_selection)
+        if static_selection is not None:
+            static = set(self.select_residues(static_selection).tolist())
+            return np.array([i for i in range(self.N) if i not in static], dtype=np.intp)
+        raise ValueError("Provide one of active_residues, active_selection, or static_selection.")
+
+    def fold_static_context(self, active_residues=None, *, active_selection=None, static_selection=None):
+        """Reduce this model to a static-context model over the active residues.
+
+        Residues outside the active set are held at their native identity (the "static
+        context"): their couplings to the active residues fold into the active fields and
+        their mutual couplings into a constant energy ``offset``. Returns
         ``(reduced_potts, offset)`` where ``reduced_potts`` is a sparse Potts model over
         the active residues. Requires a sparse Potts model (built with ``sparse=True``;
         fast models materialize one on demand).
 
-        ``active_residues`` is an index array / boolean mask over ``range(self.N)``.
+        The active set is given by exactly one of ``active_residues`` (index array /
+        boolean mask over ``range(N)``), ``active_selection`` (a molselect string), or
+        ``static_selection`` (a molselect string; active = its complement).
         Electrostatics are not yet folded; use ``k_electrostatics=0`` for now.
         """
         from ..awsem.static_context import fold_static_context as _fold
@@ -883,11 +911,9 @@ class AWSEM(Frustratometer):
         self._ensure_potts_model()
         if getattr(self, 'sparse_potts_model', None) is None:
             raise ValueError("fold_static_context requires a sparse Potts model (sparse=True).")
-        active_residues = np.asarray(active_residues)
-        if active_residues.dtype == bool:
-            active_residues = np.where(active_residues)[0]
+        active = self._resolve_active(active_residues, active_selection, static_selection)
         seq_index = np.array([_AA_21.index(aa) for aa in self.sequence])
-        return _fold(self.sparse_potts_model, seq_index, active_residues)
+        return _fold(self.sparse_potts_model, seq_index, active)
 
     def _get_fast_module(self):
         """Return the frustration backend module for ``self._fast_backend`` via the registry."""
@@ -948,7 +974,8 @@ class AWSEM(Frustratometer):
         sub.minimally_frustrated_threshold = self.minimally_frustrated_threshold
         return sub.frustration(kind=kind, aa_freq=aa_freq, correction=correction, dense=dense)
 
-    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42, active_residues=None):
+    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42,
+                    active_residues=None, active_selection=None, static_selection=None):
         """Frustration index for the native sequence.
 
         For the pair kinds ("mutational," "pseudoconfigurational," "contact") on a sparse
@@ -957,12 +984,16 @@ class AWSEM(Frustratometer):
         matrix, avoiding the full-matrix allocation for large proteins. Expand it with
         ``.to_dense(fill=0.0)``. ``dense`` is ignored for "singleresidue" and "configurational".
 
-        ``active_residues`` (index array / boolean mask over ``range(N)``) measures
-        frustration only on those residues while the rest stay as a fixed static context
-        (their couplings fold into the active fields). Returns values over the active set.
+        Static context: pass exactly one of ``active_residues`` (index array / boolean mask
+        over ``range(N)``), ``active_selection`` (a molselect string, e.g. ``'chain A'``),
+        or ``static_selection`` (a molselect string; the active set is its complement) to
+        measure frustration only on the active residues while the rest are held fixed as a
+        static context (their couplings fold into the active fields). Returns values over
+        the active set, in ascending residue order.
         """
-        if active_residues is not None:
-            return self._static_context_frustration(active_residues, kind, aa_freq, correction, dense)
+        if active_residues is not None or active_selection is not None or static_selection is not None:
+            active = self._resolve_active(active_residues, active_selection, static_selection)
+            return self._static_context_frustration(active, kind, aa_freq, correction, dense)
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
             fmod = self._get_fast_module()
             data = self._get_fast_data()

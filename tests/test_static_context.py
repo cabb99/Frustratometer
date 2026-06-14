@@ -140,6 +140,34 @@ def test_active_residues_configurational_raises(sparse_model):
         sparse_model.frustration(kind='configurational', active_residues=np.arange(0, sparse_model.N, 2))
 
 
+def test_select_residues_string_resolves(sparse_model):
+    m = sparse_model
+    idx = m.select_residues('resid 10 to 40')
+    assert idx.dtype.kind == 'i'
+    assert 0 < len(idx) < m.N
+    # index/mask inputs pass through
+    np.testing.assert_array_equal(m.select_residues(idx), idx)
+    mask = np.zeros(m.N, bool); mask[idx] = True
+    np.testing.assert_array_equal(m.select_residues(mask), idx)
+
+
+def test_active_selection_string_matches_indices(sparse_model):
+    m = sparse_model
+    idx = m.select_residues('resid 10 to 60')
+    a = m.frustration(kind='singleresidue', active_selection='resid 10 to 60')
+    b = m.frustration(kind='singleresidue', active_residues=idx)
+    np.testing.assert_allclose(a, b, rtol=1e-9, atol=1e-9)
+
+
+def test_static_selection_is_active_complement(sparse_model):
+    m = sparse_model
+    static_idx = set(m.select_residues('resid 1 to 30').tolist())
+    active_idx = np.array([i for i in range(m.N) if i not in static_idx], dtype=np.intp)
+    a = m.frustration(kind='singleresidue', static_selection='resid 1 to 30')
+    b = m.frustration(kind='singleresidue', active_residues=active_idx)
+    np.testing.assert_allclose(a, b, rtol=1e-9, atol=1e-9)
+
+
 def test_electrostatics_not_supported():
     s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A', sparse=True)
     m = frustratometer.AWSEM(s, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
