@@ -344,7 +344,7 @@ def test_structure_segment_class_original_indices():
     structure=frustratometer.Structure.spliced_pdb(f'{_path}/../tests/data/3ptn.pdb',"A",seq_selection="resnum `16to41`")
     test_sequence="IVGGYTCGANTVPYQVSLNSGYHF"
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
-    resid = selection_CB.getResindices()
+    resid = selection_CB['residue'].to_numpy()
     assert structure.pdb_init_index==16
     assert len(structure.select_gap_indices)==2
     assert structure.sequence==test_sequence
@@ -356,7 +356,7 @@ def test_structure_segment_class_absolute_indices():
     structure=frustratometer.Structure(f'{_path}/../tests/data/3ptn.pdb',"A",seq_selection="resindex `0to23`")
     test_sequence="IVGGYTCGANTVPYQVSLNSGYHF"
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
-    resid = selection_CB.getResindices()
+    resid = selection_CB['residue'].to_numpy()
     assert structure.sequence==test_sequence
     assert structure.distance_matrix.shape == (len(structure.sequence),len(structure.sequence))
     assert len(resid)==len(structure.sequence)
@@ -369,7 +369,7 @@ def test_structure_segment_class_original_indices_no_repair():
     structure=frustratometer.Structure(f'{_path}/../tests/data/1rnb.pdb',"A",seq_selection="resnum `2to21`",repair_pdb=False)
     test_sequence="QVINTFDGVADYLQTYHKLP"
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
-    resid = selection_CB.getResindices()
+    resid = selection_CB['residue'].to_numpy()
     assert structure.sequence==test_sequence
     assert structure.distance_matrix.shape == (len(structure.sequence),len(structure.sequence))
     assert len(resid)==len(structure.sequence)
@@ -378,7 +378,7 @@ def test_structure_segment_class_absolute_indices_no_repair():
     structure=frustratometer.Structure(f'{_path}/../tests/data/1rnb.pdb',"A",seq_selection="resindex `0to19`",repair_pdb=False)
     test_sequence="QVINTFDGVADYLQTYHKLP"
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
-    resid = selection_CB.getResindices()
+    resid = selection_CB['residue'].to_numpy()
     assert structure.sequence==test_sequence
     assert structure.distance_matrix.shape == (len(structure.sequence),len(structure.sequence))
     assert len(resid)==len(structure.sequence)

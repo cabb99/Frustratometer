@@ -186,7 +186,7 @@ class AWSEM(Frustratometer):
         selection_CA = self.structure.select('name CA')
         selection_CB = self.structure.select('name CB or (resname GLY IGL and name CA)')
 
-        resid = selection_CB.getResindices()
+        resid = selection_CB['residue'].to_numpy()
         self.resid=resid
         self.N=len(self.resid)
         assert self.N == len(self.sequence), "The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object."
@@ -205,7 +205,7 @@ class AWSEM(Frustratometer):
                 z_source = selection_CA
             else:
                 raise ValueError(f"Invalid z_source value: {p.z_source}. Must be 'Auto', 'CB', or 'CA'.")
-            z_coords = z_source.getCoords()[:, 2] - p.membrane_center
+            z_coords = z_source.get_coordinates().to_numpy()[:, 2] - p.membrane_center
             self.z_coords = z_coords
             # alpha_i ≈ 1 inside membrane, ≈ 0 outside
             self.alpha = 0.5 * np.tanh(p.eta_switching * (z_coords + p.z_m)) + 0.5 * np.tanh(p.eta_switching * (p.z_m - z_coords))

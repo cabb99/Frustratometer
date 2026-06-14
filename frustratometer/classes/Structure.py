@@ -1,5 +1,5 @@
 from .. import pdb
-import prody
+import molscene
 import os
 import Bio.PDB.Polypeptide as poly
 import numpy as np
@@ -235,6 +235,29 @@ class Structure:
         """Filter a SparseMatrix to a sub-range [init, fin) and re-index."""
         return sparse_dm.filter(init, fin)
 
+    @staticmethod
+    def _parse_scene(pdb_file, chain):
+        """Parse a PDB/CIF file into a protein/chain-filtered molscene Scene.
+
+        Alternate locations are reduced to the primary conformer (blank or 'A'),
+        matching ProDy's ``parsePDB(altloc='A')`` default so atom selections and
+        distances are unchanged."""
+        path = str(pdb_file)
+        scene = (molscene.Scene.from_cif(path) if path.lower().endswith('.cif')
+                 else molscene.Scene.from_pdb(path))
+        selstr = 'protein' if chain is None else f'protein and chain {chain}'
+        return scene.select(selstr).select(altloc=['A'])
+
+    @staticmethod
+    def _slice_residues(scene, init, fin):
+        """Return the sub-Scene of residues at 0-based ordinal positions ``[init, fin)``.
+
+        Uses the same residue ordinals as the distance-matrix slicing, so a subsequence
+        Structure's ``structure`` atoms stay aligned with its distance matrix and sequence."""
+        uniq = np.unique(scene['residue'].to_numpy())
+        keep = set(uniq[init:fin].tolist())
+        return scene[scene['residue'].isin(keep)]
+
     def _init_structure(self, pdb_file, chain, seq_selection, aligned_sequence,
                         filtered_aligned_sequence, distance_matrix_method,
                         pdb_directory, repair_pdb, sparse, max_sparse_distance):
@@ -270,10 +293,7 @@ class Structure:
                 pdb.repair_pdb(pdb_file, chain, pdb_directory)
                 self.pdb_file=str(pdb_directory/f"{self.pdbID}_cleaned.pdb")
 
-            if ".pdb" in str(pdb_file) or repair_pdb==True:
-                self.structure = prody.parsePDB(str(self.pdb_file), chain=self.chain).select(f"protein")
-            else:
-                self.structure=prody.parseMMCIF(str(self.pdb_file),chain=self.chain).select(f"protein")
+            self.structure = self._parse_scene(self.pdb_file, self.chain)
         else:
             assert len(self.seq_selection.replace("to"," to ").replace(":"," : ").split())>=4, "Please correctly input your residue selection"
             
@@ -325,10 +345,9 @@ class Structure:
                     self.pdb_file=f"{pdb_directory}/{self.pdbID}_cleaned.pdb"
                     self.chain="A"
 
-            if ".pdb" in str(pdb_file) or repair_pdb==True:
-                self.structure = prody.parsePDB(str(self.pdb_file), chain=self.chain).select(f"protein and {self.seq_selection}")
-            else:
-                self.structure=prody.parseMMCIF(str(self.pdb_file),chain=self.chain).select(f"protein and {self.seq_selection}")
+            self.structure = self._slice_residues(
+                self._parse_scene(self.pdb_file, self.chain),
+                self.init_index_shift, self.fin_index_shift)
 
         self.sequence=pdb.get_sequence(self.pdb_file,self.chain)
 
@@ -357,11 +376,10 @@ class Structure:
 
         self.full_pdb_distance_matrix = self.distance_matrix
 
-        self.z_coordinates=self.structure.select('((name CB) or (resname GLY and name CA))').getCoords()
+        self.z_coordinates=self.structure.select('(name CB) or (resname GLY and name CA)').get_coordinates().to_numpy()
 
         # Detect chain breaks from per-residue chain IDs
-        ca_sel = self.structure.select('name CA')
-        chids = ca_sel.getChids()
+        chids = self.structure.select('name CA')['chain'].to_numpy()
         breaks = np.where(chids[:-1] != chids[1:])[0] + 1
         self.chain_breaks = breaks.tolist() if len(breaks) > 0 else None
 

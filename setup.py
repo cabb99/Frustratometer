@@ -50,11 +50,18 @@ setup(
         'scipy',
         'pandas',
         'biopython',
-        'prody',
+        'molscene>=0.2',
+        'molselect>=0.1',
         'pyparsing',
         'pydantic>=2',
         'numba',
     ],
+
+    extras_require={
+        # prody is only needed for the Scene.to_prody() / from_prody() interop;
+        # the structure backend is molscene.
+        'prody': ['prody>=2.0'],
+    },
 
     entry_points={
         'console_scripts': [

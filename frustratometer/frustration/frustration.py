@@ -16,7 +16,7 @@ Notes
 All functions assume `len(seq) == potts_model['h'].shape[0] == potts_model['J'].shape[0]`.
 """
 
-import prody
+import molscene
 import scipy.spatial.distance as sdist
 import numpy as np
 import warnings
@@ -980,13 +980,14 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
         pair_frustration = np.nan_to_num(pair_frustration, nan=0, posinf=0, neginf=0)
     
     
-    structure = prody.parsePDB(str(pdb_file))
-    selection = structure.select('protein', chain=chain)
-    ca_selection = selection.select('name CA')
-    residues = ca_selection.getResindices()
-    unique_chains = list(dict.fromkeys(ca_selection.getChids()))
+    scene = molscene.Scene.from_pdb(str(pdb_file))
+    sel = 'protein' if chain is None else f'protein and chain {chain}'
+    ca_selection = scene.select(sel).select(altloc=['A']).select('name CA')
+    residues = ca_selection['residue'].to_numpy()
+    chids = ca_selection['chain'].to_numpy()
+    unique_chains = list(dict.fromkeys(chids))
     chain_to_index = {ch: i for i, ch in enumerate(unique_chains)}
-    chain_indices = np.array([chain_to_index[ch] for ch in ca_selection.getChids()])
+    chain_indices = np.array([chain_to_index[ch] for ch in chids])
 
 
     fo.write(f'[atomselect top all] set beta 0\n')

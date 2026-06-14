@@ -629,7 +629,7 @@ class Frustratometer:
             sequence=self.sequence
         frustration_values=self.frustration(sequence=sequence,kind=kind)
         
-        residue_cb_coordinates=(self.structure.select('(protein and (name CB) or (resname GLY and name CA))').getCoords())
+        residue_cb_coordinates=(self.structure.select('(name CB) or (resname GLY and name CA)').get_coordinates().to_numpy())
         
         if "-" in sequence:
             original_residue_cb_coordinates=residue_cb_coordinates

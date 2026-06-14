@@ -179,7 +179,7 @@ def _frust_state(f: float) -> str:
 def _pdb_resids_chains(model) -> tuple[np.ndarray, np.ndarray]:
     """Return per-residue (resnum, chain_id) arrays in model order."""
     sel = model.structure.select("name CB or (resname GLY IGL and name CA)")
-    return np.asarray(sel.getResnums()), np.asarray(sel.getChids())
+    return np.asarray(sel['resid'].to_numpy()), np.asarray(sel['chain'].to_numpy())
 
 
 def _output_path(out_dir: Path, kind: str, ext: str = "") -> Path:
