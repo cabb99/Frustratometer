@@ -102,6 +102,44 @@ def test_awsem_fold_method_matches_function(sparse_model):
     np.testing.assert_allclose(r1['h'], r2['h'])
 
 
+def test_active_singleresidue_equals_full_restricted(sparse_model):
+    """Single-residue frustration with a static context equals the full-model single-residue
+    frustration restricted to the active residues (single-residue decoys hold all others native)."""
+    m = sparse_model
+    full = m.frustration(kind='singleresidue')
+    rng = np.random.default_rng(3)
+    active = np.sort(rng.choice(m.N, size=m.N // 2, replace=False))
+    sub = m.frustration(kind='singleresidue', active_residues=active)
+    assert sub.shape == (len(active),)
+    np.testing.assert_allclose(sub, full[active], rtol=1e-6, atol=1e-6)
+
+
+def test_active_mutational_equals_full_restricted(sparse_model):
+    """Mutational frustration over active residues equals the full (N,N) mutational restricted
+    to the active-active sub-block."""
+    m = sparse_model
+    full = m.frustration(kind='mutational')
+    rng = np.random.default_rng(4)
+    active = np.sort(rng.choice(m.N, size=m.N // 2, replace=False))
+    sub = m.frustration(kind='mutational', active_residues=active)
+    assert sub.shape == (len(active), len(active))
+    np.testing.assert_allclose(sub, full[np.ix_(active, active)], rtol=1e-6, atol=1e-6)
+
+
+def test_active_residues_boolean_mask(sparse_model):
+    m = sparse_model
+    mask = np.zeros(m.N, dtype=bool)
+    mask[::2] = True
+    sub = m.frustration(kind='singleresidue', active_residues=mask)
+    np.testing.assert_allclose(sub, m.frustration(kind='singleresidue')[np.where(mask)[0]],
+                               rtol=1e-6, atol=1e-6)
+
+
+def test_active_residues_configurational_raises(sparse_model):
+    with pytest.raises(NotImplementedError):
+        sparse_model.frustration(kind='configurational', active_residues=np.arange(0, sparse_model.N, 2))
+
+
 def test_electrostatics_not_supported():
     s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A', sparse=True)
     m = frustratometer.AWSEM(s, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,

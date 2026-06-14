@@ -919,7 +919,39 @@ class AWSEM(Frustratometer):
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
-    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42):
+    def _static_context_frustration(self, active_residues, kind, aa_freq, correction, dense):
+        """Frustration of the active residues with the rest held as static context.
+
+        Folds the static context into the active fields/offset, then runs the standard
+        sparse frustration machinery on the reduced model. For "singleresidue" and the
+        active-active pairs this equals restricting the full-model frustration to the
+        active set (single-/pair-residue decoys hold every other residue at native, which
+        is exactly what the fold encodes), using the full-protein amino-acid frequencies.
+        """
+        if kind not in ('singleresidue', 'mutational', 'contact'):
+            raise NotImplementedError(
+                f"active_residues frustration supports kind in "
+                f"('singleresidue', 'mutational', 'contact'), got {kind!r}.")
+        reduced, _offset = self.fold_static_context(active_residues)
+        active = np.asarray(active_residues)
+        if active.dtype == bool:
+            active = np.where(active)[0]
+        active = np.sort(active)
+
+        sub = Frustratometer()
+        sub.sparse_potts_model = reduced
+        sub._potts_model = {'h': reduced['h'], 'J': None}
+        sub.sequence = ''.join(self.sequence[i] for i in active)
+        sub.N = len(active)
+        sub.mask = None
+        sub._elec_data = None
+        sub._decoy_fluctuation = {}
+        sub.aa_freq = self.aa_freq            # full-protein frequencies (incl. context)
+        sub.contact_freq = self.contact_freq
+        sub.minimally_frustrated_threshold = self.minimally_frustrated_threshold
+        return sub.frustration(kind=kind, aa_freq=aa_freq, correction=correction, dense=dense)
+
+    def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42, active_residues=None):
         """Frustration index for the native sequence.
 
         For the pair kinds ("mutational," "pseudoconfigurational," "contact") on a sparse
@@ -927,7 +959,13 @@ class AWSEM(Frustratometer):
         ``col``=contact_j, ``data``=frustration values, ``shape``=L) instead of the (L, L)
         matrix, avoiding the full-matrix allocation for large proteins. Expand it with
         ``.to_dense(fill=0.0)``. ``dense`` is ignored for "singleresidue" and "configurational".
+
+        ``active_residues`` (index array / boolean mask over ``range(N)``) measures
+        frustration only on those residues while the rest stay as a fixed static context
+        (their couplings fold into the active fields). Returns values over the active set.
         """
+        if active_residues is not None:
+            return self._static_context_frustration(active_residues, kind, aa_freq, correction, dense)
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
             fmod = self._get_fast_module()
             data = self._get_fast_data()
