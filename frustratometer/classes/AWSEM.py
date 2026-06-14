@@ -862,6 +862,33 @@ class AWSEM(Frustratometer):
             configurational_energies[n2,n1]=energy
         return configurational_energies
     
+    def fold_static_context(self, active_residues):
+        """Reduce this model to a static-context model over ``active_residues``.
+
+        Residues outside ``active_residues`` are held at their native identity (the
+        "static context"): their couplings to the active residues fold into the active
+        fields and their mutual couplings into a constant energy ``offset``. Returns
+        ``(reduced_potts, offset)`` where ``reduced_potts`` is a sparse Potts model over
+        the active residues. Requires a sparse Potts model (built with ``sparse=True``;
+        fast models materialize one on demand).
+
+        ``active_residues`` is an index array / boolean mask over ``range(self.N)``.
+        Electrostatics are not yet folded; use ``k_electrostatics=0`` for now.
+        """
+        from ..awsem.static_context import fold_static_context as _fold
+        if self.k_electrostatics != 0:
+            raise NotImplementedError(
+                "Static-context folding does not yet include electrostatics; "
+                "rebuild with k_electrostatics=0.")
+        self._ensure_potts_model()
+        if getattr(self, 'sparse_potts_model', None) is None:
+            raise ValueError("fold_static_context requires a sparse Potts model (sparse=True).")
+        active_residues = np.asarray(active_residues)
+        if active_residues.dtype == bool:
+            active_residues = np.where(active_residues)[0]
+        seq_index = np.array([_AA_21.index(aa) for aa in self.sequence])
+        return _fold(self.sparse_potts_model, seq_index, active_residues)
+
     def _get_fast_module(self):
         """Return the numba or cuda frustration module based on self._fast_backend."""
         if self._fast_backend == 'cuda':
