@@ -4,7 +4,7 @@ from typing import Union, Optional
 import numpy as np
 import scipy.spatial.distance as sdist
 from scipy.spatial import cKDTree
-import prody
+import molscene
 import itertools
 
 
@@ -13,44 +13,41 @@ import itertools
 # ---------------------------------------------------------------------------
 
 def _parse_structure(pdb_file, chain):
-    """Parse the structure and construct a chain selection string."""
-    structure = prody.parsePDB(str(pdb_file))
-    chain_selection = '' if chain is None else f' and chain {chain}'
-    return structure, chain_selection
+    """Parse the structure into a protein/chain-filtered molscene Scene.
+
+    Alternate locations are filtered to the primary conformer (blank or 'A'),
+    matching ProDy's ``parsePDB(altloc='A')`` default so distances are unchanged."""
+    scene = molscene.Scene.from_pdb(str(pdb_file))
+    selstr = 'protein' if chain is None else f'protein and chain {chain}'
+    scene = scene.select(selstr).select(altloc=['A'])
+    return scene, ''
+
+
+def _coords(scene, selstr):
+    sel = scene.select(selstr)
+    if len(sel) == 0:
+        raise IndexError(f"Empty selection for distance map: {selstr!r}.")
+    return sel.get_coordinates().to_numpy()
 
 
 def _select_ca(structure, chain_selection):
     """Select CA atoms."""
-    sel = structure.select('protein and name CA' + chain_selection)
-    if sel is None or sel.numAtoms() == 0:
-        raise IndexError("Empty selection for distance map (method='CA').")
-    return sel.getCoords()
+    return _coords(structure, 'name CA')
 
 
 def _select_cb(structure, chain_selection):
     """Select CB atoms, using CA for glycine residues."""
-    sel = structure.select(
-        '(protein and name CB or (resname GLY and name CA))' + chain_selection
-    )
-    if sel is None or sel.numAtoms() == 0:
-        raise IndexError("Empty selection for distance map (method='CB').")
-    return sel.getCoords()
+    return _coords(structure, 'name CB or (resname GLY and name CA)')
 
 
 def _select_cb_force(structure, chain_selection):
     """Calculate CB coordinates for all residues, even if CB is missing (e.g. glycine)."""
-    sel_CA = structure.select('protein and name CA' + chain_selection)
-    sel_N  = structure.select('protein and name N'  + chain_selection)
-    sel_C  = structure.select('protein and name C'  + chain_selection)
+    CA = _coords(structure, 'name CA')
+    N  = _coords(structure, 'name N')
+    C  = _coords(structure, 'name C')
 
-    if sel_CA is None or sel_N is None or sel_C is None:
-        raise IndexError("Empty selection for CB_force (missing CA/N/C atoms).")
-    if not (sel_CA.numAtoms() == sel_N.numAtoms() == sel_C.numAtoms()):
+    if not (CA.shape[0] == N.shape[0] == C.shape[0]):
         raise ValueError("CA, N, and C selections must have the same length for CB_force.")
-
-    CA = sel_CA.getCoords()
-    N  = sel_N.getCoords()
-    C  = sel_C.getCoords()
 
     v_CA_C = C - CA
     v_CA_N = N - CA
@@ -82,12 +79,11 @@ def _get_residue_coords(structure, chain_selection, method):
 
 def _full_minimum_distance(structure, chain_selection):
     """Calculate the full minimum distance matrix by computing all atom-atom distances and taking minima per residue pair."""
-    sel = structure.select('protein' + chain_selection)
-    if sel is None or sel.numAtoms() == 0:
+    if len(structure) == 0:
         raise IndexError("Empty selection for distance map (method='minimum').")
-    coords = sel.getCoords()
+    coords = structure.get_coordinates().to_numpy()
     distance_matrix = sdist.squareform(sdist.pdist(coords))
-    resids = sel.getResindices()
+    resids = structure['residue'].to_numpy()
     unique_res = np.unique(resids)
     selections = np.array([resids == a for a in unique_res])
     n_res = len(unique_res)
@@ -101,12 +97,11 @@ def _full_minimum_distance(structure, chain_selection):
 
 def _sparse_minimum_distance(structure, chain_selection, max_distance):
     """Calculate a sparse minimum distance matrix by computing all atom-atom distances and including only pairs within max_distance."""
-    sel = structure.select('protein' + chain_selection)
-    if sel is None or sel.numAtoms() == 0:
+    if len(structure) == 0:
         raise IndexError("Empty selection for distance map (method='minimum').")
 
-    coords = sel.getCoords()
-    resindices = sel.getResindices()
+    coords = structure.get_coordinates().to_numpy()
+    resindices = structure['residue'].to_numpy()
 
     unique_res = np.unique(resindices)
     n_res = unique_res.size
