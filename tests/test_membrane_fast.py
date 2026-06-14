@@ -43,6 +43,29 @@ def test_membrane_lowered_to_six_channels(membrane_models):
     assert d.gammas.shape == (6, 21, 21)
 
 
+def test_build_burial_energy_blends_membrane():
+    """Burial energy blends (1-alpha)*water + alpha*membrane per residue under membrane,
+    and is water-only otherwise. (No-op for the shipped gammas, which have equal burials.)"""
+    import types
+    from frustratometer.awsem import assembly
+    rng = np.random.default_rng(0)
+    N, q = 5, 20
+    model = types.SimpleNamespace(
+        burial_gamma=rng.normal(size=(q, 3)),
+        membrane_burial_gamma=rng.normal(size=(q, 3)),
+        alpha=rng.random(N))
+    bi = rng.normal(size=(N, 3))
+    p_mem = types.SimpleNamespace(k_contact=4.184, membrane=True)
+    p_water = types.SimpleNamespace(k_contact=4.184, membrane=False)
+
+    water = 0.5 * p_mem.k_contact * model.burial_gamma[None, :, :] * bi[:, None, :]
+    mem = 0.5 * p_mem.k_contact * model.membrane_burial_gamma[None, :, :] * bi[:, None, :]
+    a = model.alpha[:, None, None]
+    np.testing.assert_allclose(assembly.build_burial_energy(model, p_mem, bi),
+                               (1 - a) * water + a * mem)
+    np.testing.assert_allclose(assembly.build_burial_energy(model, p_water, bi), water)
+
+
 def test_numba_membrane_native_matches_slow(membrane_models):
     slow, d = membrane_models
     np.testing.assert_allclose(fnumba.native_energy(d), slow.native_energy(), rtol=1e-6)

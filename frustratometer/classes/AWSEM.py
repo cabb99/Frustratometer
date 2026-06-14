@@ -316,8 +316,7 @@ class AWSEM(Frustratometer):
         burial_indicator = np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min)) + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b))
         self._burial_indicator = burial_indicator
 
-        h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
-        burial_energy = 0.5 * p.k_contact * self.burial_gamma[h_index[1]] * burial_indicator[:, np.newaxis, :]
+        burial_energy = assembly.build_burial_energy(self, p, burial_indicator)
         self.burial_energy = burial_energy
 
         # --- Main mask (sparse) ---
@@ -387,8 +386,7 @@ class AWSEM(Frustratometer):
         self._sigma_protein = sigma_protein
 
         # Burial energy
-        h_index = np.meshgrid(range(self.N), range(self.q), indexing='ij', sparse=False)
-        burial_energy = 0.5 * p.k_contact * self.burial_gamma[h_index[1]] * burial_indicator[:, np.newaxis, :]
+        burial_energy = assembly.build_burial_energy(self, p, burial_indicator)
         self.burial_energy = burial_energy
 
         # Electrostatics-aware mask

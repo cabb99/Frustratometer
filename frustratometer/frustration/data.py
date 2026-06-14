@@ -267,7 +267,7 @@ class FrustrationData:
         min_seq_sep_elec=1,
         chain_breaks=None,
         elec_dist_row=None, elec_dist_col=None, elec_dist_data=None,
-        membrane=False, alpha=None, zim_h=None,
+        membrane=False, alpha=None, zim_h=None, membrane_burial_gamma=None,
         membrane_direct_gamma=None, membrane_water_gamma=None, membrane_protein_gamma=None,
     ):
         """Build FrustrationData from sparse distance arrays and AWSEM parameters.
@@ -316,6 +316,11 @@ class FrustrationData:
             w = (np.asarray(alpha)[ci] * np.asarray(alpha)[cj]).astype(np.float64)  # (Nc,) pairwise blend
             coeff = np.stack([theta * (1 - w), tsw * (1 - w), tsp * (1 - w),
                               theta * w, tsw * w, tsp * w], axis=1)  # (Nc, 6)
+            # Burial blended per residue: (1-alpha_i)*water + alpha_i*membrane
+            bg_mem = remap_burial_gamma(membrane_burial_gamma)
+            h_struct_mem = 0.5 * float(k_contact) * (burial_indicator @ bg_mem.T)
+            a_res = np.asarray(alpha, dtype=np.float64)[:, np.newaxis]
+            h_struct = (1 - a_res) * h_struct + a_res * h_struct_mem
             if zim_h is not None:
                 h_struct = h_struct + np.asarray(zim_h, dtype=np.float64)
         else:
@@ -390,6 +395,7 @@ class FrustrationData:
                 membrane=True,
                 alpha=model.alpha,
                 zim_h=model._zim_h,
+                membrane_burial_gamma=model.membrane_burial_gamma,
                 membrane_direct_gamma=model.membrane_direct_gamma,
                 membrane_water_gamma=model.membrane_water_gamma,
                 membrane_protein_gamma=model.membrane_protein_gamma,
