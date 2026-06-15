@@ -254,210 +254,220 @@ class AWSEM(Frustratometer):
                 raise ValueError("fast=True requires a sparse Structure (sparse=True)")
             if backend not in ('numba', 'cuda'):
                 raise ValueError(f"backend must be 'numba' or 'cuda', got {backend!r}")
-            self._init_fast(p, pdb_structure)
-        elif self._distance_is_sparse:
-            self._init_from_sparse_distances(p, sparse, expose_indicator_functions, pdb_structure)
+            self._setup_fast(p, pdb_structure)
         else:
-            self._init_from_dense_distances(p, sparse, expose_indicator_functions, pdb_structure)
+            self._build_physics(p, expose_indicator_functions, pdb_structure)
 
-    def _init_from_sparse_distances(self, p, sparse, expose, pdb_structure):
-        """Initialize AWSEM physics from sparse COO distance data (no L×L arrays)."""
-        dm = self._sparse_distance_matrix
+    def _build_physics(self, p, expose, pdb_structure):
+        """Single physics path: structural indicators -> sparse Potts model (+ electrostatics
+        sidecar and optional indicator exposure). Used for every non-fast model and to
+        materialize the Potts model on demand for fast models."""
+        (rho_r, ci, cj, theta_c, thetaII_c,
+         sigma_water_c, sigma_protein_c, burial_indicator) = self._structural_indicators(p, pdb_structure)
 
-        # --- Rho computation ---
-        if self.burial_in_context:
-            full_dm = self.full_pdb_distance_matrix
-            if isinstance(full_dm, SparseMatrix):
-                sel_dm = full_dm
-            else:
-                # Full PDB is dense but selection is sparse — fallback
-                sel_dm = dm
-        else:
-            sel_dm = dm
-
-        # Rho sequence separation mask
-        rho_mask = frustration.compute_mask_sparse(
-            sel_dm.row, sel_dm.col, sel_dm.data, sel_dm.shape,
-            maximum_contact_distance=None,
-            minimum_sequence_separation=p.min_sequence_separation_rho,
-            chain_breaks=self.chain_breaks)
-        rho_dists = sel_dm.lookup(rho_mask.row, rho_mask.col)
-
-        rho_vals = 0.25 * (1 + np.tanh(p.eta * (rho_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - rho_dists)))
-        rho_r = np.bincount(rho_mask.row, weights=rho_vals, minlength=sel_dm.shape).astype(np.float64)
-
-        # Handle burial_in_context substructure slicing
-        if sel_dm.shape != dm.shape and self.burial_in_context:
-            self.init_index_shift = pdb_structure.init_index_shift
-            self.fin_index_shift = pdb_structure.fin_index_shift
-            rho_r = rho_r[self.init_index_shift:self.fin_index_shift]
-
-        self.rho = None  # No dense rho matrix in sparse mode
+        self.rho = None
         self.rho_r = rho_r
-
-        # --- Contact mask ---
-        contact_mask = frustration.compute_mask_sparse(
-            dm.row, dm.col, dm.data, dm.shape,
-            maximum_contact_distance=p.distance_cutoff_contact,
-            minimum_sequence_separation=p.min_sequence_separation_contact,
-            chain_breaks=self.chain_breaks)
-        contact_dists = dm.lookup(contact_mask.row, contact_mask.col)
-
-        # Theta/thetaII at contacts only
-        theta_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - contact_dists)))
-        thetaII_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - contact_dists)))
-
-        # Sigma at contact positions (no L×L allocation)
-        sigma_water_c = 0.25 * (1 - np.tanh(p.eta_sigma * (rho_r[contact_mask.row] - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho_r[contact_mask.col] - p.rho_0)))
-        sigma_protein_c = 1 - sigma_water_c
-
-        # Store None for dense sigma (used in configurational frustration)
+        self._burial_indicator = burial_indicator
         self._sigma_water = None
         self._sigma_protein = None
 
-        # --- Burial ---
-        rho_b = np.expand_dims(rho_r, 1)
-        burial_indicator = np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min)) + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b))
-        self._burial_indicator = burial_indicator
-
         burial_energy = physics.build_burial_energy(self, p, burial_indicator)
         self.burial_energy = burial_energy
 
-        # --- Main mask (sparse) ---
+        self.mask = self._main_mask(p)
+        self.aa_freq = frustration.compute_aa_freq(self.sequence)
+        self.contact_freq = frustration.compute_contact_freq(self.sequence)
+
+        self.sparse_potts_model = physics.build_sparse_potts(
+            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
+        self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
+        self._native_energy = None
+        self.contact_energy = None
+        self._elec_data = self._build_elec_data(p)
+
+        if expose:
+            self._expose_indicators(p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
+
+    def _structural_indicators(self, p, pdb_structure):
+        """Per-residue density/burial and per-contact theta/thetaII/sigma scalars.
+
+        Branches only on the distance representation (sparse COO vs dense matrix); both
+        return the same contact-level arrays feeding the single sparse Potts builder."""
+        if self._distance_is_sparse:
+            dm = self._sparse_distance_matrix
+            if self.burial_in_context:
+                full_dm = self.full_pdb_distance_matrix
+                sel_dm = full_dm if isinstance(full_dm, SparseMatrix) else dm
+            else:
+                sel_dm = dm
+            rho_mask = frustration.compute_mask_sparse(
+                sel_dm.row, sel_dm.col, sel_dm.data, sel_dm.shape,
+                maximum_contact_distance=None,
+                minimum_sequence_separation=p.min_sequence_separation_rho,
+                chain_breaks=self.chain_breaks)
+            rho_dists = sel_dm.lookup(rho_mask.row, rho_mask.col)
+            rho_vals = 0.25 * (1 + np.tanh(p.eta * (rho_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - rho_dists)))
+            rho_r = np.bincount(rho_mask.row, weights=rho_vals, minlength=sel_dm.shape).astype(np.float64)
+            if sel_dm.shape != dm.shape and self.burial_in_context:
+                self.init_index_shift = pdb_structure.init_index_shift
+                self.fin_index_shift = pdb_structure.fin_index_shift
+                rho_r = rho_r[self.init_index_shift:self.fin_index_shift]
+            contact_mask = frustration.compute_mask_sparse(
+                dm.row, dm.col, dm.data, dm.shape,
+                maximum_contact_distance=p.distance_cutoff_contact,
+                minimum_sequence_separation=p.min_sequence_separation_contact,
+                chain_breaks=self.chain_breaks)
+            ci = contact_mask.row
+            cj = contact_mask.col
+            contact_dists = dm.lookup(ci, cj)
+        else:
+            selected = self.full_pdb_distance_matrix if self.burial_in_context else self.distance_matrix
+            rho_mask = frustration.compute_mask(
+                selected, maximum_contact_distance=None,
+                minimum_sequence_separation=p.min_sequence_separation_rho,
+                chain_breaks=self.chain_breaks)
+            rho = (0.25 * (1 + np.tanh(p.eta * (selected - p.r_min)))
+                        * (1 + np.tanh(p.eta * (p.r_max - selected))) * rho_mask)
+            rho_r = rho.sum(axis=1)
+            if self.full_pdb_distance_matrix.shape != self.distance_matrix.shape and self.burial_in_context:
+                self.init_index_shift = pdb_structure.init_index_shift
+                self.fin_index_shift = pdb_structure.fin_index_shift
+                rho_r = rho_r[self.init_index_shift:self.fin_index_shift]
+            contact_mask = frustration.compute_mask(
+                self.distance_matrix,
+                maximum_contact_distance=p.distance_cutoff_contact,
+                minimum_sequence_separation=p.min_sequence_separation_contact,
+                chain_breaks=self.chain_breaks)
+            ci, cj = np.where(contact_mask)
+            contact_dists = self.distance_matrix[ci, cj]
+
+        theta_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - contact_dists)))
+        thetaII_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - contact_dists)))
+        sigma_water_c = 0.25 * (1 - np.tanh(p.eta_sigma * (rho_r[ci] - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho_r[cj] - p.rho_0)))
+        sigma_protein_c = 1 - sigma_water_c
+
+        rho_b = np.expand_dims(rho_r, 1)
+        burial_indicator = (np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min))
+                            + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b)))
+        return (rho_r, np.asarray(ci), np.asarray(cj), theta_c, thetaII_c,
+                sigma_water_c, sigma_protein_c, burial_indicator)
+
+    def _elec_aware_cutoffs(self, p):
         if p.k_electrostatics != 0:
             self.sequence_cutoff = min(p.min_sequence_separation_electrostatics, p.min_sequence_separation_contact)
             self.distance_cutoff = None
         else:
             self.sequence_cutoff = p.min_sequence_separation_contact
             self.distance_cutoff = p.distance_cutoff_contact
-        mask_result = frustration.compute_mask_sparse(
-            dm.row, dm.col, dm.data, dm.shape,
+
+    def _main_mask(self, p):
+        """Electrostatics-aware contact mask, from sparse COO or dense distances."""
+        self._elec_aware_cutoffs(p)
+        if self._distance_is_sparse:
+            dm = self._sparse_distance_matrix
+            return frustration.compute_mask_sparse(
+                dm.row, dm.col, dm.data, dm.shape,
+                maximum_contact_distance=self.distance_cutoff,
+                minimum_sequence_separation=self.sequence_cutoff,
+                chain_breaks=self.chain_breaks)
+        return frustration.compute_mask(
+            self.distance_matrix,
             maximum_contact_distance=self.distance_cutoff,
             minimum_sequence_separation=self.sequence_cutoff,
             chain_breaks=self.chain_breaks)
-        self.mask = mask_result
 
-        # Common properties
-        self.aa_freq = frustration.compute_aa_freq(self.sequence)
-        self.contact_freq = frustration.compute_contact_freq(self.sequence)
+    def _build_elec_data(self, p):
+        """Electrostatics sidecar for the sparse Potts model (None when k_electrostatics==0)."""
+        if p.k_electrostatics == 0:
+            return None
+        if self._distance_is_sparse:
+            return frustration.build_elec_data_sparse(
+                self._sparse_distance_matrix_elec, self.mask,
+                self.sequence, self.sparse_potts_model,
+                p.k_electrostatics, p.electrostatics_screening_length,
+                p.min_sequence_separation_electrostatics,
+                chain_breaks=self.chain_breaks,
+                mask_sequence_cutoff=self.sequence_cutoff if self.distance_cutoff is None else None,
+                mask_chain_breaks=self.chain_breaks if self.distance_cutoff is None else None,
+            )
+        return frustration.build_elec_data(
+            self.distance_matrix, self.mask, self.sequence,
+            self.sparse_potts_model,
+            p.k_electrostatics, p.electrostatics_screening_length,
+            p.min_sequence_separation_electrostatics,
+            chain_breaks=self.chain_breaks,
+        )
 
-        # Build sparse Potts model (always sparse when distance is sparse)
-        self._build_sparse_from_contacts(p, contact_mask.row, contact_mask.col, theta_c, thetaII_c,
-                                         sigma_water_c, sigma_protein_c, burial_energy, expose)
-
-    def _init_from_dense_distances(self, p, sparse, expose, pdb_structure):
-        """Initialize AWSEM physics from dense distance matrix (original path)."""
-        if self.burial_in_context==True:
-            selected_matrix=self.full_pdb_distance_matrix
-        else:
-            selected_matrix=self.distance_matrix
-        sequence_mask_rho = frustration.compute_mask(selected_matrix,
-                                                     maximum_contact_distance=None,
-                                                     minimum_sequence_separation = p.min_sequence_separation_rho,
-                                                     chain_breaks=self.chain_breaks)
-        sequence_mask_contact = frustration.compute_mask(self.distance_matrix,
-                                                     maximum_contact_distance=p.distance_cutoff_contact,
-                                                     minimum_sequence_separation = p.min_sequence_separation_contact,
-                                                     chain_breaks=self.chain_breaks)
-
-        # Calculate rho
-        rho = 0.25
-        rho *= (1 + np.tanh(p.eta * (selected_matrix- p.r_min)))
-        rho *= (1 + np.tanh(p.eta * (p.r_max - selected_matrix)))
-        rho *= sequence_mask_rho
-        self.rho=rho
-
-        #Calculate sigma water
-        rho_r = (rho).sum(axis=1)
-        if self.full_pdb_distance_matrix.shape!=self.distance_matrix.shape:
-            if self.burial_in_context==True:
-                self.init_index_shift=pdb_structure.init_index_shift
-                self.fin_index_shift=pdb_structure.fin_index_shift
-                rho_r=rho_r[self.init_index_shift:self.fin_index_shift]
-        self.rho_r=rho_r
-        rho_b = np.expand_dims(rho_r, 1)
-        rho1 = np.expand_dims(rho_r, 0)
-        rho2 = np.expand_dims(rho_r, 1)
-        sigma_water = 0.25 * (1 - np.tanh(p.eta_sigma * (rho1 - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho2 - p.rho_0)))
-        sigma_protein = 1 - sigma_water
-
-        #Calculate theta and indicators
-        theta = 0.25 * (1 + np.tanh(p.eta * (self.distance_matrix - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - self.distance_matrix)))
-        thetaII = 0.25 * (1 + np.tanh(p.eta * (self.distance_matrix - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - self.distance_matrix)))
-        burial_indicator = np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min)) + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b))
-        self._burial_indicator = burial_indicator
-        self._sigma_water = sigma_water
-        self._sigma_protein = sigma_protein
-
-        # Burial energy
-        burial_energy = physics.build_burial_energy(self, p, burial_indicator)
-        self.burial_energy = burial_energy
-
-        # Electrostatics-aware mask
+    def _expose_indicators(self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c):
+        """Populate the (L, L) indicator/gamma_array contract for the optimization consumers."""
+        self._start_indicator_exposure(p)
+        self.indicators += physics.pair_indicators_dense(
+            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
+        self.indicator_contact_i = None
+        self.indicator_contact_j = None
         if p.k_electrostatics != 0:
-            self.sequence_cutoff = min(p.min_sequence_separation_electrostatics, p.min_sequence_separation_contact)
-            self.distance_cutoff = None
-        else:
-            self.sequence_cutoff = p.min_sequence_separation_contact
-            self.distance_cutoff = p.distance_cutoff_contact
-        self.mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=self.distance_cutoff, minimum_sequence_separation=self.sequence_cutoff, chain_breaks=self.chain_breaks)
+            electrostatics_indicator = self._electrostatics_indicator(p)
+            charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+            charges2 = charges[:, np.newaxis] * charges[np.newaxis, :]
+            self.indicators.append(electrostatics_indicator)
+            temp_gamma = 0.5 * p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
+            temp_gamma[0, :] = 0
+            temp_gamma[:, 0] = 0
+            self.gamma_array.append(temp_gamma)
 
-        # Common properties
-        self.aa_freq = frustration.compute_aa_freq(self.sequence)
-        self.contact_freq = frustration.compute_contact_freq(self.sequence)
+    def _electrostatics_indicator(self, p):
+        """Dense (L, L) screened-Coulomb indicator used by the exposed gamma contract."""
+        L = self.N
+        if self._distance_is_sparse:
+            elec_dm = self._sparse_distance_matrix_elec
+            e_mask = frustration.compute_mask_sparse(
+                elec_dm.row, elec_dm.col, elec_dm.data, elec_dm.shape,
+                maximum_contact_distance=None,
+                minimum_sequence_separation=p.min_sequence_separation_electrostatics,
+                chain_breaks=self.chain_breaks)
+            e_dists = elec_dm.lookup(e_mask.row, e_mask.col)
+            electrostatics_indicator = np.zeros((L, L))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                vals = np.exp(-e_dists / p.electrostatics_screening_length) / e_dists
+                vals[np.isnan(vals)] = 0.0
+                vals[np.isinf(vals)] = 0.0
+            electrostatics_indicator[e_mask.row, e_mask.col] = vals
+            return electrostatics_indicator
+        electrostatics_mask = frustration.compute_mask(
+            self.distance_matrix, maximum_contact_distance=None,
+            minimum_sequence_separation=p.min_sequence_separation_electrostatics,
+            chain_breaks=self.chain_breaks)
+        return (1 / (self.distance_matrix + 1E-6)
+                * np.exp(-self.distance_matrix / p.electrostatics_screening_length)
+                * electrostatics_mask)
 
-        # Build Potts model
-        if sparse:
-            self._build_sparse(p, sequence_mask_contact, theta, thetaII, burial_energy, expose)
-        else:
-            self._build_dense(p, sequence_mask_contact, theta, thetaII, burial_energy, expose)
+    def _setup_fast(self, p, pdb_structure):
+        """Fast (numba/cuda) mode: build the FrustrationData channels and defer the Potts model.
 
-    def _init_fast(self, p, pdb_structure):
-        """Initialize fast mode: build FrustrationData, skip Potts model construction.
-
-        ``p`` and ``pdb_structure`` are retained so the sparse Potts model can be
-        materialized lazily (``_ensure_potts_model``) if an inherited method needs it.
-        """
+        ``p`` and ``pdb_structure`` are retained so the sparse Potts model can be materialized
+        lazily (``_ensure_potts_model``) if an inherited method needs it."""
         from ..frustration.data import FrustrationData
 
         self._init_params = p
         self._init_pdb_structure = pdb_structure
-        dm = self._sparse_distance_matrix
         self._frustration_data = FrustrationData.from_awsem(self)
 
-        # Mask (for visualization methods)
-        if p.k_electrostatics != 0:
-            self.sequence_cutoff = min(p.min_sequence_separation_electrostatics,
-                                       p.min_sequence_separation_contact)
-            self.distance_cutoff = None
-        else:
-            self.sequence_cutoff = p.min_sequence_separation_contact
-            self.distance_cutoff = p.distance_cutoff_contact
-        self.mask = frustration.compute_mask_sparse(
-            dm.row, dm.col, dm.data, dm.shape,
-            maximum_contact_distance=self.distance_cutoff,
-            minimum_sequence_separation=self.sequence_cutoff,
-            chain_breaks=self.chain_breaks)
-
-        # Frequencies
+        self.mask = self._main_mask(p)
         self.aa_freq = frustration.compute_aa_freq(self.sequence)
         self.contact_freq = frustration.compute_contact_freq(self.sequence)
 
-        # Structural arrays (needed by some methods)
         self.rho = None
         self.rho_r = self._frustration_data.rho_r
         self._burial_indicator = self._frustration_data.burial_indicator
         self._sigma_water = None
         self._sigma_protein = None
 
-        # Nulled Potts model (not built in fast mode)
         self._native_energy = None
         self._elec_data = None
         self.sparse_potts_model = None
         self._potts_model = {}
         self.contact_energy = None
 
-        # Pre-upload to GPU if CUDA backend (eliminates per-call re-upload)
         self._device_data = None
         if self._fast_backend == 'cuda':
             try:
@@ -470,22 +480,16 @@ class AWSEM(Frustratometer):
                 ) from e
 
     def _ensure_potts_model(self):
-        """Lazily build the sparse Potts model for a fast-mode model.
-
-        Fast mode keeps only ``_frustration_data`` and the sparse distance/gamma
-        arrays. Inherited Frustratometer methods (couplings/decoy energies,
-        total_frustration, scores, mutant-sequence evaluation) need a Potts model;
-        build it once, on demand, from the data already held — reusing the sparse
-        construction path so no dense (L, L, Q, Q) tensor is allocated.
-        """
+        """Lazily build the sparse Potts model for a fast-mode model, reusing the single
+        physics path so no dense (L, L, Q, Q) tensor is allocated."""
         if self.sparse_potts_model is not None or self._frustration_data is None:
             return
         if getattr(self, '_building_potts_model', False):
             return
         self._building_potts_model = True
         try:
-            self._init_from_sparse_distances(self._init_params, sparse=True, expose=False,
-                                             pdb_structure=self._init_pdb_structure)
+            self._build_physics(self._init_params, expose=False,
+                                pdb_structure=self._init_pdb_structure)
         finally:
             self._building_potts_model = False
 
@@ -528,199 +532,6 @@ class AWSEM(Frustratometer):
                 temp_gamma[0, :] = 0
                 temp_gamma[:, 0] = 0
                 temp_gamma *= -0.5 * p.k_contact
-                self.gamma_array.append(temp_gamma)
-
-    def _build_dense(self, p, sequence_mask_contact, theta, thetaII, burial_energy, expose):
-        """Build dense Potts model with full (N, N, Q, Q) coupling tensors."""
-        sigma_water = self._sigma_water
-        sigma_protein = self._sigma_protein
-
-        # 4D indicators
-        direct_indicator = theta[:, :, np.newaxis, np.newaxis]
-        water_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_water[:, :, np.newaxis, np.newaxis]
-        protein_indicator = thetaII[:, :, np.newaxis, np.newaxis] * sigma_protein[:, :, np.newaxis, np.newaxis]
-
-        # Contact energy
-        J_index = np.meshgrid(range(self.N), range(self.N), range(self.q), range(self.q), indexing='ij', sparse=False)
-        direct = direct_indicator * self.direct_gamma[J_index[2], J_index[3]]
-        water_mediated = water_indicator * self.water_gamma[J_index[2], J_index[3]]
-        protein_mediated = protein_indicator * self.protein_gamma[J_index[2], J_index[3]]
-        contact_energy_water = p.k_contact * np.array([direct, water_mediated, protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
-
-        if p.membrane:
-            # Membrane contact gammas
-            m_direct = direct_indicator * self.membrane_direct_gamma[J_index[2], J_index[3]]
-            m_water_mediated = water_indicator * self.membrane_water_gamma[J_index[2], J_index[3]]
-            m_protein_mediated = protein_indicator * self.membrane_protein_gamma[J_index[2], J_index[3]]
-            contact_energy_membrane = p.k_contact * np.array([m_direct, m_water_mediated, m_protein_mediated]) * sequence_mask_contact[np.newaxis, :, :, np.newaxis, np.newaxis]
-
-            # alpha_ij blending: (1-alpha_ij)*water + alpha_ij*membrane
-            alpha_ij = self.alpha[:, np.newaxis] * self.alpha[np.newaxis, :]  # (N, N)
-            alpha_ij_4d = alpha_ij[np.newaxis, :, :, np.newaxis, np.newaxis]
-            contact_energy = (1 - alpha_ij_4d) * contact_energy_water + alpha_ij_4d * contact_energy_membrane
-        else:
-            contact_energy = contact_energy_water
-
-        # Electrostatics
-        if p.k_electrostatics != 0:
-            electrostatics_mask = frustration.compute_mask(self.distance_matrix, maximum_contact_distance=None, minimum_sequence_separation=p.min_sequence_separation_electrostatics, chain_breaks=self.chain_breaks)
-            charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-            charges2 = charges[:, np.newaxis] * charges[np.newaxis, :]
-            electrostatics_indicator = 1 / (self.distance_matrix + 1E-6) * np.exp(-self.distance_matrix / p.electrostatics_screening_length) * electrostatics_mask
-            electrostatics_energy = -p.k_electrostatics * (charges2[np.newaxis, np.newaxis, :, :] * electrostatics_indicator[:, :, np.newaxis, np.newaxis])
-            contact_energy = np.append(contact_energy, electrostatics_energy[np.newaxis, :, :, :, :], axis=0)
-
-        self.contact_energy = contact_energy
-        self.sparse_potts_model = None
-        self._elec_data = None
-
-        # Dense Potts model
-        self._potts_model = {}
-        self._potts_model['h'] = burial_energy.sum(axis=-1)[:, self.aa_map_awsem_list]
-        if self._zim_h is not None:
-            self._potts_model['h'] += self._zim_h
-        self._potts_model['J'] = contact_energy.sum(axis=0)[:, :, self.aa_map_awsem_x, self.aa_map_awsem_y]
-        self._potts_model['h'][:, 0] = 0
-        self._potts_model['J'][:, :, 0, :] = 0
-        self._potts_model['J'][:, :, :, 0] = 0
-        self._native_energy = None
-
-        # Indicator exposure
-        if expose:
-            self._start_indicator_exposure(p)
-            if p.membrane:
-                alpha_ij_2d = self.alpha[:, np.newaxis] * self.alpha[np.newaxis, :]
-                # Water pairwise indicators (multiplied by 1-alpha_ij)
-                self.indicators.append((1 - alpha_ij_2d) * direct_indicator[:, :, 0, 0] * sequence_mask_contact)
-                self.indicators.append((1 - alpha_ij_2d) * protein_indicator[:, :, 0, 0] * sequence_mask_contact)
-                self.indicators.append((1 - alpha_ij_2d) * water_indicator[:, :, 0, 0] * sequence_mask_contact)
-                # Membrane pairwise indicators (multiplied by alpha_ij)
-                self.indicators.append(alpha_ij_2d * direct_indicator[:, :, 0, 0] * sequence_mask_contact)
-                self.indicators.append(alpha_ij_2d * protein_indicator[:, :, 0, 0] * sequence_mask_contact)
-                self.indicators.append(alpha_ij_2d * water_indicator[:, :, 0, 0] * sequence_mask_contact)
-            else:
-                self.indicators.append(direct_indicator[:, :, 0, 0] * sequence_mask_contact)
-                self.indicators.append(protein_indicator[:, :, 0, 0] * sequence_mask_contact)
-                self.indicators.append(water_indicator[:, :, 0, 0] * sequence_mask_contact)
-            self.indicator_contact_i = None
-            self.indicator_contact_j = None
-            self.burial_indicator = self._burial_indicator
-            self.direct_indicator = direct_indicator
-            self.water_indicator = water_indicator
-            self.protein_indicator = protein_indicator
-            if p.k_electrostatics != 0:
-                self.indicators.append(electrostatics_indicator)
-                temp_gamma = 0.5 * p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
-                temp_gamma[0, :] = 0
-                temp_gamma[:, 0] = 0
-                self.gamma_array.append(temp_gamma)
-
-    def _build_sparse(self, p, sequence_mask_contact, theta, thetaII, burial_energy, expose):
-        """Build sparse Potts model storing couplings only at contact positions."""
-        sigma_water = self._sigma_water
-        sigma_protein = self._sigma_protein
-        ci, cj = np.where(sequence_mask_contact)
-
-        # Scalar indicators at contact pairs
-        theta_c = theta[ci, cj]
-        thetaII_c = thetaII[ci, cj]
-        sigma_water_c = sigma_water[ci, cj]
-        sigma_protein_c = sigma_protein[ci, cj]
-
-        self.sparse_potts_model = physics.build_sparse_potts(
-            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
-        self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
-        self._native_energy = None
-        self.contact_energy = None
-
-        # Electrostatics
-        if p.k_electrostatics != 0:
-            self._elec_data = frustration.build_elec_data(
-                self.distance_matrix, self.mask, self.sequence,
-                self.sparse_potts_model,
-                p.k_electrostatics, p.electrostatics_screening_length,
-                p.min_sequence_separation_electrostatics,
-                chain_breaks=self.chain_breaks,
-            )
-        else:
-            self._elec_data = None
-
-        # Indicator exposure
-        if expose:
-            self._start_indicator_exposure(p)
-            # Always expose dense (L, L) indicators for optimization compatibility
-            self.indicators += physics.pair_indicators_dense(
-                self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
-            self.indicator_contact_i = None
-            self.indicator_contact_j = None
-            if p.k_electrostatics != 0:
-                electrostatics_mask = frustration.compute_mask(
-                    self.distance_matrix, maximum_contact_distance=None,
-                    minimum_sequence_separation=p.min_sequence_separation_electrostatics,
-                    chain_breaks=self.chain_breaks)
-                electrostatics_indicator = (1 / (self.distance_matrix + 1E-6)
-                                            * np.exp(-self.distance_matrix / p.electrostatics_screening_length)
-                                            * electrostatics_mask)
-                charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-                charges2 = charges[:, np.newaxis] * charges[np.newaxis, :]
-                self.indicators.append(electrostatics_indicator)
-                temp_gamma = 0.5 * p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
-                temp_gamma[0, :] = 0
-                temp_gamma[:, 0] = 0
-                self.gamma_array.append(temp_gamma)
-
-    def _build_sparse_from_contacts(self, p, ci, cj, theta_c, thetaII_c,
-                                     sigma_water_c, sigma_protein_c, burial_energy, expose):
-        """Build sparse Potts model from pre-computed contact-level values (sparse distance path)."""
-        self.sparse_potts_model = physics.build_sparse_potts(
-            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
-        self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
-        self._native_energy = None
-        self.contact_energy = None
-
-        # Electrostatics (from sparse 40Å distance data)
-        if p.k_electrostatics != 0:
-            self._elec_data = frustration.build_elec_data_sparse(
-                self._sparse_distance_matrix_elec,
-                self.mask,
-                self.sequence, self.sparse_potts_model,
-                p.k_electrostatics, p.electrostatics_screening_length,
-                p.min_sequence_separation_electrostatics,
-                chain_breaks=self.chain_breaks,
-                mask_sequence_cutoff=self.sequence_cutoff if self.distance_cutoff is None else None,
-                mask_chain_breaks=self.chain_breaks if self.distance_cutoff is None else None,
-            )
-        else:
-            self._elec_data = None
-
-        # Indicator exposure
-        if expose:
-            self._start_indicator_exposure(p)
-            self.indicators += physics.pair_indicators_dense(
-                self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
-            self.indicator_contact_i = None
-            self.indicator_contact_j = None
-            if p.k_electrostatics != 0:
-                # Reconstruct dense electrostatics indicator from sparse 40Å data
-                elec_dm = self._sparse_distance_matrix_elec
-                e_mask = frustration.compute_mask_sparse(
-                    elec_dm.row, elec_dm.col, elec_dm.data, elec_dm.shape,
-                    maximum_contact_distance=None,
-                    minimum_sequence_separation=p.min_sequence_separation_electrostatics,
-                    chain_breaks=self.chain_breaks)
-                e_dists = elec_dm.lookup(e_mask.row, e_mask.col)
-                electrostatics_indicator = np.zeros((L, L))
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    vals = np.exp(-e_dists / p.electrostatics_screening_length) / e_dists
-                    vals[np.isnan(vals)] = 0.0
-                    vals[np.isinf(vals)] = 0.0
-                electrostatics_indicator[e_mask.row, e_mask.col] = vals
-                charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-                charges2 = charges[:, np.newaxis] * charges[np.newaxis, :]
-                self.indicators.append(electrostatics_indicator)
-                temp_gamma = 0.5 * p.k_electrostatics * charges2[self.aa_map_awsem_x, self.aa_map_awsem_y]
-                temp_gamma[0, :] = 0
-                temp_gamma[:, 0] = 0
                 self.gamma_array.append(temp_gamma)
 
     def _get_configurational_contact_data(self):

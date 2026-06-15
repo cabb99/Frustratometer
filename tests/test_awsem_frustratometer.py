@@ -768,23 +768,19 @@ def test_sparse_dense_potts_model_J_no_elec(sparse_vs_dense_1r69):
 
 
 def test_sparse_dense_potts_model_J_contact_terms_with_elec(sparse_vs_dense_2ghy):
-    """Contact-only J terms must match even when electrostatics is active.
-
-    Dense J includes electrostatics inline; sparse J stores contacts only with
-    electrostatics handled separately via _elec_data. Compare the contact-pair
-    entries of the sparse-reconstructed J against the dense J *minus* its
-    electrostatics contribution.
-    """
+    """The dense ``potts_model['J']`` view is the complete coupling: structural contacts
+    plus the rank-1 electrostatics term folded in. Its structural part (J minus the elec
+    coupling) is non-zero only at contact positions."""
     sparse_m, dense_m = sparse_vs_dense_2ghy
     ci = sparse_m.sparse_potts_model['contact_i']
     cj = sparse_m.sparse_potts_model['contact_j']
-    sparse_J_dense = sparse_m.potts_model['J']
-    # At contact positions the reconstructed J should be non-zero
-    assert np.any(sparse_J_dense[ci, cj] != 0)
-    # At non-contact positions the reconstructed J should be zero
+    structural = sparse_m.potts_model['J'] - sparse_m._dense_elec_coupling(sparse_m._elec_data)
+    # At contact positions the structural couplings are non-zero
+    assert np.any(structural[ci, cj] != 0)
+    # At non-contact positions the structural couplings are zero
     non_contact_mask = np.ones((sparse_m.N, sparse_m.N), dtype=bool)
     non_contact_mask[ci, cj] = False
-    np.testing.assert_array_equal(sparse_J_dense[non_contact_mask], 0)
+    np.testing.assert_allclose(structural[non_contact_mask], 0, atol=1e-12)
 
 
 @pytest.mark.parametrize("fixture_name", ["sparse_vs_dense_2ghy", "sparse_vs_dense_1r69"])

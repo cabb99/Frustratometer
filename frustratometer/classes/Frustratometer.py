@@ -55,10 +55,34 @@ class Frustratometer:
         pass
 
     def _ensure_dense_potts_model(self):
-        """Reconstruct dense J from sparse potts model if needed."""
+        """Reconstruct dense J from the sparse Potts model if needed.
+
+        The dense view is the complete coupling matrix: the structural couplings plus the
+        electrostatics sidecar folded in as a rank-1 ``indicator[i,j]*q[a]*q[b]`` term, so any
+        consumer reading ``potts_model['J']`` (dense optimization terms, DCA ``scores()``) sees
+        the same couplings the sparse engine evaluates."""
         self._ensure_potts_model()
         if self._potts_model.get('J') is None and getattr(self, 'sparse_potts_model', None) is not None:
-            self._potts_model['J'] = frustration.potts_model_sparse_to_dense(self.sparse_potts_model)['J']
+            J = frustration.potts_model_sparse_to_dense(self.sparse_potts_model)['J']
+            elec = getattr(self, '_elec_data', None)
+            if elec is not None:
+                J = J + self._dense_elec_coupling(elec)
+            self._potts_model['J'] = J
+
+    def _dense_elec_coupling(self, elec_data):
+        """Dense ``(L, L, Q, Q)`` electrostatic coupling from the sidecar: the screened-Coulomb
+        indicator times the per-identity charge outer product. Combined with the contact mask
+        applied by the dense consumers, this reproduces ``compute_native_energy_elec``."""
+        from ..frustration.frustration import _CHARGES
+        if elec_data.get('indicator') is not None:
+            indicator = elec_data['indicator']
+        else:
+            eL = elec_data['L']
+            indicator = np.zeros((eL, eL), dtype=np.float64)
+            indicator[elec_data['indicator_masked_i'],
+                      elec_data['indicator_masked_j']] = elec_data['indicator_masked_vals']
+        qq = np.outer(_CHARGES, _CHARGES)
+        return indicator[:, :, np.newaxis, np.newaxis] * qq[np.newaxis, np.newaxis, :, :]
 
     @property
     def _is_sparse(self):
