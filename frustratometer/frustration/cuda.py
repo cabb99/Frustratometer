@@ -38,15 +38,6 @@ THREADS_CONFIG = 256
 # -----------------------------------------------------------------------------
 
 @cuda.jit(device=True)
-def _j_val(a, b, theta_c, tsw_c, tsp_c, gammas, k_contact):
-    return k_contact * (
-        gammas[0, a, b] * theta_c
-        + gammas[1, a, b] * tsw_c
-        + gammas[2, a, b] * tsp_c
-    )
-
-
-@cuda.jit(device=True)
 def _j_val_block(a, b, coeff, c, gammas, k_contact):
     """Generic contact coupling k·Σ_t coeff[c, t]·gammas[t, a, b] over T channels.
 
@@ -59,22 +50,13 @@ def _j_val_block(a, b, coeff, c, gammas, k_contact):
 
 
 @cuda.jit(device=True)
-def _burial_h(a, i, bg, burial_indicator, k_contact):
-    total = 0.0
-    for w in range(3):
-        total += bg[a, w] * burial_indicator[i, w]
-    return 0.5 * k_contact * total
-
-
-@cuda.jit(device=True)
 def _config_pair_energy(
     q1,
     q2,
     n1,
     n2,
     c,
-    bg,
-    burial_indicator,
+    h_struct,
     gammas,
     conf_theta,
     conf_thetaII,
@@ -86,10 +68,10 @@ def _config_pair_energy(
     k_contact,
     k_electrostatics,
 ):
-    burial = -(
-        _burial_h(q1, n1, bg, burial_indicator, k_contact)
-        + _burial_h(q2, n2, bg, burial_indicator, k_contact)
-    )
+    """Configurational contact energy from the same burial field ``h_struct`` as the frozen
+    kernels (read at the decoy positions/identities); contact uses the three water channels
+    with sigma resampled from rho. Membrane configurational routes through numpy."""
+    burial = -(h_struct[n1, q1] + h_struct[n2, q2])
 
     switch = (
         0.25
@@ -97,14 +79,10 @@ def _config_pair_energy(
         * (1.0 - math.tanh(eta_sigma * (rho_r[n2] - rho_0)))
     )
 
-    contact = -_j_val(
-        q1,
-        q2,
-        conf_theta[c],
-        switch * conf_thetaII[c],
-        (1.0 - switch) * conf_thetaII[c],
-        gammas,
-        k_contact,
+    contact = -k_contact * (
+        gammas[0, q1, q2] * conf_theta[c]
+        + gammas[1, q1, q2] * switch * conf_thetaII[c]
+        + gammas[2, q1, q2] * (1.0 - switch) * conf_thetaII[c]
     )
 
     electrostatic = k_electrostatics * conf_elec_ind[c] * charges[q1] * charges[q2]
@@ -329,8 +307,7 @@ def _config_native_kernel(
     seq_index,
     conf_contact_i,
     conf_contact_j,
-    bg,
-    burial_indicator,
+    h_struct,
     gammas,
     conf_theta,
     conf_thetaII,
@@ -358,8 +335,7 @@ def _config_native_kernel(
         n1,
         n2,
         c,
-        bg,
-        burial_indicator,
+        h_struct,
         gammas,
         conf_theta,
         conf_thetaII,
@@ -379,8 +355,7 @@ def _config_decoy_kernel(
     conf_theta,
     conf_thetaII,
     conf_elec_ind,
-    bg,
-    burial_indicator,
+    h_struct,
     gammas,
     rho_r,
     eta_sigma,
@@ -413,8 +388,7 @@ def _config_decoy_kernel(
         n1,
         n2,
         c,
-        bg,
-        burial_indicator,
+        h_struct,
         gammas,
         conf_theta,
         conf_thetaII,
@@ -522,10 +496,8 @@ class FrustrationCUDA:
         self.contact_j = cuda.to_device(data.contact_j)
         self.coeff = cuda.to_device(data.coeff)
         self.h_struct = cuda.to_device(data.h_struct)
-        self.burial_indicator = cuda.to_device(data.burial_indicator)
         self.rho_r = cuda.to_device(data.rho_r)
         self.gammas = cuda.to_device(data.gammas)
-        self.bg = cuda.to_device(data.bg)
         self.aa_freq = cuda.to_device(data.aa_freq)
         self.contact_freq = cuda.to_device(data.contact_freq)
         self.charges = cuda.to_device(data.charges)
@@ -665,8 +637,7 @@ class FrustrationCUDA:
             self.seq_index,
             self.conf_contact_i,
             self.conf_contact_j,
-            self.bg,
-            self.burial_indicator,
+            self.h_struct,
             self.gammas,
             self.conf_theta,
             self.conf_thetaII,
@@ -685,8 +656,7 @@ class FrustrationCUDA:
             self.conf_theta,
             self.conf_thetaII,
             self.conf_elec_ind,
-            self.bg,
-            self.burial_indicator,
+            self.h_struct,
             self.gammas,
             self.rho_r,
             self.eta_sigma,
