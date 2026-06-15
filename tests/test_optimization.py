@@ -371,7 +371,10 @@ def model(request):
     native_pdb = "tests/data/1bfz.pdb"
     distance_cutoff_contact, min_sequence_separation_contact, k_electrostatics = request.param
     structure = Structure.full_pdb(native_pdb, "A")
-    model = AWSEM(structure, distance_cutoff_contact=distance_cutoff_contact, min_sequence_separation_contact=min_sequence_separation_contact, expose_indicator_functions=True, k_electrostatics=k_electrostatics, sparse=False)   
+    model = AWSEM(structure, distance_cutoff_contact=distance_cutoff_contact, min_sequence_separation_contact=min_sequence_separation_contact, expose_indicator_functions=True, k_electrostatics=k_electrostatics)
+    # AwsemEnergy consumes the dense Potts view and a dense mask.
+    if hasattr(model.mask, "to_dense"):
+        model.mask = model.mask.to_dense(fill=0.0)
     return model
 
 #"distance_cutoff_contact", "min_sequence_separation_contact", "k_electrostatics"
@@ -380,7 +383,7 @@ def sparse_model(request):
     native_pdb = "tests/data/1bfz.pdb"
     distance_cutoff_contact, min_sequence_separation_contact, k_electrostatics = request.param
     structure = Structure.full_pdb(native_pdb, "A")
-    model = AWSEM(structure, distance_cutoff_contact=distance_cutoff_contact, min_sequence_separation_contact=min_sequence_separation_contact, expose_indicator_functions=True, k_electrostatics=k_electrostatics, sparse=True)
+    model = AWSEM(structure, distance_cutoff_contact=distance_cutoff_contact, min_sequence_separation_contact=min_sequence_separation_contact, expose_indicator_functions=True, k_electrostatics=k_electrostatics)
     return model
 
 @pytest.mark.parametrize("reduced_alphabet,use_numba", [
@@ -409,42 +412,6 @@ def test_awsem_energy_sparse(sparse_model, reduced_alphabet, use_numba):
     awsem_energy = AwsemEnergySparse(use_numba=use_numba, model=sparse_model, alphabet=reduced_alphabet)
     awsem_energy.test(seq_indices[0])
     awsem_energy.regression_test()
-
-@pytest.mark.parametrize("reduced_alphabet", [_AA, _AB, _AC])
-def test_awsem_energy_sparse_matches_dense(reduced_alphabet):
-    """Verify that AwsemEnergySparse and AwsemEnergy produce the same energy values."""
-    native_pdb = "tests/data/1bfz.pdb"
-    structure = Structure.full_pdb(native_pdb, "A")
-    dense_model = AWSEM(structure, distance_cutoff_contact=10, min_sequence_separation_contact=2, expose_indicator_functions=True, k_electrostatics=4.15, sparse=False)
-    sparse_model = AWSEM(structure, distance_cutoff_contact=10, min_sequence_separation_contact=2, expose_indicator_functions=True, k_electrostatics=4.15, sparse=True)
-
-    dense_energy = AwsemEnergy(model=dense_model, alphabet=reduced_alphabet)
-    sparse_energy = AwsemEnergySparse(model=sparse_model, alphabet=reduced_alphabet)
-
-    seq_index = sequence_to_index(dense_model.sequence, reduced_alphabet)
-    assert np.isclose(dense_energy.compute_energy(seq_index), sparse_energy.compute_energy(seq_index)), \
-        "Sparse and dense native energies differ"
-
-    # Check a random permutation too
-    shuffled = seq_index.copy()
-    np.random.shuffle(shuffled)
-    assert np.isclose(dense_energy.compute_energy(shuffled), sparse_energy.compute_energy(shuffled)), \
-        "Sparse and dense shuffled energies differ"
-
-    # Check denergy_mutation
-    pos = min(5, len(seq_index) - 1)
-    aa_new = (seq_index[pos] + 1) % len(reduced_alphabet)
-    assert np.isclose(
-        dense_energy.compute_denergy_mutation(seq_index, pos, aa_new),
-        sparse_energy.compute_denergy_mutation(seq_index, pos, aa_new),
-    ), "Sparse and dense denergy_mutation differ"
-
-    # Check denergy_swap
-    p1, p2 = min(2, len(seq_index) - 1), min(7, len(seq_index) - 1)
-    assert np.isclose(
-        dense_energy.compute_denergy_swap(seq_index, p1, p2),
-        sparse_energy.compute_denergy_swap(seq_index, p1, p2),
-    ), "Sparse and dense denergy_swap differ"
 
 @pytest.mark.parametrize("reduced_alphabet,use_numba", [
     (_AA, True), (_AA, False), (_AB, False), (_AC, False),

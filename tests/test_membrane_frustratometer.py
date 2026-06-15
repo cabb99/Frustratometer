@@ -58,7 +58,6 @@ MODEL_SETTINGS = {
         "min_sequence_separation_rho": 2,
         "distance_cutoff_contact": None,
         "k_electrostatics": 0.0,
-        "sparse": False,
     },
     "awsem_2xov_membrane": {
         "structure_pdb": TEST_DATA / "2xov.pdb",
@@ -69,7 +68,6 @@ MODEL_SETTINGS = {
         "min_sequence_separation_rho": 2,
         "distance_cutoff_contact": None,
         "k_electrostatics": 0.0,
-        "sparse": False,
         "zim_source": TEST_DATA / "PredictedZim",
     },
     "awsem_2xov_membrane_no_preassigned_zim": {
@@ -81,7 +79,6 @@ MODEL_SETTINGS = {
         "min_sequence_separation_rho": 2,
         "distance_cutoff_contact": None,
         "k_electrostatics": 0.0,
-        "sparse": False,
     },
 }
 
@@ -100,7 +97,6 @@ SERVER_MODEL_SETTINGS = {
         "min_sequence_separation_rho": 13,  # seqsep=12 -> 13
         "k_electrostatics": 4.15 * 4.184,
         "min_sequence_separation_electrostatics": 1,
-        "sparse": False,
     },
     "variants": {
         "awsem_2xov_water_lammps_sr": {
@@ -334,7 +330,9 @@ def test_2xov_water_lammps_pair_classification(kind, awsem_models):
     # Calc classification: every LAMMPS-style contact (d ≤ 9.5 Å, |i-j| ≥ 2)
     # whose FrstIndex crosses a threshold.
     d = model.distance_matrix
-    if hasattr(d, "toarray"):
+    if hasattr(d, "to_dense"):
+        d = d.to_dense()
+    elif hasattr(d, "toarray"):
         d = d.toarray()
     d = np.asarray(d)
     i, j = np.triu_indices(model.N, k=2)

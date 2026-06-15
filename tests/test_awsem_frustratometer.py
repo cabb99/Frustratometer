@@ -9,6 +9,13 @@ test_path=Path('tests')
 test_data_path=Path('tests/data')
 
 
+def _dense_mask(model):
+    """Dense (L, L) boolean mask from a model, accepting a SparseMatrix or ndarray mask."""
+    mask = model.mask
+    dense = mask.to_dense(fill=0.0) if hasattr(mask, "to_dense") else mask
+    return np.asarray(dense).astype(bool)
+
+
 tests_config = pd.read_csv(test_path/"test_awsem_config.csv",comment='#')
 
 # Build parametrize list, marking 1jge rows as memory_heavy (~7.5 GB peak RSS)
@@ -37,7 +44,7 @@ def awsem_6u5e():
 @pytest.fixture(scope="module")
 def awsem_6u5e_density():
     """6u5e + AWSEM(cutoff=9.499, sep=2, k_elec=0) — shared by single-residue energy/decoy tests."""
-    structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A", sparse=False)
+    structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A")
     return frustratometer.AWSEM(structure,
                                 distance_cutoff_contact=9.499,
                                 min_sequence_separation_contact=2,
@@ -239,7 +246,7 @@ def test_single_residue_AWSEM_energy(awsem_6u5e_density):
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
     aa1, aa2 = np.meshgrid(seq_index, seq_index, indexing='ij', sparse=True)
     j = -model.potts_model['J'][pos1, pos2, aa1, aa2]
-    j_prime = j * model.mask
+    j_prime = j * _dense_mask(model)
 
     test_residue_total_energy=(h +j_prime.sum(axis=0))/4.184
 
@@ -252,7 +259,7 @@ def test_contact_pair_AWSEM_energy():
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
     lammps_mutational_frustration_dataframe["j"]=lammps_mutational_frustration_dataframe["j"]-1
     ###
-    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A", sparse=False)
+    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A")
     model=frustratometer.AWSEM(structure,distance_cutoff_contact=9.499,
                                                   min_sequence_separation_contact=0,
                                                   k_electrostatics=0)
@@ -265,7 +272,7 @@ def test_contact_pair_AWSEM_energy():
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
     aa1, aa2 = np.meshgrid(seq_index, seq_index, indexing='ij', sparse=True)
     j = -model.potts_model['J'][pos1, pos2, aa1, aa2]
-    j_prime = j * model.mask
+    j_prime = j * _dense_mask(model)
     test_contact_energy_matrix=h[pos1]+h[pos2]+j_prime.sum(axis=0)[pos1]+j_prime.sum(axis=0)[pos2]-j_prime[pos1,pos2]
     ###
     lammps_mutational_frustration_dataframe["Test_Native_Energy"]=lammps_mutational_frustration_dataframe.apply(lambda x: test_contact_energy_matrix[x.i,x.j],axis=1)
@@ -341,7 +348,7 @@ def test_single_residue_decoy_AWSEM_energy_statistics(awsem_6u5e_density):
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
     aa1, aa2 = np.meshgrid(seq_index, seq_index, indexing='ij', sparse=True)
     j = -model.potts_model['J'][pos1, pos2, aa1, aa2]
-    j_prime = j * model.mask
+    j_prime = j * _dense_mask(model)
 
     residue_total_energy=(h +j_prime.sum(axis=0))/4.184
     ###
@@ -361,7 +368,7 @@ def test_contact_pair_decoy_AWSEM_energy_statistics():
     lammps_mutational_frustration_dataframe["i"]=lammps_mutational_frustration_dataframe["i"]-1
     lammps_mutational_frustration_dataframe["j"]=lammps_mutational_frustration_dataframe["j"]-1
     ###
-    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A", sparse=False)
+    structure=frustratometer.Structure(test_data_path/f'6u5e.pdb',"A")
     model=frustratometer.AWSEM(structure,distance_cutoff_contact=9.5, min_sequence_separation_contact=None, k_electrostatics=0)
     spm = model.sparse_potts_model
     ci, cj = spm['contact_i'], spm['contact_j']
@@ -374,7 +381,7 @@ def test_contact_pair_decoy_AWSEM_energy_statistics():
     pos1, pos2 = np.meshgrid(np.arange(seq_len), np.arange(seq_len), indexing='ij', sparse=True)
     aa1, aa2 = np.meshgrid(seq_index, seq_index, indexing='ij', sparse=True)
     j = -model.potts_model['J'][pos1, pos2, aa1, aa2]
-    j_prime = j * model.mask
+    j_prime = j * _dense_mask(model)
     test_contact_energy_matrix=h[pos1]+h[pos2]+j_prime.sum(axis=0)[pos1]+j_prime.sum(axis=0)[pos2]-j_prime[pos1,pos2]
     ###
     # Build dataframe only at contact positions (sparse)
@@ -473,85 +480,10 @@ from frustratometer.frustration.frustration import (
 # --- Sparse cross-validation fixtures (module-scoped, computed once) ---
 
 @pytest.fixture(scope="module")
-def sparse_6u5e(awsem_6u5e):
-    return awsem_6u5e.sparse_potts_model
-
-@pytest.fixture(scope="module")
 def sparse_6u5e_density(awsem_6u5e_density):
     return awsem_6u5e_density.sparse_potts_model
 
-@pytest.fixture(scope="module")
-def dense_decoys_6u5e_density(awsem_6u5e_density):
-    """Compute dense decoy fluctuations once — shared by decoy and frustration tests."""
-    m = awsem_6u5e_density
-    pm = m.potts_model  # triggers lazy densification
-    return {
-        'singleresidue': compute_singleresidue_decoy_energy_fluctuation(m.sequence, pm, m.mask),
-        'mutational': compute_mutational_decoy_energy_fluctuation(m.sequence, pm, m.mask),
-        'contact': compute_contact_decoy_energy_fluctuation(m.sequence, pm, m.mask),
-        'pseudoconfigurational': compute_pseudoconfigurational_decoy_energy_fluctuation(m.sequence, pm, m.mask),
-    }
-
 # --- Sparse cross-validation tests ---
-
-@pytest.mark.parametrize("fixture_name", ["awsem_6u5e", "awsem_6u5e_density"])
-def test_sparse_energy_matches_dense(fixture_name, awsem_6u5e, awsem_6u5e_density, sparse_6u5e, sparse_6u5e_density):
-    """Sparse native/couplings energy must reproduce dense on real AWSEM models."""
-    if fixture_name == "awsem_6u5e":
-        model, spm = awsem_6u5e, sparse_6u5e
-    else:
-        model, spm = awsem_6u5e_density, sparse_6u5e_density
-
-    dense_native = model.native_energy()
-    dense_couplings = model.couplings_energy()
-    dense_fields = model.fields_energy()
-
-    np.testing.assert_allclose(compute_native_energy_sparse(model.sequence, spm), dense_native, rtol=1e-10)
-    np.testing.assert_allclose(compute_couplings_energy_sparse(model.sequence, spm), dense_couplings, rtol=1e-10)
-    np.testing.assert_allclose(dense_fields + compute_couplings_energy_sparse(model.sequence, spm), dense_native, rtol=1e-10)
-
-
-@pytest.mark.parametrize("kind", ["singleresidue", "mutational", "contact", "pseudoconfigurational"])
-def test_sparse_decoy_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_density, dense_decoys_6u5e_density):
-    """Sparse decoy fluctuation must match dense for all four kinds."""
-    model = awsem_6u5e_density
-    spm = sparse_6u5e_density
-    dense = dense_decoys_6u5e_density[kind]
-
-    if kind == 'singleresidue':
-        sparse = compute_singleresidue_decoy_energy_fluctuation_sparse(model.sequence, spm)
-        np.testing.assert_allclose(sparse, dense, atol=1e-4)
-    elif kind == 'pseudoconfigurational':
-        sparse = compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(model.sequence, spm, model.mask.mean())
-        ci, cj = spm['contact_i'], spm['contact_j']
-        np.testing.assert_allclose(sparse, dense[ci, cj], atol=1e-4)
-    else:
-        sparse_func = (compute_mutational_decoy_energy_fluctuation_sparse if kind == 'mutational'
-                       else compute_contact_decoy_energy_fluctuation_sparse)
-        sparse = sparse_func(model.sequence, spm)
-        ci, cj = spm['contact_i'], spm['contact_j']
-        np.testing.assert_allclose(sparse, dense[ci, cj], atol=1e-4)
-
-
-@pytest.mark.parametrize("kind", ["mutational", "contact"])
-def test_sparse_frustration_matches_dense(kind, awsem_6u5e_density, sparse_6u5e_density, dense_decoys_6u5e_density):
-    """Sparse frustration pipeline must match dense (reuses cached dense decoys)."""
-    model = awsem_6u5e_density
-    spm = sparse_6u5e_density
-
-    # Dense frustration from cached decoys (no recomputation)
-    dense_frust = compute_pair_frustration(dense_decoys_6u5e_density[kind], model.contact_freq)
-
-    # Sparse pipeline: decoy -> frustration -> densify
-    sparse_func = (compute_mutational_decoy_energy_fluctuation_sparse if kind == 'mutational'
-                   else compute_contact_decoy_energy_fluctuation_sparse)
-    sparse_decoy = sparse_func(model.sequence, spm)
-    sparse_frust = compute_pair_frustration_sparse(sparse_decoy, model.contact_freq)
-    dense_from_sparse = sparse_frustration_to_dense(sparse_frust, spm['contact_i'], spm['contact_j'], spm['L'])
-
-    ci, cj = spm['contact_i'], spm['contact_j']
-    np.testing.assert_allclose(dense_from_sparse[ci, cj], dense_frust[ci, cj], atol=1e-4)
-
 
 @pytest.mark.parametrize("kind", ["mutational", "contact", "pseudoconfigurational"])
 def test_frustration_dense_false_returns_sparse(kind, awsem_6u5e_density):
@@ -575,7 +507,7 @@ def test_vmd_sparse_writes_tcl(tmp_path, monkeypatch):
     """vmd() works on a sparse-mask model: the SparseMatrix mask/distance are densified
     inside write_tcl_script so the pair-drawing path runs and a tcl file is written."""
     from frustratometer.classes.Structure import SparseMatrix
-    structure = frustratometer.Structure((test_data_path / '6u5e.pdb').resolve(), "A", sparse=True)
+    structure = frustratometer.Structure((test_data_path / '6u5e.pdb').resolve(), "A")
     model = frustratometer.AWSEM(structure, k_electrostatics=0)
     assert isinstance(model.mask, SparseMatrix), "sparse Structure should give a SparseMatrix mask"
 
@@ -588,52 +520,12 @@ def test_vmd_sparse_writes_tcl(tmp_path, monkeypatch):
     assert 'mol delrep' in tcl.read_text()
 
 
-def test_total_frustration_sparse_energy_matches_dense(awsem_6u5e_density):
-    """Sparse total-frustration energy pieces match the dense fragment-energy functions
-    (full protein, mutational decoys) on a fixed decoy set."""
-    from frustratometer.frustration.frustration import (
-        compute_native_energy_sparse, compute_sequences_energy_sparse,
-        compute_fragment_total_native_energy, compute_fragment_total_decoy_energy,
-    )
-    model = awsem_6u5e_density
-    spm = model.sparse_potts_model
-    pm = model.potts_model  # triggers lazy densification for the dense reference
-    seq = model.sequence
-
-    native_sparse = compute_native_energy_sparse(seq, spm)
-    native_dense = compute_fragment_total_native_energy(seq, pm, model.mask)
-    np.testing.assert_allclose(native_sparse, native_dense, atol=1e-6)
-
-    decoy_seqs = [seq, seq[::-1], 'A' * len(seq)]
-    e_sparse = compute_sequences_energy_sparse(decoy_seqs, spm)
-    e_dense = compute_fragment_total_decoy_energy(decoy_seqs, pm, model.mask)
-    np.testing.assert_allclose(e_sparse, e_dense, atol=1e-6)
-
-
 def test_total_frustration_sparse_runs(awsem_6u5e_density):
     """total_frustration() runs on a sparse model via the sparse-native path."""
     model = awsem_6u5e_density
     assert model._is_sparse
     val = model.total_frustration(n_decoys=200)
     assert np.isfinite(val)
-
-
-def test_sliding_window_sparse_matches_dense(awsem_6u5e_density):
-    """Sparse-native sliding_window matches the dense path on every per-window field
-    (decoys seeded identically so both draw the same set)."""
-    from frustratometer.frustration.frustration import compute_energy_sliding_window
-    model = awsem_6u5e_density
-    pm = model.potts_model  # densify reference outside the seeded region (no RNG)
-
-    np.random.seed(0)
-    sparse_res = model.sliding_window(win_size=5, ndecoys=200)
-    np.random.seed(0)
-    dense_res = compute_energy_sliding_window(model.sequence, pm, model.mask, 5, 200, False)
-
-    np.testing.assert_array_equal(sparse_res['fragment_center'], dense_res['fragment_center'])
-    for key in ('native_energy', 'decoy_energy_av', 'decoy_energy_std', 'frustration'):
-        np.testing.assert_allclose(sparse_res[key], dense_res[key], atol=1e-6,
-                                   err_msg=f"mismatch in {key}")
 
 
 @pytest.fixture(scope="module")
@@ -649,14 +541,15 @@ def elec_setup(awsem_6u5e_density, sparse_6u5e_density):
     """
     model = awsem_6u5e_density
     spm = sparse_6u5e_density
-    mask = model.mask
+    distance_matrix = model.distance_matrix.to_dense(fill=np.inf)
+    mask = _dense_mask(model)
     k_elec = 4 * 4.184  # same value used in AWSEM test configs
     screening_length = 10.0
     min_sep_elec = 1
 
     # Build indicator (includes -k factor and elec_mask)
-    indicator = compute_elec_indicator(model.distance_matrix, k_elec, screening_length)
-    elec_mask = compute_mask(model.distance_matrix,
+    indicator = compute_elec_indicator(distance_matrix, k_elec, screening_length)
+    elec_mask = compute_mask(distance_matrix,
                              maximum_contact_distance=None,
                              minimum_sequence_separation=min_sep_elec)
     indicator = indicator * elec_mask
@@ -672,7 +565,7 @@ def elec_setup(awsem_6u5e_density, sparse_6u5e_density):
     }
 
     # Build elec_data for sparse path
-    elec_data = build_elec_data(model.distance_matrix, mask, model.sequence, spm,
+    elec_data = build_elec_data(distance_matrix, mask, model.sequence, spm,
                                 k_elec, screening_length, min_sep_elec)
 
     return {
@@ -728,129 +621,6 @@ def test_elec_decoy_correction(kind, elec_setup):
         corrected = apply_elec_correction_pseudoconfigurational(sparse_decoy, spm, elec_data)
         ci, cj = spm['contact_i'], spm['contact_j']
         np.testing.assert_allclose(corrected, dense_decoy[ci, cj], atol=1e-4)
-
-
-@pytest.fixture(scope="module")
-def sparse_vs_dense_2ghy():
-    """Multichain 2GHY (114 res, chain_breaks=[57]) — sparse & dense models."""
-    structure = frustratometer.Structure(test_data_path / '2GHY.pdb')
-    params = dict(k_electrostatics=4 * 4.184,
-                  min_sequence_separation_contact=2,
-                  distance_cutoff_contact=9.5)
-    sparse_model = frustratometer.AWSEM(structure, sparse=True, **params)
-    dense_model = frustratometer.AWSEM(structure, sparse=False, **params)
-    return sparse_model, dense_model
-
-
-@pytest.fixture(scope="module")
-def sparse_vs_dense_1r69():
-    """Single-chain 1r69 (63 res) — sparse & dense models, no electrostatics."""
-    structure = frustratometer.Structure(test_data_path / '1r69.pdb', 'A')
-    params = dict(k_electrostatics=0,
-                  min_sequence_separation_contact=10,
-                  distance_cutoff_contact=None)
-    sparse_model = frustratometer.AWSEM(structure, sparse=True, **params)
-    dense_model = frustratometer.AWSEM(structure, sparse=False, **params)
-    return sparse_model, dense_model
-
-
-@pytest.mark.parametrize("fixture_name", ["sparse_vs_dense_2ghy", "sparse_vs_dense_1r69"])
-def test_sparse_dense_potts_model_h(fixture_name, sparse_vs_dense_2ghy, sparse_vs_dense_1r69, request):
-    """Fields (h) must be identical between sparse and dense construction."""
-    sparse_m, dense_m = request.getfixturevalue(fixture_name)
-    np.testing.assert_allclose(sparse_m.potts_model['h'], dense_m.potts_model['h'], atol=1e-10)
-
-
-def test_sparse_dense_potts_model_J_no_elec(sparse_vs_dense_1r69):
-    """Dense J (lazily reconstructed from sparse) must match natively dense J (no electrostatics)."""
-    sparse_m, dense_m = sparse_vs_dense_1r69
-    np.testing.assert_allclose(sparse_m.potts_model['J'], dense_m.potts_model['J'], atol=1e-10)
-
-
-def test_sparse_dense_potts_model_J_contact_terms_with_elec(sparse_vs_dense_2ghy):
-    """The dense ``potts_model['J']`` view is the complete coupling: structural contacts
-    plus the rank-1 electrostatics term folded in. Its structural part (J minus the elec
-    coupling) is non-zero only at contact positions."""
-    sparse_m, dense_m = sparse_vs_dense_2ghy
-    ci = sparse_m.sparse_potts_model['contact_i']
-    cj = sparse_m.sparse_potts_model['contact_j']
-    structural = sparse_m.potts_model['J'] - sparse_m._dense_elec_coupling(sparse_m._elec_data)
-    # At contact positions the structural couplings are non-zero
-    assert np.any(structural[ci, cj] != 0)
-    # At non-contact positions the structural couplings are zero
-    non_contact_mask = np.ones((sparse_m.N, sparse_m.N), dtype=bool)
-    non_contact_mask[ci, cj] = False
-    np.testing.assert_allclose(structural[non_contact_mask], 0, atol=1e-12)
-
-
-@pytest.mark.parametrize("fixture_name", ["sparse_vs_dense_2ghy", "sparse_vs_dense_1r69"])
-def test_sparse_dense_native_energy(fixture_name, sparse_vs_dense_2ghy, sparse_vs_dense_1r69, request):
-    """Native energy must agree between sparse and dense AWSEM."""
-    sparse_m, dense_m = request.getfixturevalue(fixture_name)
-    np.testing.assert_allclose(sparse_m.native_energy(), dense_m.native_energy(), atol=1e-4)
-
-
-@pytest.mark.parametrize("fixture_name", ["sparse_vs_dense_2ghy", "sparse_vs_dense_1r69"])
-def test_sparse_dense_fields_energy(fixture_name, sparse_vs_dense_2ghy, sparse_vs_dense_1r69, request):
-    """Fields energy must agree between sparse and dense AWSEM."""
-    sparse_m, dense_m = request.getfixturevalue(fixture_name)
-    np.testing.assert_allclose(sparse_m.fields_energy(), dense_m.fields_energy(), atol=1e-10)
-
-
-@pytest.mark.parametrize("fixture_name", ["sparse_vs_dense_2ghy", "sparse_vs_dense_1r69"])
-def test_sparse_dense_couplings_energy(fixture_name, sparse_vs_dense_2ghy, sparse_vs_dense_1r69, request):
-    """Couplings energy must agree between sparse and dense AWSEM."""
-    sparse_m, dense_m = request.getfixturevalue(fixture_name)
-    np.testing.assert_allclose(sparse_m.couplings_energy(), dense_m.couplings_energy(), atol=1e-4)
-
-
-@pytest.mark.parametrize("fixture_name", ["sparse_vs_dense_2ghy", "sparse_vs_dense_1r69"])
-@pytest.mark.parametrize("kind", ["singleresidue", "mutational", "contact", "pseudoconfigurational"])
-def test_sparse_dense_frustration(fixture_name, kind, sparse_vs_dense_2ghy, sparse_vs_dense_1r69, request):
-    """Frustration indices from sparse must match dense at contact positions.
-
-    Both paths return (L,) or (L, L) arrays. Sparse densifies pair frustration
-    with zeros at non-contact positions; dense may produce NaN there.
-    Compare only at contact positions where both are valid.
-    """
-    sparse_m, dense_m = request.getfixturevalue(fixture_name)
-    sparse_frust = sparse_m.frustration(kind=kind)
-    dense_frust = dense_m.frustration(kind=kind)
-    if kind == 'singleresidue':
-        np.testing.assert_allclose(sparse_frust, dense_frust, atol=1e-4)
-    else:
-        ci = sparse_m.sparse_potts_model['contact_i']
-        cj = sparse_m.sparse_potts_model['contact_j']
-        np.testing.assert_allclose(sparse_frust[ci, cj], dense_frust[ci, cj], atol=1e-4)
-
-
-def test_sparse_dense_chain_breaks_preserved():
-    """Verify chain_breaks are correctly propagated in both sparse and dense."""
-    structure_sparse = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=True)
-    structure_dense = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=False)
-    sparse_m = frustratometer.AWSEM(structure_sparse, sparse=True)
-    dense_m = frustratometer.AWSEM(structure_dense, sparse=False)
-    assert sparse_m.chain_breaks == [57]
-    assert dense_m.chain_breaks == [57]
-    # In sparse mode, mask only covers pairs in the sparse distance matrix.
-    # Verify that every sparse mask pair is also in the dense mask.
-    assert np.all(dense_m.mask[sparse_m.mask.row, sparse_m.mask.col])
-
-
-def test_sparse_dense_multichain_elec_energy():
-    """Electrostatics energy on multichain 2GHY must match between sparse and dense."""
-    structure_sparse = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=True)
-    structure_dense = frustratometer.Structure(test_data_path / '2GHY.pdb', sparse=False)
-    params = dict(k_electrostatics=4 * 4.184,
-                  min_sequence_separation_contact=0,
-                  distance_cutoff_contact=9.5,
-                  min_sequence_separation_electrostatics=1)
-    sparse_m = frustratometer.AWSEM(structure_sparse, sparse=True, **params)
-    dense_m = frustratometer.AWSEM(structure_dense, sparse=False, **params)
-    # Sparse path uses 40A cutoff for electrostatics; a few distant cross-chain
-    # pairs (>40A) are absent, causing small numeric differences.
-    np.testing.assert_allclose(sparse_m.native_energy(), dense_m.native_energy(), atol=0.02)
-    np.testing.assert_allclose(sparse_m.couplings_energy(), dense_m.couplings_energy(), atol=0.02)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ test_data_path = 'tests/data'
 
 @pytest.fixture(scope="module")
 def sparse_model():
-    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A', sparse=True)
+    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A')
     return frustratometer.AWSEM(s, distance_cutoff_contact=9.5,
                                 min_sequence_separation_contact=2, k_electrostatics=0)
 
@@ -73,17 +73,19 @@ def test_edge_cases(sparse_model):
 
 
 def test_matches_awsem_energy_selected():
-    """Reduced model equals the canonical AwsemEnergySelected on a dense model."""
+    """Reduced model equals the canonical AwsemEnergySelected."""
     from frustratometer.optimization.optimization import AwsemEnergySelected
-    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A', sparse=False)
+    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A')
     m = frustratometer.AWSEM(s, distance_cutoff_contact=9.5,
-                             min_sequence_separation_contact=2, k_electrostatics=0, sparse=False)
-    sparse_potts = frustration.potts_model_dense_to_sparse(m.potts_model, m.mask)
+                             min_sequence_separation_contact=2, k_electrostatics=0)
+    sparse_potts = m.sparse_potts_model
     si = _seq_index(m.sequence)
     rng = np.random.default_rng(2)
     active = np.sort(rng.choice(m.N, size=m.N // 3, replace=False))
     reduced, offset = fold_static_context(sparse_potts, si, active)
 
+    # AwsemEnergySelected consumes the dense Potts view and a dense mask.
+    m.mask = m.mask.to_dense(fill=0.0)
     sel = AwsemEnergySelected(m, selection=active, use_numba=False)
     for _ in range(4):
         sub = rng.integers(1, 21, size=len(active))
@@ -212,7 +214,7 @@ def test_dna_charge_field_matches_explicit_potts(sparse_model):
 
 
 def test_electrostatics_not_supported():
-    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A', sparse=True)
+    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A')
     m = frustratometer.AWSEM(s, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
                              k_electrostatics=4.184, min_sequence_separation_electrostatics=1)
     with pytest.raises(NotImplementedError):

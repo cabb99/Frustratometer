@@ -104,7 +104,7 @@ class SparseMatrix:
 class Structure:
 
     def __init__(self, pdb_file: Union[Path,str], chain: Union[str,None]=None, seq_selection: str = None, aligned_sequence: str = None, filtered_aligned_sequence: str = None,
-                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None, sparse: bool = False, max_sparse_distance: float = 1000)->object:
+                distance_matrix_method:str = 'CB', pdb_directory: Path = None, repair_pdb: bool = None, sparse: bool = True, max_sparse_distance: float = 1000)->object:
         
         """
         Generates structure object. Both PDB and CIF format files are accepted as input.

@@ -324,19 +324,19 @@ def test_structure_class():
     structure=frustratometer.Structure(f'{_path}/../tests/data/1rnb.pdb',"A")
     test_sequence="QVINTFDGVADYLQTYHKLPNDYITKSEAQALGWVASKGNLADVAPGKSIGGDIFSNREGKLPGKSGRTWREADINYTSGFRNSDRILYSSDWLIYKTTDHYQTFTKIR"
     assert structure.sequence==test_sequence
-    assert structure.distance_matrix.shape==(len(test_sequence),len(test_sequence))
+    assert structure.distance_matrix.shape==len(test_sequence)
 
 def test_structure_cif_compatibility():
     structure=frustratometer.Structure(f'{_path}/../tests/data/6u5e.cif',"A")
     test_sequence="VNPTVFFDIAVDGEPLGRVSFELFADKVPKTAENFRALSTGEKGFGYKGSCFHRIIPGFMCQGGDFTRHNGTGGKSIYGEKFEDENFILKHTGPGILSMANAGPNTNGSQFFICTAKTEWLDGKHVVFGKVKEGMNIVEAMERFGSRNGKTSKKITIADCGQL"
     assert structure.sequence==test_sequence
-    assert structure.distance_matrix.shape==(len(test_sequence),len(test_sequence))  
+    assert structure.distance_matrix.shape==len(test_sequence)  
 
 def test_substructure_cif_compatibility():
     structure=frustratometer.Structure(f'{_path}/../tests/data/6u5e.cif',chain="A",seq_selection="resindex `2to5`")
     test_sequence="PTVF"
     assert structure.sequence==test_sequence
-    assert structure.distance_matrix.shape==(len(test_sequence),len(test_sequence))  
+    assert structure.distance_matrix.shape==len(test_sequence)  
 
 @pytest.mark.skip
 def test_structure_segment_class_original_indices():
@@ -348,7 +348,7 @@ def test_structure_segment_class_original_indices():
     assert structure.pdb_init_index==16
     assert len(structure.select_gap_indices)==2
     assert structure.sequence==test_sequence
-    assert structure.distance_matrix.shape == (len(structure.sequence),len(structure.sequence))
+    assert structure.distance_matrix.shape == len(structure.sequence)
     assert len(resid)==len(structure.sequence)
 
 def test_structure_segment_class_absolute_indices():
@@ -358,7 +358,7 @@ def test_structure_segment_class_absolute_indices():
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
     resid = selection_CB['residue'].to_numpy()
     assert structure.sequence==test_sequence
-    assert structure.distance_matrix.shape == (len(structure.sequence),len(structure.sequence))
+    assert structure.distance_matrix.shape == len(structure.sequence)
     assert len(resid)==len(structure.sequence)
 
 #####
@@ -371,7 +371,7 @@ def test_structure_segment_class_original_indices_no_repair():
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
     resid = selection_CB['residue'].to_numpy()
     assert structure.sequence==test_sequence
-    assert structure.distance_matrix.shape == (len(structure.sequence),len(structure.sequence))
+    assert structure.distance_matrix.shape == len(structure.sequence)
     assert len(resid)==len(structure.sequence)
 
 def test_structure_segment_class_absolute_indices_no_repair():
@@ -380,7 +380,7 @@ def test_structure_segment_class_absolute_indices_no_repair():
     selection_CB = structure.structure.select('name CB or (resname GLY IGL and name CA)')
     resid = selection_CB['residue'].to_numpy()
     assert structure.sequence==test_sequence
-    assert structure.distance_matrix.shape == (len(structure.sequence),len(structure.sequence))
+    assert structure.distance_matrix.shape == len(structure.sequence)
     assert len(resid)==len(structure.sequence)
 
 def test_scores():
