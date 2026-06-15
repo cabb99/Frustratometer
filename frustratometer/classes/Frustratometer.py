@@ -78,6 +78,15 @@ class Frustratometer:
         self._ensure_dense_potts_model()
         return self._potts_model
 
+    @property
+    def engine(self):
+        """Compute engine (numpy reference by default). Energy/frustration delegate to it."""
+        eng = getattr(self, '_engine', None)
+        if eng is None:
+            from ..backends import get_engine
+            eng = self._engine = get_engine('numpy')
+        return eng
+
     @potts_model.setter
     def potts_model(self, value):
         self._potts_model = value
@@ -99,24 +108,12 @@ class Frustratometer:
         energy_value : float
             Native energy of sequence
         """
-        if sequence is None:
-            sequence=self.sequence
-        else:
-            if self._is_sparse:
-                energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
-                if getattr(self, '_elec_data', None) is not None:
-                    energy += self._compute_native_energy_elec(sequence, self._elec_data)
-                return energy
-            return frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
+        if sequence is not None:
+            return self.engine.native_energy(self, sequence, ignore_couplings_of_gaps, ignore_fields_of_gaps)
+        sequence=self.sequence
         if not self._native_energy:
-            if self._is_sparse:
-                self._native_energy = frustration.compute_native_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps, ignore_fields_of_gaps)
-                if getattr(self, '_elec_data', None) is not None:
-                    self._native_energy += self._compute_native_energy_elec(sequence, self._elec_data)
-            else:
-                self._native_energy=frustration.compute_native_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps,ignore_fields_of_gaps)
-        energy_value=self._native_energy
-        return energy_value
+            self._native_energy = self.engine.native_energy(self, sequence, ignore_couplings_of_gaps, ignore_fields_of_gaps)
+        return self._native_energy
 
     def sequences_energies(self, sequences: np.ndarray, split_couplings_and_fields:bool = False):
         """
@@ -140,11 +137,7 @@ class Frustratometer:
         output (if split_couplings_and_fields==True): np.array
             Array containing computed fields and couplings energies of the protein sequences. 
         """
-        if self._is_sparse:
-            output=frustration.compute_sequences_energy_sparse(sequences, self.sparse_potts_model, split_couplings_and_fields)
-        else:
-            output=frustration.compute_sequences_energy(sequences, self.potts_model, self.mask, split_couplings_and_fields)
-        return output
+        return self.engine.sequences_energies(self, sequences, split_couplings_and_fields)
 
     def fields_energy(self, sequence:str = None, ignore_fields_of_gaps:bool = False) -> float:
         """
@@ -193,13 +186,7 @@ class Frustratometer:
         """
         if sequence is None:
             sequence=self.sequence
-        if self._is_sparse:
-            couplings_energy=frustration.compute_couplings_energy_sparse(sequence, self.sparse_potts_model, ignore_couplings_of_gaps)
-            if getattr(self, '_elec_data', None) is not None:
-                couplings_energy += self._compute_native_energy_elec(sequence, self._elec_data)
-        else:
-            couplings_energy=frustration.compute_couplings_energy(sequence, self.potts_model, self.mask,ignore_couplings_of_gaps)
-        return couplings_energy
+        return self.engine.couplings_energy(self, sequence, ignore_couplings_of_gaps)
         
     def decoy_fluctuation(self, sequence:str = None,kind:str = 'singleresidue',mask:np.array = None) -> np.ndarray:
         """
@@ -226,46 +213,7 @@ class Frustratometer:
             return self._decoy_fluctuation[kind]
         if not isinstance(mask, np.ndarray):
             mask=self.mask
-        # Use sparse path when available
-        if self._is_sparse:
-            _elec_data = getattr(self, '_elec_data', None)
-            if kind == 'singleresidue':
-                fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
-                if _elec_data is not None:
-                    fluctuation = frustration.apply_elec_correction_singleresidue(fluctuation, _elec_data)
-            elif kind == 'mutational':
-                fluctuation = frustration.compute_mutational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
-                if _elec_data is not None:
-                    fluctuation = frustration.apply_elec_correction_mutational(fluctuation, self.sparse_potts_model, _elec_data)
-            elif kind == 'pseudoconfigurational':
-                from .Structure import SparseMatrix as _SM
-                if isinstance(self.mask, _SM):
-                    if self.distance_cutoff is None:
-                        _mask_mean = frustration.mask_mean(self.mask.shape, self.sequence_cutoff, self.chain_breaks)
-                    else:
-                        _mask_mean = float(len(self.mask)) / (self.mask.shape * self.mask.shape)
-                else:
-                    _mask_mean = float(self.mask.mean())
-                fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model, _mask_mean)
-                if _elec_data is not None:
-                    fluctuation = frustration.apply_elec_correction_pseudoconfigurational(fluctuation, self.sparse_potts_model, _elec_data)
-            elif kind == 'contact':
-                fluctuation = frustration.compute_contact_decoy_energy_fluctuation_sparse(sequence, self.sparse_potts_model)
-                if _elec_data is not None:
-                    fluctuation = frustration.apply_elec_correction_contact(fluctuation, self.sparse_potts_model, _elec_data)
-            else:
-                raise Exception("Wrong kind of decoy generation selected")
-        else:
-            if kind == 'singleresidue':
-                fluctuation = frustration.compute_singleresidue_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-            elif kind == 'mutational':
-                fluctuation = frustration.compute_mutational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-            elif kind == 'pseudoconfigurational':
-                fluctuation = frustration.compute_pseudoconfigurational_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-            elif kind == 'contact':
-                fluctuation = frustration.compute_contact_decoy_energy_fluctuation(sequence, self.potts_model, mask)
-            else:
-                raise Exception("Wrong kind of decoy generation selected")
+        fluctuation = self.engine.decoy_fluctuation(self, sequence, kind, mask)
         if is_native:
             self._decoy_fluctuation[kind] = fluctuation
         return fluctuation
