@@ -47,7 +47,7 @@ def test_build_burial_energy_blends_membrane():
     """Burial energy blends (1-alpha)*water + alpha*membrane per residue under membrane,
     and is water-only otherwise. (No-op for the shipped gammas, which have equal burials.)"""
     import types
-    from frustratometer.awsem import assembly
+    from frustratometer.awsem import physics as assembly
     rng = np.random.default_rng(0)
     N, q = 5, 20
     model = types.SimpleNamespace(

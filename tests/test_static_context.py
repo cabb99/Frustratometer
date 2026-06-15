@@ -11,7 +11,7 @@ import pytest
 import frustratometer
 from frustratometer import frustration
 from frustratometer.frustration.frustration import _AA, compute_native_energy_sparse
-from frustratometer.awsem.static_context import fold_static_context
+from frustratometer.awsem.physics import fold_static_context
 
 test_data_path = 'tests/data'
 
@@ -169,7 +169,7 @@ def test_static_selection_is_active_complement(sparse_model):
 
 
 def test_external_charge_field_formula():
-    from frustratometer.awsem.static_context import external_charge_field
+    from frustratometer.awsem.physics import external_charge_field
     from scipy.spatial.distance import cdist
     rng = np.random.default_rng(0)
     N, M, Q = 6, 3, 21

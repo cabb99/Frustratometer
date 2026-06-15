@@ -2,7 +2,7 @@ import json
 import numpy as np
 from ..utils import _path
 from .. import frustration
-from ..awsem import assembly
+from ..awsem import physics
 from ..frustration.frustration import _AA as _AA_21
 from .Structure import Structure, SparseMatrix
 from .Frustratometer import Frustratometer
@@ -320,7 +320,7 @@ class AWSEM(Frustratometer):
         burial_indicator = np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min)) + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b))
         self._burial_indicator = burial_indicator
 
-        burial_energy = assembly.build_burial_energy(self, p, burial_indicator)
+        burial_energy = physics.build_burial_energy(self, p, burial_indicator)
         self.burial_energy = burial_energy
 
         # --- Main mask (sparse) ---
@@ -390,7 +390,7 @@ class AWSEM(Frustratometer):
         self._sigma_protein = sigma_protein
 
         # Burial energy
-        burial_energy = assembly.build_burial_energy(self, p, burial_indicator)
+        burial_energy = physics.build_burial_energy(self, p, burial_indicator)
         self.burial_energy = burial_energy
 
         # Electrostatics-aware mask
@@ -627,7 +627,7 @@ class AWSEM(Frustratometer):
         sigma_water_c = sigma_water[ci, cj]
         sigma_protein_c = sigma_protein[ci, cj]
 
-        self.sparse_potts_model = assembly.build_sparse_potts(
+        self.sparse_potts_model = physics.build_sparse_potts(
             self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
         self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
         self._native_energy = None
@@ -649,7 +649,7 @@ class AWSEM(Frustratometer):
         if expose:
             self._start_indicator_exposure(p)
             # Always expose dense (L, L) indicators for optimization compatibility
-            self.indicators += assembly.pair_indicators_dense(
+            self.indicators += physics.pair_indicators_dense(
                 self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
             self.indicator_contact_i = None
             self.indicator_contact_j = None
@@ -672,7 +672,7 @@ class AWSEM(Frustratometer):
     def _build_sparse_from_contacts(self, p, ci, cj, theta_c, thetaII_c,
                                      sigma_water_c, sigma_protein_c, burial_energy, expose):
         """Build sparse Potts model from pre-computed contact-level values (sparse distance path)."""
-        self.sparse_potts_model = assembly.build_sparse_potts(
+        self.sparse_potts_model = physics.build_sparse_potts(
             self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
         self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
         self._native_energy = None
@@ -696,7 +696,7 @@ class AWSEM(Frustratometer):
         # Indicator exposure
         if expose:
             self._start_indicator_exposure(p)
-            self.indicators += assembly.pair_indicators_dense(
+            self.indicators += physics.pair_indicators_dense(
                 self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
             self.indicator_contact_i = None
             self.indicator_contact_j = None
@@ -894,7 +894,7 @@ class AWSEM(Frustratometer):
 
     def _charge_field(self, charge_coords, charges, charge_k, charge_screening):
         """(N, 21) field on h from external static point charges (e.g. DNA phosphates)."""
-        from ..awsem.static_context import external_charge_field
+        from ..awsem.physics import external_charge_field
         aa_charges = np.array([_CHARGE.get(aa, 0.0) for aa in _AA_21])
         k = 17.3636 if charge_k is None else charge_k
         screening = self.electrostatics_screening_length if charge_screening is None else charge_screening
@@ -923,7 +923,7 @@ class AWSEM(Frustratometer):
 
         Protein-protein electrostatics are not yet folded; use ``k_electrostatics=0``.
         """
-        from ..awsem.static_context import fold_static_context as _fold
+        from ..awsem.physics import fold_static_context as _fold
         if self.k_electrostatics != 0:
             raise NotImplementedError(
                 "Static-context folding does not yet include protein electrostatics; "
