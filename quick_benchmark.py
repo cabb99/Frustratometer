@@ -24,11 +24,11 @@ for pdb in pdbs:
     t_build_py = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    model_numba = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2, k_electrostatics=0, fast=True, backend='numba')
+    model_numba = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2, k_electrostatics=0, backend='numba')
     t_build_numba = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    model_cuda = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2, k_electrostatics=0, fast=True, backend='cuda')
+    model_cuda = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2, k_electrostatics=0, backend='cuda')
     t_build_cuda = time.perf_counter() - t0
 
     print(f'Build times: python={t_build_py:.3f}s  numba={t_build_numba:.3f}s  cuda={t_build_cuda:.3f}s')

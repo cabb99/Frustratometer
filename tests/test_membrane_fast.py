@@ -99,7 +99,7 @@ def test_cuda_membrane_matches_slow(membrane_models):
 
 
 def test_fast_membrane_model_native_matches_nonfast():
-    """A fast=True membrane model's native energy matches the equivalent slow model."""
+    """A numba-backend membrane model's native energy matches the equivalent numpy model."""
     import os
     data = os.path.join(os.path.dirname(__file__), 'data')
     structure = frustratometer.Structure(os.path.join(data, '2xov.pdb'), 'A',
@@ -108,7 +108,7 @@ def test_fast_membrane_model_native_matches_nonfast():
     kw = dict(membrane=True, zim=zim, min_sequence_separation_contact=10,
               min_sequence_separation_rho=2, distance_cutoff_contact=9.5, k_electrostatics=0.0)
     slow = frustratometer.AWSEM(structure, **kw)
-    fast = frustratometer.AWSEM(structure, fast=True, **kw)
+    fast = frustratometer.AWSEM(structure, backend='numba', **kw)
     np.testing.assert_allclose(fast.native_energy(), slow.native_energy(), rtol=1e-6)
     np.testing.assert_allclose(fast.frustration(kind='singleresidue'),
                                slow.frustration(kind='singleresidue'), atol=1e-5, rtol=1e-4)

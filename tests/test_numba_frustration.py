@@ -122,11 +122,38 @@ class TestConfigurationalFrustration:
         assert corr > 0.90, f"Correlation {corr:.4f} too low"
 
 
-# ── fast=True API tests ──────────────────────────────────────────────────────
+# ── numba backend API tests ──────────────────────────────────────────────────────
+
+def test_backend_api_and_fast_shim():
+    """backend= selects the engine; the deprecated fast= maps onto it with a warning."""
+    structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A", sparse=True)
+    kw = dict(distance_cutoff_contact=9.5, min_sequence_separation_contact=2, k_electrostatics=0)
+
+    numpy_m = frustratometer.AWSEM(structure, **kw)                 # default backend='numpy'
+    assert numpy_m.backend == 'numpy' and numpy_m._fast_backend is None
+    numba_m = frustratometer.AWSEM(structure, backend='numba', **kw)
+    assert numba_m.backend == 'numba' and numba_m._fast_backend == 'numba'
+
+    with pytest.warns(DeprecationWarning):
+        shim = frustratometer.AWSEM(structure, fast=True, **kw)
+    assert shim.backend == 'numba'
+    with pytest.warns(DeprecationWarning):
+        shim_off = frustratometer.AWSEM(structure, fast=False, **kw)
+    assert shim_off.backend == 'numpy'
+
+    with pytest.raises(ValueError):
+        frustratometer.AWSEM(structure, backend='gpu', **kw)
+    # numba/cuda need a sparse Structure
+    dense_structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A", sparse=False)
+    with pytest.raises(ValueError):
+        frustratometer.AWSEM(dense_structure, backend='numba', **kw)
+
+    np.testing.assert_allclose(numba_m.native_energy(), numpy_m.native_energy(), rtol=1e-6)
+
 
 @pytest.fixture(scope="module")
 def fast_model():
-    """6u5e sparse AWSEM model with fast=True, no electrostatics."""
+    """6u5e sparse AWSEM model with backend='numba', no electrostatics."""
     structure = frustratometer.Structure(
         test_data_path / '6u5e.pdb', "A", sparse=True,
     )
@@ -135,13 +162,13 @@ def fast_model():
         distance_cutoff_contact=9.5,
         min_sequence_separation_contact=2,
         k_electrostatics=0,
-        fast=True,
+        backend='numba',
     )
 
 
 @pytest.fixture(scope="module")
 def fast_model_elec():
-    """6u5e sparse AWSEM model with fast=True and electrostatics."""
+    """6u5e sparse AWSEM model with backend='numba' and electrostatics."""
     structure = frustratometer.Structure(
         test_data_path / '6u5e.pdb', "A", sparse=True,
     )
@@ -151,7 +178,7 @@ def fast_model_elec():
         min_sequence_separation_contact=2,
         k_electrostatics=4.184,
         min_sequence_separation_electrostatics=1,
-        fast=True,
+        backend='numba',
     )
 
 
@@ -226,7 +253,7 @@ class TestFastFallback:
         return frustratometer.AWSEM(
             structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
             k_electrostatics=k_electrostatics, min_sequence_separation_electrostatics=1,
-            fast=True)
+            backend='numba')
 
     def test_materialized_potts_matches_nonfast(self, awsem_model):
         m = self._fresh_fast_model()

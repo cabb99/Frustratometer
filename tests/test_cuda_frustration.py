@@ -124,11 +124,11 @@ class TestConfigurationalFrustration:
         assert corr > 0.90, f"Correlation {corr:.4f} too low"
 
 
-# ── fast=True API tests ──────────────────────────────────────────────────────
+# ── cuda backend API tests ──────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
 def fast_model():
-    """6u5e sparse AWSEM model with fast=True, backend='cuda', no electrostatics."""
+    """6u5e sparse AWSEM model with backend='cuda', no electrostatics."""
     structure = frustratometer.Structure(
         test_data_path / '6u5e.pdb', "A", sparse=True,
     )
@@ -137,13 +137,13 @@ def fast_model():
         distance_cutoff_contact=9.5,
         min_sequence_separation_contact=2,
         k_electrostatics=0,
-        fast=True, backend='cuda',
+        backend='cuda',
     )
 
 
 @pytest.fixture(scope="module")
 def fast_model_elec():
-    """6u5e sparse AWSEM model with fast=True and electrostatics."""
+    """6u5e sparse AWSEM model with backend='cuda' and electrostatics."""
     structure = frustratometer.Structure(
         test_data_path / '6u5e.pdb', "A", sparse=True,
     )
@@ -153,7 +153,7 @@ def fast_model_elec():
         min_sequence_separation_contact=2,
         k_electrostatics=4.184,
         min_sequence_separation_electrostatics=1,
-        fast=True, backend='cuda',
+        backend='cuda',
     )
 
 
