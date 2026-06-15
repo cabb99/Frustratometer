@@ -124,8 +124,8 @@ class TestConfigurationalFrustration:
 
 # ── numba backend API tests ──────────────────────────────────────────────────────
 
-def test_backend_api_and_fast_shim():
-    """backend= selects the engine; the deprecated fast= maps onto it with a warning."""
+def test_backend_api():
+    """backend= selects the engine; numpy is the default reference path."""
     structure = frustratometer.Structure(test_data_path / '6u5e.pdb', "A", sparse=True)
     kw = dict(distance_cutoff_contact=9.5, min_sequence_separation_contact=2, k_electrostatics=0)
 
@@ -133,13 +133,6 @@ def test_backend_api_and_fast_shim():
     assert numpy_m.backend == 'numpy' and numpy_m._fast_backend is None
     numba_m = frustratometer.AWSEM(structure, backend='numba', **kw)
     assert numba_m.backend == 'numba' and numba_m._fast_backend == 'numba'
-
-    with pytest.warns(DeprecationWarning):
-        shim = frustratometer.AWSEM(structure, fast=True, **kw)
-    assert shim.backend == 'numba'
-    with pytest.warns(DeprecationWarning):
-        shim_off = frustratometer.AWSEM(structure, fast=False, **kw)
-    assert shim_off.backend == 'numpy'
 
     with pytest.raises(ValueError):
         frustratometer.AWSEM(structure, backend='gpu', **kw)

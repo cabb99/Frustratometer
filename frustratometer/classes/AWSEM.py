@@ -1,5 +1,4 @@
 import json
-import warnings
 import numpy as np
 from ..utils import _path
 from .. import frustration
@@ -76,7 +75,6 @@ class AWSEM(Frustratometer):
                  expose_indicator_functions: bool=False,
                  sparse: bool=True,
                  backend: str='numpy',
-                 fast: Optional[bool]=None,
                  **parameters):
         """
         Generate AWSEM object
@@ -98,19 +96,11 @@ class AWSEM(Frustratometer):
             Compute engine: ``'numpy'`` (default, reference) evaluates every query with numpy;
             ``'numba'`` / ``'cuda'`` accelerate native/single/mutational/configurational on the
             precomputed channels and require a sparse Structure.
-        fast : bool, optional
-            Deprecated. ``fast=True`` maps to ``backend='numba'`` (or the given numba/cuda backend),
-            ``fast=False`` to ``backend='numpy'``.
 
         Returns
         -------
         AWSEM object
         """
-        if fast is not None:
-            warnings.warn(
-                "AWSEM(fast=...) is deprecated; use backend='numpy'|'numba'|'cuda'.",
-                DeprecationWarning, stacklevel=2)
-            backend = (backend if backend in ('numba', 'cuda') else 'numba') if fast else 'numpy'
         if backend not in ('numpy', 'numba', 'cuda'):
             raise ValueError(f"backend must be 'numpy', 'numba', or 'cuda', got {backend!r}")
         self.backend = backend
