@@ -7,7 +7,7 @@ from ..frustration.frustration import _AA as _AA_21
 from .Structure import Structure, SparseMatrix
 from .Frustratometer import Frustratometer
 from .Gamma import Gamma
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from pydantic.types import Path
 from typing import List,Optional,Union
 
@@ -63,6 +63,13 @@ class AWSEMParameters(BaseModel):
     k_electrostatics: float = Field(17.3636, description="Coefficient for electrostatic interactions. (kJ/mol)")
     electrostatics_screening_length: float = Field(10, description="Screening length for electrostatic interactions. (Angstrom)")
 
+    @field_validator('min_sequence_separation_rho', 'min_sequence_separation_contact',
+                     'min_sequence_separation_electrostatics', mode='before')
+    @classmethod
+    def _min_separation_default(cls, v):
+        """A None minimum sequence separation means 'no separation filter' -> 1."""
+        return 1 if v is None else v
+
 class AWSEM(Frustratometer):
     #Mapping to DCA
     q = 20
@@ -107,55 +114,11 @@ class AWSEM(Frustratometer):
 
         #Set attributes
         p = AWSEMParameters(**parameters)
-        if p.min_sequence_separation_contact is None:
-            p.min_sequence_separation_contact = 1
-        if p.min_sequence_separation_rho is None:
-            p.min_sequence_separation_rho = 1
-        if p.min_sequence_separation_electrostatics is None:
-            p.min_sequence_separation_electrostatics = 1
-
         for field, value in p:
             setattr(self, field, value)
         
-        #Gamma parameters
-        if isinstance(p.gamma, Gamma):
-            gamma = p.gamma
-        elif isinstance(p.gamma, (Path, str)):
-            gamma_path = Path(p.gamma)
-            local_candidate = Path.cwd() / p.gamma
-            if local_candidate.exists():   
-                gamma_path = local_candidate
-            elif gamma_path.suffix == '' and gamma_path.parent == Path('.'):
-                data_candidate = _path / 'data' / p.gamma.with_suffix('.json')
-                if data_candidate.exists():
-                    gamma_path = data_candidate
-                else:
-                    raise FileNotFoundError(f"Did not found the gamma file: {str(data_candidate)}")
-            else:
-                raise FileNotFoundError(f"Did not found the gamma file: {p.gamma}")
-            gamma = Gamma(gamma_path)
-        else:
-            raise ValueError("Gamma parameter must be a path or a Gamma object.")
-                
-        self.gamma=gamma
-        self.burial_gamma = gamma['Burial'].T
-        self.direct_gamma = gamma['Direct'][0]
-        self.protein_gamma = gamma['Protein'][0]
-        self.water_gamma = gamma['Water'][0]
-        self.burial_in_context=p.burial_in_context
-
-        # Membrane gamma loading
-        if p.membrane:
-            if isinstance(p.membrane_gamma, Gamma):
-                membrane_gamma_obj = p.membrane_gamma
-            elif isinstance(p.membrane_gamma, Path):
-                membrane_gamma_obj = Gamma(p.membrane_gamma)
-            else:
-                raise ValueError("membrane_gamma parameter must be a path or a Gamma object.")
-            self.membrane_burial_gamma = membrane_gamma_obj['Burial'].T
-            self.membrane_direct_gamma = membrane_gamma_obj['Direct'][0] * p.k_relative_mem
-            self.membrane_protein_gamma = membrane_gamma_obj['Protein'][0] * p.k_relative_mem
-            self.membrane_water_gamma = membrane_gamma_obj['Water'][0] * p.k_relative_mem
+        self._load_contact_gammas(p)
+        self.burial_in_context = p.burial_in_context
 
         #Structure details
         self.full_to_aligned_index_dict=pdb_structure.full_to_aligned_index_dict
@@ -203,66 +166,96 @@ class AWSEM(Frustratometer):
         self.N=len(self.resid)
         assert self.N == len(self.sequence), "The pdb is incomplete. Try setting 'repair_pdb=True' when constructing the Structure object."
 
-        # Membrane alpha and phi_z computation
-        if p.membrane:
-            # OpenAWSEM has two membrane Zim behaviors:
-            # - membrane_preassigned_term: CB (or CA fallback)
-            # - membrane_term (simple, no preassigned file): CA
-            # May need to adjust in the future to set custom z_source
-            if p.z_source == "Auto":
-                z_source = selection_CB if p.zim is not None else selection_CA
-            elif p.z_source == "CB":
-                z_source = selection_CB
-            elif p.z_source == "CA":
-                z_source = selection_CA
-            else:
-                raise ValueError(f"Invalid z_source value: {p.z_source}. Must be 'Auto', 'CB', or 'CA'.")
-            z_coords = z_source.get_coordinates().to_numpy()[:, 2] - p.membrane_center
-            self.z_coords = z_coords
-            # alpha_i ≈ 1 inside membrane, ≈ 0 outside
-            self.alpha = 0.5 * np.tanh(p.eta_switching * (z_coords + p.z_m)) + 0.5 * np.tanh(p.eta_switching * (p.z_m - z_coords))
-            # phi_z for Zim potential (same shape but sharper boundary via k_m)
-            self.phi_z = 0.5 * np.tanh(p.k_m * (z_coords + p.z_m)) + 0.5 * np.tanh(p.k_m * (p.z_m - z_coords))
-            # Per-residue DGwoct values
-            # Load Wimley-White DGwoct scale (20 values in AWSEM aa order)
-            _AA = 'ARNDCQEGHILKMFPSTWYV'
-            with open(_path / 'data' / 'wimley_white_dgwoct.json') as f:
-                ww = json.load(f)
-            self._dgwoct_scale = np.array(ww['DGwoct'], dtype=np.float64)  # (20,)
-            if p.zim is not None:
-                self.dgwoct = np.array(p.zim, dtype=np.float64)
-            else:
-                self.dgwoct = np.array([self._dgwoct_scale[_AA.index(aa)] for aa in self.sequence], dtype=np.float64)
-            # Per-residue, per-aa Zim contribution to h, shape (N, 21).
-            # Build paths add this to h; zim_energy() reads it at the native sequence.
-            if p.zim is not None:
-                # Preassigned dgwoct is per-position, independent of aa type.
-                zim_col = p.k_membrane * self.dgwoct * self.phi_z  # (N,)
-                self._zim_h = np.broadcast_to(zim_col[:, None],
-                                              (self.N, len(self.aa_map_awsem_list))).copy()
-            else:
-                # dgwoct_scale (length 20) reshuffled into the 21-letter alphabet.
-                zim_h_20 = p.k_membrane * self._dgwoct_scale[None, :] * self.phi_z[:, None]
-                self._zim_h = zim_h_20[:, self.aa_map_awsem_list]
-        else:
-            self.alpha = None
-            self.phi_z = None
-            self.dgwoct = None
-            self.z_coords = None
-            self._dgwoct_scale = None
-            self._zim_h = None
+        self._setup_membrane(p, selection_CA, selection_CB)
 
         self._decoy_fluctuation = {}
         self.minimally_frustrated_threshold=.78
         self._frustration_data = None
-        self._fast_backend = None if backend == 'numpy' else backend
 
-        if self._fast_backend is not None:
-            if not self._distance_is_sparse:
-                raise ValueError(f"backend={backend!r} requires a sparse Structure (sparse=True)")
-            self._setup_fast(p, pdb_structure)
-        else:
+        if self.backend == 'numpy':
             self._build_physics(p, expose_indicator_functions, pdb_structure)
+        else:
+            if not self._distance_is_sparse:
+                raise ValueError(f"backend={self.backend!r} requires a sparse Structure (sparse=True)")
+            self._setup_fast(p, pdb_structure)
+
+    @staticmethod
+    def _resolve_gamma(spec):
+        """Resolve a gamma spec to a Gamma object: a Gamma passes through; a path/str is
+        looked up as given, then relative to the cwd, then (for a bare name) in the package
+        data directory."""
+        if isinstance(spec, Gamma):
+            return spec
+        if not isinstance(spec, (Path, str)):
+            raise ValueError("Gamma parameter must be a path or a Gamma object.")
+        gamma_path = Path(spec)
+        local_candidate = Path.cwd() / spec
+        if local_candidate.exists():
+            gamma_path = local_candidate
+        elif gamma_path.suffix == '' and gamma_path.parent == Path('.'):
+            data_candidate = _path / 'data' / Path(spec).with_suffix('.json')
+            if not data_candidate.exists():
+                raise FileNotFoundError(f"Did not found the gamma file: {str(data_candidate)}")
+            gamma_path = data_candidate
+        elif not gamma_path.exists():
+            raise FileNotFoundError(f"Did not found the gamma file: {spec}")
+        return Gamma(gamma_path)
+
+    def _load_contact_gammas(self, p):
+        """Load the water (and, under membrane, membrane) burial/contact gammas.
+
+        Burial is stored ``(3, q)`` -> kept ``(q, 3)``; direct/protein/water are stored
+        ``(1, q, q)`` -> the singleton well axis is dropped to ``(q, q)``. Membrane contact
+        gammas are scaled by ``k_relative_mem``."""
+        gamma = self._resolve_gamma(p.gamma)
+        self.gamma = gamma
+        self.burial_gamma = gamma['Burial'].T
+        self.direct_gamma = gamma['Direct'][0]
+        self.protein_gamma = gamma['Protein'][0]
+        self.water_gamma = gamma['Water'][0]
+        if p.membrane:
+            m = self._resolve_gamma(p.membrane_gamma)
+            self.membrane_burial_gamma = m['Burial'].T
+            self.membrane_direct_gamma = m['Direct'][0] * p.k_relative_mem
+            self.membrane_protein_gamma = m['Protein'][0] * p.k_relative_mem
+            self.membrane_water_gamma = m['Water'][0] * p.k_relative_mem
+
+    def _setup_membrane(self, p, selection_CA, selection_CB):
+        """Membrane geometry: per-residue ``alpha`` (contact blend), ``phi_z`` (Zim boundary)
+        and the per-residue/per-identity Zim field ``_zim_h``. Sets these to None when membrane
+        is off. Requires ``self.N``/``self.sequence`` to be set."""
+        if not p.membrane:
+            self.alpha = self.phi_z = self.dgwoct = self.z_coords = None
+            self._dgwoct_scale = self._zim_h = None
+            return
+        # OpenAWSEM uses CB (or CA fallback) for the preassigned Zim term and CA for the simple term.
+        if p.z_source == "Auto":
+            z_source = selection_CB if p.zim is not None else selection_CA
+        elif p.z_source == "CB":
+            z_source = selection_CB
+        elif p.z_source == "CA":
+            z_source = selection_CA
+        else:
+            raise ValueError(f"Invalid z_source value: {p.z_source}. Must be 'Auto', 'CB', or 'CA'.")
+        z_coords = z_source.get_coordinates().to_numpy()[:, 2] - p.membrane_center
+        self.z_coords = z_coords
+        self.alpha = 0.5 * np.tanh(p.eta_switching * (z_coords + p.z_m)) + 0.5 * np.tanh(p.eta_switching * (p.z_m - z_coords))
+        self.phi_z = 0.5 * np.tanh(p.k_m * (z_coords + p.z_m)) + 0.5 * np.tanh(p.k_m * (p.z_m - z_coords))
+        _AA = 'ARNDCQEGHILKMFPSTWYV'
+        with open(_path / 'data' / 'wimley_white_dgwoct.json') as f:
+            ww = json.load(f)
+        self._dgwoct_scale = np.array(ww['DGwoct'], dtype=np.float64)  # (20,)
+        # Per-residue, per-identity Zim contribution to h; zim_energy() reads it at the native sequence.
+        if p.zim is not None:
+            # Preassigned dgwoct is per-position, independent of identity.
+            self.dgwoct = np.array(p.zim, dtype=np.float64)
+            zim_col = p.k_membrane * self.dgwoct * self.phi_z  # (N,)
+            self._zim_h = np.broadcast_to(zim_col[:, None],
+                                          (self.N, len(self.aa_map_awsem_list))).copy()
+        else:
+            self.dgwoct = np.array([self._dgwoct_scale[_AA.index(aa)] for aa in self.sequence], dtype=np.float64)
+            zim_h_20 = p.k_membrane * self._dgwoct_scale[None, :] * self.phi_z[:, None]
+            self._zim_h = zim_h_20[:, self.aa_map_awsem_list]
 
     def _build_physics(self, p, expose, pdb_structure):
         """Single physics path: structural indicators -> sparse Potts model (+ electrostatics
@@ -475,7 +468,7 @@ class AWSEM(Frustratometer):
         self.contact_energy = None
 
         self._device_data = None
-        if self._fast_backend == 'cuda':
+        if self.backend == 'cuda':
             try:
                 from ..frustration.cuda import FrustrationCUDA
                 self._device_data = FrustrationCUDA(self._frustration_data)
@@ -756,13 +749,13 @@ class AWSEM(Frustratometer):
         return _fold(self.sparse_potts_model, seq_index, active, extra_field=extra_field)
 
     def _get_fast_module(self):
-        """Return the frustration backend module for ``self._fast_backend`` via the registry."""
+        """Return the frustration backend module for ``self.backend`` via the registry."""
         from ..frustration.backends import get_backend
-        return get_backend(self._fast_backend or 'numba')
+        return get_backend(self.backend)
 
     def _get_fast_data(self):
         """Return cached FrustrationCUDA (CUDA) or FrustrationData for fast-path calls."""
-        if self._fast_backend == 'cuda' and self._device_data is not None:
+        if self.backend == 'cuda' and self._device_data is not None:
             return self._device_data
         return self._frustration_data
 

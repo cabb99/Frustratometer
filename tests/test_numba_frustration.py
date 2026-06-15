@@ -130,9 +130,9 @@ def test_backend_api():
     kw = dict(distance_cutoff_contact=9.5, min_sequence_separation_contact=2, k_electrostatics=0)
 
     numpy_m = frustratometer.AWSEM(structure, **kw)                 # default backend='numpy'
-    assert numpy_m.backend == 'numpy' and numpy_m._fast_backend is None
+    assert numpy_m.backend == 'numpy' and numpy_m._frustration_data is None
     numba_m = frustratometer.AWSEM(structure, backend='numba', **kw)
-    assert numba_m.backend == 'numba' and numba_m._fast_backend == 'numba'
+    assert numba_m.backend == 'numba' and numba_m._frustration_data is not None
 
     with pytest.raises(ValueError):
         frustratometer.AWSEM(structure, backend='gpu', **kw)
