@@ -14,7 +14,7 @@ import logging
 import tempfile
 import subprocess
 
-__all__=['PottsModel']
+__all__=['Frustratometer']
 ##################
 # PFAM functions #
 ##################
