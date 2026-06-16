@@ -79,11 +79,9 @@ def compute_contacts(dist_row, dist_col, dist_data, rho_r,
 
     Returns (ci, cj, theta, thetaII, tsw, tsp).
     """
-    keep = (
-        (dist_data > 0)
-        & _seq_sep_ok(dist_row, dist_col, min_seq_sep, chain_breaks)
-        & (dist_data <= distance_cutoff)
-    )
+    keep = (dist_data > 0) & _seq_sep_ok(dist_row, dist_col, min_seq_sep, chain_breaks)
+    if distance_cutoff is not None:
+        keep = keep & (dist_data <= distance_cutoff)
     ci = dist_row[keep].copy()
     cj = dist_col[keep].copy()
     cd = dist_data[keep]

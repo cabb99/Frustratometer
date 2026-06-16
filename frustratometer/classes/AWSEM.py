@@ -231,11 +231,11 @@ class AWSEM(Frustratometer):
             self._zim_h = zim_h_20[:, self.aa_map_awsem_list]
 
     def _build_physics(self, p, expose, pdb_structure):
-        """Single physics path: structural indicators -> sparse Potts model (+ electrostatics
-        sidecar and optional indicator exposure). Used for every non-fast model and to
-        materialize the Potts model on demand for fast models."""
-        (rho_r, ci, cj, theta_c, thetaII_c,
-         sigma_water_c, sigma_protein_c, burial_indicator) = self._structural_indicators(p, pdb_structure)
+        """Single physics path: density/contacts/burial (from the one indicator source in
+        ``frustration.data``) -> sparse Potts model (+ electrostatics sidecar and optional
+        indicator exposure). Used for every numpy model and to materialize the Potts model on
+        demand for fast models."""
+        rho_r, ci, cj, theta_c, tsw_c, tsp_c, burial_indicator = self._structural_indicators(p, pdb_structure)
 
         self.rho_r = rho_r
         self._burial_indicator = burial_indicator
@@ -248,55 +248,42 @@ class AWSEM(Frustratometer):
         self.contact_freq = frustration.compute_contact_freq(self.sequence)
 
         self.sparse_potts_model = physics.build_sparse_potts(
-            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c, burial_energy)
+            self, p, ci, cj, theta_c, tsw_c, tsp_c, burial_energy)
         self._potts_model = {'h': self.sparse_potts_model['h'], 'J': None}
         self._native_energy = None
         self.contact_energy = None
         self._elec_data = self._build_elec_data(p)
 
         if expose:
-            self._expose_indicators(p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
+            self._expose_indicators(p, ci, cj, theta_c, tsw_c, tsp_c)
 
     def _structural_indicators(self, p, pdb_structure):
-        """Per-residue density/burial and per-contact theta/thetaII/sigma scalars from the
-        sparse COO distance matrix."""
+        """Per-residue density/burial and per-contact channel coefficients, computed from the
+        sparse COO distance matrix via the single indicator source ``frustration.data``
+        (the same ``compute_rho``/``compute_contacts``/``compute_burial`` the fast engines use).
+        Under ``burial_in_context`` the density is taken over the full structure and sliced to
+        the active substructure. Returns ``(rho_r, contact_i, contact_j, theta, tsw, tsp,
+        burial_indicator)`` where ``tsw = thetaII*sigma_water`` and ``tsp = thetaII*sigma_protein``."""
+        from ..frustration import data
         dm = self._sparse_distance_matrix
-        if self.burial_in_context:
-            full_dm = self.full_pdb_distance_matrix
-            sel_dm = full_dm if isinstance(full_dm, SparseMatrix) else dm
-        else:
-            sel_dm = dm
-        rho_mask = frustration.compute_mask_sparse(
+        full_dm = self.full_pdb_distance_matrix
+        sel_dm = full_dm if (self.burial_in_context and isinstance(full_dm, SparseMatrix)) else dm
+
+        rho_r = data.compute_rho(
             sel_dm.row, sel_dm.col, sel_dm.data, sel_dm.shape,
-            maximum_contact_distance=None,
-            minimum_sequence_separation=p.min_sequence_separation_rho,
-            chain_breaks=self.chain_breaks)
-        rho_dists = sel_dm.lookup(rho_mask.row, rho_mask.col)
-        rho_vals = 0.25 * (1 + np.tanh(p.eta * (rho_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - rho_dists)))
-        rho_r = np.bincount(rho_mask.row, weights=rho_vals, minlength=sel_dm.shape).astype(np.float64)
+            p.eta, p.r_min, p.r_max, p.min_sequence_separation_rho, self.chain_breaks)
         if sel_dm.shape != dm.shape and self.burial_in_context:
             self.init_index_shift = pdb_structure.init_index_shift
             self.fin_index_shift = pdb_structure.fin_index_shift
             rho_r = rho_r[self.init_index_shift:self.fin_index_shift]
-        contact_mask = frustration.compute_mask_sparse(
-            dm.row, dm.col, dm.data, dm.shape,
-            maximum_contact_distance=p.distance_cutoff_contact,
-            minimum_sequence_separation=p.min_sequence_separation_contact,
-            chain_breaks=self.chain_breaks)
-        ci = contact_mask.row
-        cj = contact_mask.col
-        contact_dists = dm.lookup(ci, cj)
 
-        theta_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_min))) * (1 + np.tanh(p.eta * (p.r_max - contact_dists)))
-        thetaII_c = 0.25 * (1 + np.tanh(p.eta * (contact_dists - p.r_minII))) * (1 + np.tanh(p.eta * (p.r_maxII - contact_dists)))
-        sigma_water_c = 0.25 * (1 - np.tanh(p.eta_sigma * (rho_r[ci] - p.rho_0))) * (1 - np.tanh(p.eta_sigma * (rho_r[cj] - p.rho_0)))
-        sigma_protein_c = 1 - sigma_water_c
+        ci, cj, theta_c, _thetaII_c, tsw_c, tsp_c = data.compute_contacts(
+            dm.row, dm.col, dm.data, rho_r,
+            p.eta, p.r_min, p.r_max, p.r_minII, p.r_maxII, p.eta_sigma, p.rho_0,
+            p.min_sequence_separation_contact, p.distance_cutoff_contact, self.chain_breaks)
 
-        rho_b = np.expand_dims(rho_r, 1)
-        burial_indicator = (np.tanh(p.burial_kappa * (rho_b - p.burial_ro_min))
-                            + np.tanh(p.burial_kappa * (p.burial_ro_max - rho_b)))
-        return (rho_r, np.asarray(ci), np.asarray(cj), theta_c, thetaII_c,
-                sigma_water_c, sigma_protein_c, burial_indicator)
+        burial_indicator = data.compute_burial(rho_r, p.burial_kappa, p.burial_ro_min, p.burial_ro_max)
+        return rho_r, ci, cj, theta_c, tsw_c, tsp_c, burial_indicator
 
     def _elec_aware_cutoffs(self, p):
         if p.k_electrostatics != 0:
@@ -330,11 +317,11 @@ class AWSEM(Frustratometer):
             mask_chain_breaks=self.chain_breaks if self.distance_cutoff is None else None,
         )
 
-    def _expose_indicators(self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c):
+    def _expose_indicators(self, p, ci, cj, theta_c, tsw_c, tsp_c):
         """Populate the (L, L) indicator/gamma_array contract for the optimization consumers."""
         self._start_indicator_exposure(p)
         self.indicators += physics.pair_indicators_dense(
-            self, p, ci, cj, theta_c, thetaII_c, sigma_water_c, sigma_protein_c)
+            self, p, ci, cj, theta_c, tsw_c, tsp_c)
         self.indicator_contact_i = None
         self.indicator_contact_j = None
         if p.k_electrostatics != 0:

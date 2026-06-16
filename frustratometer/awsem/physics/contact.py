@@ -31,17 +31,16 @@ def _contact_J(model, p, theta_c, tsw_c, tsp_c,
     )
 
 
-def build_sparse_potts(model, p, ci, cj, theta_c, thetaII_c,
-                       sigma_water_c, sigma_protein_c, burial_energy):
+def build_sparse_potts(model, p, ci, cj, theta_c, tsw_c, tsp_c, burial_energy):
     """Assemble the sparse Potts model dict from per-contact structural quantities.
 
-    Returns ``{'h': (L,21), 'J': (Nc,21,21), 'contact_i', 'contact_j', 'L'}`` in the
-    DCA 21-letter alphabet, including the membrane blend
-    ``(1-alpha_i*alpha_j)*water + alpha_i*alpha_j*membrane`` and the Zim field.
+    ``theta_c``/``tsw_c``/``tsp_c`` are the direct / water-mediated / protein-mediated
+    contact channel coefficients (``tsw = thetaII*sigma_water``, ``tsp = thetaII*sigma_protein``),
+    as produced by ``frustration.data.compute_contacts``. Returns
+    ``{'h': (L,21), 'J': (Nc,21,21), 'contact_i', 'contact_j', 'L'}`` in the DCA 21-letter
+    alphabet, including the membrane blend ``(1-alpha_i*alpha_j)*water + alpha_i*alpha_j*membrane``
+    and the Zim field.
     """
-    tsw_c = thetaII_c * sigma_water_c
-    tsp_c = thetaII_c * sigma_protein_c
-
     J = _contact_J(model, p, theta_c, tsw_c, tsp_c,
                    model.direct_gamma, model.water_gamma, model.protein_gamma)
 

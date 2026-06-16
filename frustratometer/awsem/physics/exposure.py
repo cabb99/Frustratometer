@@ -8,20 +8,20 @@ import numpy as np
 __all__ = ['pair_indicators_dense']
 
 
-def pair_indicators_dense(model, p, ci, cj, theta_c, thetaII_c,
-                          sigma_water_c, sigma_protein_c):
+def pair_indicators_dense(model, p, ci, cj, theta_c, tsw_c, tsp_c):
     """Dense (L, L) pairwise indicator maps for ``expose_indicator_functions``.
 
-    Order: water (direct, protein, water) and, under membrane, the membrane triple, each
-    weighted by the per-contact blend.
+    ``theta_c``/``tsw_c``/``tsp_c`` are the direct / water-mediated / protein-mediated contact
+    channel coefficients. Order: water (direct, protein, water) and, under membrane, the membrane
+    triple, each weighted by the per-contact blend.
     """
     L = model.N
     dense_theta = np.zeros((L, L))
     dense_theta[ci, cj] = theta_c
     dense_protein = np.zeros((L, L))
-    dense_protein[ci, cj] = thetaII_c * sigma_protein_c
+    dense_protein[ci, cj] = tsp_c
     dense_water = np.zeros((L, L))
-    dense_water[ci, cj] = thetaII_c * sigma_water_c
+    dense_water[ci, cj] = tsw_c
 
     if p.membrane:
         alpha_ij_dense = np.zeros((L, L))
