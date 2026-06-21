@@ -960,6 +960,11 @@ def write_tcl_script(
     if not (single_frustration is None):
         for r, f in zip(residues, single_frustration):
             to_write.append(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
+
+    # if we're really worried about memory,
+    # we should loop over elements of mask
+    # and distance_matrix and check their indices
+    # and values, but distance_matrix shouldn't
     # be very big (10^4 residues -> 10^8
     # elements in distance matrix -> 800 MB,
     # assuming 8-byte floats)
@@ -1037,73 +1042,56 @@ def write_tcl_script(
             ''')
 
     if movie_name:
-            to_write.append('''axes location Off
-            color Display Background white
-            display resize 800 800
-            display projection Orthographic
-            display depthcue off
-            display resetview
-            display resize [expr [lindex [display get size] 0]/2*2] [expr [lindex [display get size] 1]/2*2] ;#Resize display to even height and width
-            display update ui
+        to_write.append('''axes location Off
+        color Display Background white
+        display resize 800 800
+        display projection Orthographic
+        display depthcue off
+        display resetview
+        display resize [expr [lindex [display get size] 0]/2*2] [expr [lindex [display get size] 1]/2*2]
+        display update ui
 
-            # Set up the movie directory and base file name
-            mkdir movie_tmp
-            set workdir "movie_tmp"
-            ''' + f'set basename "{movie_name}"' + '''
-            set numframes 360
-            set framerate 25
+        mkdir movie_tmp
+        set workdir "movie_tmp"
+        ''' + f'set basename "{movie_name}"' + '''
+        set numframes 360
+        set framerate 25
 
-            # Function to rotate the molecule and capture frames
-            proc captureFrames {} {
-                global workdir basename numframes
-                for {set i 0} {$i < $numframes} {incr i} {
-                    # Rotate the molecule around the Y-axis
-                    rotate y by 1
-                    
-                    # Capture the frame
-                    set output [format "%s/$basename.%05d.tga" $workdir $i]
-                    render snapshot $output
-                }
-            }
-
-            # Function to convert frames to MP4
-            proc convertToMP4 {} {
-                global workdir basename numframes framerate
-
-                set mybasefilename [format "%s/%s" $workdir $basename]
-                set outputFile [format "%s.mp4" $basename]
-                
-                # Construct and execute the ffmpeg command
-                
-                set command "ffmpeg -y -framerate $framerate -i $mybasefilename.%05d.tga -c:v libx264 -profile:v high -crf 20 -pix_fmt yuv420p $outputFile"
-                puts "Executing: $command"
-                exec ffmpeg -y -framerate $framerate -i $mybasefilename.%05d.tga -c:v libx264 -profile:v high -crf 20 -pix_fmt yuv420p $outputFile >&@ stdout
-            }
-
-            # Main script execution
-            captureFrames
-            convertToMP4
-
-            # Cleanup the TGA files if desired
+        proc captureFrames {} {
+            global workdir basename numframes
             for {set i 0} {$i < $numframes} {incr i} {
+                rotate y by 1
                 set output [format "%s/$basename.%05d.tga" $workdir $i]
-                exec rm $output
+                render snapshot $output
             }
-            exit
+        }
+
+        proc convertToMP4 {} {
+            global workdir basename numframes framerate
+            set mybasefilename [format "%s/%s" $workdir $basename]
+            set outputFile [format "%s.mp4" $basename]
+            set command "ffmpeg -y -framerate $framerate -i $mybasefilename.%05d.tga -c:v libx264 -profile:v high -crf 20 -pix_fmt yuv420p $outputFile"
+            puts "Executing: $command"
+            exec ffmpeg -y -framerate $framerate -i $mybasefilename.%05d.tga -c:v libx264 -profile:v high -crf 20 -pix_fmt yuv420p $outputFile >&@ stdout
+        }
+
+        captureFrames
+        convertToMP4
+
+        for {set i 0} {$i < $numframes} {incr i} {
+            set output [format "%s/$basename.%05d.tga" $workdir $i]
+            exec rm $output
+        }
+        exit
         ''')
     elif still_image_name:
         to_write.append(f'set output "{still_image_name}"' + '''
-            render snapshot $output
-            exit
+        render snapshot $output
+        exit
         ''')
-    # Write the tcl script once at the end
-    try:
-        with open(tcl_script, 'w+') as _fo:
-            _fo.write(''.join(to_write))
-    except Exception:
-        # Fallback: ensure we raise the original error if file write fails
-        with open(str(tcl_script), 'w+') as _fo:
-            _fo.write(''.join(to_write))
+
+    with open(tcl_script, 'w+') as _fo:
+        _fo.write(''.join(to_write))
     return tcl_script
 
 
