@@ -890,8 +890,13 @@ def plot_singleresidue_decoy_energy(decoy_energy, native_energy, method='cluster
     return g
 
 
-def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, distance_matrix: np.array, distance_cutoff: float, single_frustration: np.array,
-                    pair_frustration: np.array, tcl_script: Union[Path, str] ='frustration.tcl',max_connections: int =None, movie_name: Union[Path, str] =None, still_image_name: Union[Path, str] =None) -> Union[Path, str]:
+def write_tcl_script(
+    pdb_file: Union[Path,str], chain: str, mask: np.array, 
+    distance_matrix: np.array, distance_cutoff: float, 
+    single_frustration: Union[np.array,None], pair_frustration: np.array, 
+    tcl_script: Union[Path, str] ='frustration.tcl',max_connections: int =None, 
+    movie_name: Union[Path, str] =None, still_image_name: Union[Path, str] =None,
+    ) -> Union[Path, str]:
     """
     Writes a tcl script that can be run with VMD to superimpose the frustration patterns onto the corresponding PDB structure. 
     
@@ -952,13 +957,9 @@ def write_tcl_script(pdb_file: Union[Path,str], chain: str, mask: np.array, dist
 
     to_write.append(f'[atomselect top all] set beta 0\n')
     # Single residue frustration
-    for r, f in zip(residues, single_frustration):
-        to_write.append(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
-
-    # if we're really worried about memory,
-    # we should loop over elements of mask
-    # and distance_matrix and check their indices
-    # and values, but distance_matrix shouldn't
+    if not (single_frustration is None):
+        for r, f in zip(residues, single_frustration):
+            to_write.append(f'[atomselect top "residue {int(r)}"] set beta {f}\n')
     # be very big (10^4 residues -> 10^8
     # elements in distance matrix -> 800 MB,
     # assuming 8-byte floats)
