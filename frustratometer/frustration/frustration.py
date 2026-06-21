@@ -950,8 +950,10 @@ def write_tcl_script(
     cb_sel = selection.select('name CB or (resname GLY and name CA)')
     ca_xyz = np.full((len(residues), 3), np.nan)
     cb_xyz = np.full((len(residues), 3), np.nan)
+    ca_indices = np.full(len(residues), -1, dtype=int)
     ca_xyz[np.searchsorted(residues, ca_sel.getResindices())] = ca_sel.getCoords()
     cb_xyz[np.searchsorted(residues, cb_sel.getResindices())] = cb_sel.getCoords()
+    ca_indices[np.searchsorted(residues, ca_sel.getResindices())] = ca_sel.getIndices()
 
     to_write.append(f'[atomselect top all] set beta 0\n')
     # Single residue frustration
@@ -1001,8 +1003,24 @@ def write_tcl_script(
         frust = pair_frustration[ii,jj] # pair_frustration is always dense
         dist = distance_matrix.lookup(ii,jj)
 
-    # Green = minimally frustrated (most negative first); red = frustrated (most positive
-    # first). For each: sort, cap at max_connections, then draw the in-range contacts.
+    # --- START OF HIGH-PERFORMANCE REDRAW Tcl PROCEDURE ---
+    to_write.append('\nproc redraw_bound_line {} {\n')
+    to_write.append('    set molid top\n')
+    to_write.append('    graphics $molid delete all\n\n')
+    
+    # 1. Grab all CA atoms AT ONCE
+    to_write.append('    set sel [atomselect $molid "name CA"]\n')
+    to_write.append('    set atom_data [$sel get {index x y z}]\n')
+    to_write.append('    $sel delete\n\n')
+
+    # 2. Build a Tcl array mapping index to {x y z} for O(1) lookups
+    to_write.append('    array unset coords\n')
+    to_write.append('    foreach record $atom_data {\n')
+    to_write.append('        lassign $record idx x y z\n')
+    to_write.append('        set coords($idx) [list $x $y $z]\n')
+    to_write.append('    }\n\n')
+
+    # Green = minimally frustrated; red = frustrated. Sort, cap, draw.
     for color, group, reverse in (
         ('green', frust < -0.78, False),
         ('red',   frust > 1,     True),
@@ -1016,28 +1034,40 @@ def write_tcl_script(
             gi, gj, gd = gi[:max_connections], gj[:max_connections], gd[:max_connections]
 
         draw = (gd >= 3.5) & (gd <= 9.5)
-        draw &= np.abs(residues[gi] - residues[gj]) != 1 # Skip adjacent residues, which are often connected by a covalent bond and thus always close in space, but not necessarily frustrated.
+        draw &= np.abs(residues[gi] - residues[gj]) != 1 
         draw &= ~(np.isnan(ca_xyz[gi]).any(1) | np.isnan(ca_xyz[gj]).any(1) |
                   np.isnan(cb_xyz[gi]).any(1) | np.isnan(cb_xyz[gj]).any(1))
+        # Ensure mapping to valid ProDy/VMD indices
+        draw &= (ca_indices[gi] != -1) & (ca_indices[gj] != -1)
         gi, gj = gi[draw], gj[draw]
 
-        cb_dist = np.linalg.norm(cb_xyz[gi] - cb_xyz[gj], axis=1)   # Cbeta-Cbeta -> dashing
+        cb_dist = np.linalg.norm(cb_xyz[gi] - cb_xyz[gj], axis=1)   
         styles = np.where((cb_dist >= 3.5) & (cb_dist <= 6.5), 'solid', 'dashed')
 
-        to_write.append(f'draw color {color}\n')
-        for a, b, style in zip(gi, gj, styles):
-            p1, p2 = ca_xyz[a], ca_xyz[b]
-            to_write.append("draw line {%.3f %.3f %.3f} {%.3f %.3f %.3f} style %s width 2\n"
-                     % (p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], style))
+        # 3. Draw lines instantly using the array
+        if len(gi) > 0:
+            to_write.append(f'    graphics $molid color {color}\n')
+            for a, b, style in zip(gi, gj, styles):
+                id1, id2 = ca_indices[a], ca_indices[b]
+                to_write.append(f'    graphics $molid line $coords({id1}) $coords({id2}) style {style} width 2\n')
+            to_write.append('\n')
 
-        to_write.append('''mol delrep top 0
-            mol color Beta
-            mol representation NewCartoon 0.300000 10.000000 4.100000 0
-            mol selection all
-            mol material Opaque
-            mol addrep top
-            color scale method GWR
-            ''')
+    to_write.append('    puts "Lines redrawn successfully."\n')
+    to_write.append('}\n\n')
+    
+    # Execute the procedure once initially to render the graphic
+    to_write.append('redraw_bound_line\n\n')
+    # --- END OF Tcl PROCEDURE ---
+
+    # Visual representation setup
+    to_write.append('''mol delrep top 0
+        mol color Beta
+        mol representation NewCartoon 0.300000 10.000000 4.100000 0
+        mol selection all
+        mol material Opaque
+        mol addrep top
+        color scale method GWR
+        ''')
 
     if movie_name:
         to_write.append('''axes location Off
