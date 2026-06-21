@@ -936,10 +936,8 @@ def write_tcl_script(
         tcl script file
     """
     to_write = []
-    #fo = open(tcl_script, 'w+')
     single_frustration = np.nan_to_num(single_frustration,nan=0,posinf=0,neginf=0)
     pair_frustration = np.nan_to_num(pair_frustration,nan=0,posinf=0,neginf=0)
-    
     
     structure = prody.parsePDB(str(pdb_file))
     selection = structure.select('protein', chain=chain)
