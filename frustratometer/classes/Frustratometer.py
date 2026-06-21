@@ -389,7 +389,7 @@ class Frustratometer:
         """
         return frustration.compute_auc(self.roc())
 
-    def vmd(self, sequence: str = None, single:Union[str,np.array] = 'singleresidue', pair:Union[str,np.array] = 'mutational',
+    def vmd(self, sequence: str = None, single:Union[str,np.array,None] = 'singleresidue', pair:Union[str,np.array] = 'mutational',
              aa_freq:np.array = None, correction:int = 0, max_connections:Union[int,None] = None, movie_name=None, still_image_name=None,
              call_vmd: bool = True):
         """
@@ -416,11 +416,17 @@ class Frustratometer:
                     from the sequence that was passed to this vmd function. Proceeding further may not\n\
                     perform the computation that you intend to perform.")
         
+        if isinstance(single, str):
+            single = -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq)
 
-        tcl_script = frustration.write_tcl_script(self.pdb_file, self.chain, self.mask, self.distance_matrix, self.distance_cutoff,
-                                      -self.frustration(kind=single, sequence=sequence, aa_freq=aa_freq),
-                                      -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq),
-                                      max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name)
+        if isinstance(pair, str):
+            pair = -self.frustration(kind=pair, sequence=sequence, aa_freq=aa_freq)
+
+        tcl_script = frustration.write_tcl_script(
+            self.pdb_file, self.chain, self.mask, self.distance_matrix, self.distance_cutoff,
+            single, pair,
+            max_connections=max_connections, movie_name=movie_name, still_image_name=still_image_name)
+        
         if call_vmd:
             frustration.call_vmd(self.pdb_file, tcl_script)
 
