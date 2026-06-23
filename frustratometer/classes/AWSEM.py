@@ -472,12 +472,16 @@ class AWSEM(Frustratometer):
         return sw, 1 - sw
 
     def _configurational_pair_energy(self, c, n1, n2, q1, q2, theta, thetaII,
-                                     electrostatics_indicator, charges, burial_indicator):
+                                     electrostatics_indicator, charges, burial_indicator,
+                                     extra_field=None):
         """Energy of a configurational contact event: contact geometry ``c`` (theta/thetaII/
         elec indicator at that contact), local environment at positions ``n1``/``n2`` (burial
         and sigma resampled from rho), and identities ``q1``/``q2`` (AWSEM 20-letter). When
         membrane is enabled, burial blends by per-residue alpha (plus the Zim field) and the
-        contact term blends by pairwise alpha. Shared by the native-energy and decoy loops."""
+        contact term blends by pairwise alpha. Shared by the native-energy and decoy loops.
+
+        ``extra_field`` (N, 20) is an optional per-residue, per-identity single-body field
+        (e.g. an external charge field), added like burial: ``field[n1,q1] + field[n2,q2]``."""
         burial_energy1 = (-0.5 * self.k_contact * self.burial_gamma[q1] * burial_indicator[n1]).sum(axis=0)
         burial_energy2 = (-0.5 * self.k_contact * self.burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
         if self.alpha is not None:
@@ -501,7 +505,10 @@ class AWSEM(Frustratometer):
             alpha_ij = self.alpha[n1] * self.alpha[n2]
             contact_energy = (1 - alpha_ij) * contact_energy + alpha_ij * m_contact
         electrostatics_energy = self.k_electrostatics * electrostatics_indicator[c] * charges[q1] * charges[q2]
-        return burial_energy1 + burial_energy2 + contact_energy + electrostatics_energy
+        energy = burial_energy1 + burial_energy2 + contact_energy + electrostatics_energy
+        if extra_field is not None:
+            energy = energy + extra_field[n1, q1] + extra_field[n2, q2]
+        return energy
 
     def compute_configurational_decoy_statistics(self, n_decoys=4000,aa_freq=None):
         # ['A', 'R', 'N', 'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
@@ -569,7 +576,72 @@ class AWSEM(Frustratometer):
             configurational_energies[n1,n2]=energy
             configurational_energies[n2,n1]=energy
         return configurational_energies
-    
+
+    def _configurational_field_awsem(self, charge_coords, charges):
+        """External charge field reindexed from the 21-letter Potts alphabet to the 20-letter
+        AWSEM order used by the configurational energy, or None when no charges are given."""
+        if charge_coords is None:
+            return None
+        field = self._charge_field(charge_coords, charges, None, None)  # (N, 21), _AA_21 order
+        awsem_cols = [_AA_21.index(aa) for aa in 'ARNDCQEGHILKMFPSTWYV']
+        return field[:, awsem_cols]  # (N, 20)
+
+    def _configurational_native_energies(self, extra_field):
+        """Native configurational contact energies (N, N), NaN off-contact, with the optional
+        single-body field added at each residue's native identity."""
+        native = self.compute_configurational_energies()
+        if extra_field is not None:
+            seq_index = np.array(['ARNDCQEGHILKMFPSTWYV'.find(aa) for aa in self.sequence])
+            native_field = extra_field[np.arange(self.N), seq_index]
+            native = native + native_field[:, None] + native_field[None, :]
+        return native
+
+    def _configurational_decoy_statistics_scoped(self, n_decoys, seed, decoy_positions, extra_field):
+        """Mean/std of configurational decoy energies, sampling the contact geometry from the
+        whole structure and the two residues' positions and identities from ``decoy_positions``
+        (the whole protein for ``decoy_scope='whole'``, the active set for ``'active'``)."""
+        _AA = 'ARNDCQEGHILKMFPSTWYV'
+        seq_index = np.array([_AA.find(aa) for aa in self.sequence])
+        distances, _, _ = self._get_configurational_contact_data()
+        burial_indicator = self._burial_indicator
+        theta = 0.25 * (1 + np.tanh(self.eta * (distances - self.r_min))) * (1 + np.tanh(self.eta * (self.r_max - distances)))
+        thetaII = 0.25 * (1 + np.tanh(self.eta * (distances - self.r_minII))) * (1 + np.tanh(self.eta * (self.r_maxII - distances)))
+        charges = np.array([0, 1, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
+        electrostatics_indicator = np.exp(-distances / self.electrostatics_screening_length) / distances
+
+        rng = np.random.default_rng(seed)
+        positions = np.asarray(decoy_positions)
+        decoy_energies = np.zeros(n_decoys)
+        for i in range(n_decoys):
+            c = rng.integers(len(distances))
+            n1 = positions[rng.integers(positions.size)]
+            n2 = positions[rng.integers(positions.size)]
+            q1 = seq_index[positions[rng.integers(positions.size)]]
+            q2 = seq_index[positions[rng.integers(positions.size)]]
+            decoy_energies[i] = self._configurational_pair_energy(
+                c, n1, n2, q1, q2, theta, thetaII, electrostatics_indicator, charges,
+                burial_indicator, extra_field=extra_field)
+        return decoy_energies.mean(), decoy_energies.std()
+
+    def _configurational_selection_frustration(self, active, decoy_scope, correction,
+                                               n_decoys, seed, charge_coords, charges):
+        """Configurational frustration of the active-active contacts.
+
+        Each contact's energy depends only on its two residues and the local geometry, so the
+        static context has no effect here beyond restricting the reported contacts to the
+        active set. ``decoy_scope`` selects the pool the decoy shuffle draws positions and
+        identities from: ``'whole'`` (the whole protein, the default) or ``'active'`` (only the
+        active residues). An external charge field, if given, enters as a single-body term."""
+        if decoy_scope not in ('whole', 'active'):
+            raise ValueError(f"decoy_scope must be 'whole' or 'active', got {decoy_scope!r}.")
+        extra_field = self._configurational_field_awsem(charge_coords, charges)
+        native = self._configurational_native_energies(extra_field)
+        positions = active if decoy_scope == 'active' else np.arange(self.N)
+        mean_decoy, std_decoy = self._configurational_decoy_statistics_scoped(
+            n_decoys, seed, positions, extra_field)
+        frustration = -(native - mean_decoy) / (std_decoy + correction)
+        return frustration[np.ix_(active, active)]
+
     def select_residues(self, selection):
         """Resolve a residue selection to 0-based model residue indices.
 
@@ -705,7 +777,7 @@ class AWSEM(Frustratometer):
 
     def frustration(self, sequence=None, kind='singleresidue', mask=None, aa_freq=None, correction=0, dense=True, seed=42,
                     active_residues=None, active_selection=None, static_selection=None,
-                    charge_coords=None, charges=None):
+                    charge_coords=None, charges=None, decoy_scope='whole', n_decoys=4000):
         """Frustration index for the native sequence.
 
         For the pair kinds ("mutational," "pseudoconfigurational," "contact") on a sparse
@@ -721,12 +793,27 @@ class AWSEM(Frustratometer):
         static context (their couplings fold into the active fields). Returns values over
         the active set, in ascending residue order. ``charge_coords`` (M, 3) / ``charges``
         (M,) add an external static charge field (e.g. DNA phosphates) on the active residues.
+
+        For ``kind='configurational'`` on a selection, the active-active contacts are scored
+        directly from the contact physics (no fold; a contact's energy is local to its two
+        residues). ``decoy_scope`` chooses the pool the decoy shuffle draws from: ``'whole'``
+        (the whole protein, the default; equals the full configurational restricted to the
+        active set) or ``'active'`` (only the active residues). ``n_decoys`` sets the shuffle
+        size. An external charge field, if given, enters the configurational energy as a
+        single-body term (like burial). ``decoy_scope='active'`` is configurational-only.
         """
         if (active_residues is not None or active_selection is not None
                 or static_selection is not None or charge_coords is not None):
             active = self._resolve_active(active_residues, active_selection, static_selection) \
                 if (active_residues is not None or active_selection is not None or static_selection is not None) \
                 else np.arange(self.N)
+            if kind == 'configurational':
+                return self._configurational_selection_frustration(
+                    active, decoy_scope, correction, n_decoys, seed, charge_coords, charges)
+            if decoy_scope != 'whole':
+                raise NotImplementedError(
+                    f"decoy_scope={decoy_scope!r} is implemented for kind='configurational' only; "
+                    f"active-scope decoys for {kind!r} are not available yet.")
             return self._static_context_frustration(active, kind, aa_freq, correction, dense,
                                                     charge_coords=charge_coords, charges=charges)
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
@@ -741,7 +828,8 @@ class AWSEM(Frustratometer):
                     return SparseMatrix(fd.contact_i, fd.contact_j, data=values, shape=fd.L)
                 return fmod.mutational_frustration_dense(data, correction=float(correction))
             elif kind == 'configurational':
-                return self.configurational_frustration(aa_freq=aa_freq, correction=correction, seed=seed)
+                return self.configurational_frustration(aa_freq=aa_freq, correction=correction,
+                                                        n_decoys=n_decoys, seed=seed)
         return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction, seed=seed, dense=dense)
 
     def native_energy(self, sequence=None, ignore_couplings_of_gaps=False, ignore_fields_of_gaps=False):
