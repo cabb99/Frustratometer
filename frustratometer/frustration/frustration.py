@@ -2409,6 +2409,49 @@ def sparse_frustration_to_dense(frustration_values: np.ndarray,
     return dense
 
 
+def compute_pseudoconfigurational_frustration_sparse(sparse_potts_model: dict,
+                                                     seq_index: np.ndarray,
+                                                     n_decoys: int = 4000,
+                                                     seed: int = 42,
+                                                     correction: float = 0) -> np.ndarray:
+    """Configurational frustration estimated from a Potts model by a global coupling shuffle.
+
+    A contact's native energy is its two single-body fields plus its coupling,
+    ``-(h[i, s_i] + h[j, s_j]) - J[c, s_i, s_j]``, and is compared to a single global decoy
+    distribution: for each decoy, a coupling is drawn from the whole contact pool, two
+    identities from the native composition, and two single-body field positions from the whole
+    protein, all independently. Returns one value per stored contact (aligned with
+    ``contact_i`` / ``contact_j``): ``(mean_decoy - native) / (std_decoy + correction)``.
+
+    The reference is global (the whole protein), not per-pair as in the mutational decoys. On a
+    Potts model whose fields are burial and whose couplings are contacts, shuffling the coupling
+    is the same operation as shuffling the physical contact geometry, so this reproduces the
+    Monte-Carlo configurational frustration.
+    """
+    h = np.asarray(sparse_potts_model['h'])
+    J = np.asarray(sparse_potts_model['J'])
+    contact_i = np.asarray(sparse_potts_model['contact_i'])
+    contact_j = np.asarray(sparse_potts_model['contact_j'])
+    seq_index = np.asarray(seq_index)
+    L = h.shape[0]
+    n_contacts = J.shape[0]
+
+    rng = np.random.default_rng(seed)
+    decoy_coupling = rng.integers(0, n_contacts, n_decoys)
+    decoy_aa1 = seq_index[rng.integers(0, L, n_decoys)]
+    decoy_aa2 = seq_index[rng.integers(0, L, n_decoys)]
+    decoy_pos1 = rng.integers(0, L, n_decoys)
+    decoy_pos2 = rng.integers(0, L, n_decoys)
+    decoy_energy = -(h[decoy_pos1, decoy_aa1] + h[decoy_pos2, decoy_aa2]) \
+        - J[decoy_coupling, decoy_aa1, decoy_aa2]
+    mean_decoy = decoy_energy.mean()
+    std_decoy = decoy_energy.std()
+
+    native = -(h[contact_i, seq_index[contact_i]] + h[contact_j, seq_index[contact_j]]) \
+        - J[np.arange(n_contacts), seq_index[contact_i], seq_index[contact_j]]
+    return (mean_decoy - native) / (std_decoy + correction)
+
+
 def _build_charges_array():
     """
     Build the (21,) charge vector in the DCA alphabet order.

@@ -742,19 +742,23 @@ class AWSEM(Frustratometer):
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
     def _static_context_frustration(self, active_residues, kind, aa_freq, correction, dense,
-                                    charge_coords=None, charges=None):
+                                    charge_coords=None, charges=None, decoy_scope='whole'):
         """Frustration of the active residues with the rest held as static context.
 
         Folds the static context into the active fields/offset, then runs the standard
         sparse frustration machinery on the reduced model. For "singleresidue" and the
         active-active pairs this equals restricting the full-model frustration to the
         active set (single-/pair-residue decoys hold every other residue at native, which
-        is exactly what the fold encodes), using the full-protein amino-acid frequencies.
+        is exactly what the fold encodes). ``decoy_scope`` selects the amino-acid frequencies
+        the mutation decoys are weighted by: ``'whole'`` (the full-protein composition, the
+        default) or ``'active'`` (the composition of the active residues only).
         """
         if kind not in ('singleresidue', 'mutational', 'contact'):
             raise NotImplementedError(
                 f"active_residues frustration supports kind in "
                 f"('singleresidue', 'mutational', 'contact'), got {kind!r}.")
+        if decoy_scope not in ('whole', 'active'):
+            raise ValueError(f"decoy_scope must be 'whole' or 'active', got {decoy_scope!r}.")
         reduced, _offset = self.fold_static_context(
             active_residues, charge_coords=charge_coords, charges=charges)
         active = np.asarray(active_residues)
@@ -770,8 +774,13 @@ class AWSEM(Frustratometer):
         sub.mask = None
         sub._elec_data = None
         sub._decoy_fluctuation = {}
-        sub.aa_freq = self.aa_freq            # full-protein frequencies (incl. context)
-        sub.contact_freq = self.contact_freq
+        if decoy_scope == 'active':
+            from ..frustration.frustration import compute_aa_freq, compute_contact_freq
+            sub.aa_freq = compute_aa_freq(sub.sequence, include_gaps=False)
+            sub.contact_freq = compute_contact_freq(sub.sequence)
+        else:
+            sub.aa_freq = self.aa_freq            # full-protein frequencies (incl. context)
+            sub.contact_freq = self.contact_freq
         sub.minimally_frustrated_threshold = self.minimally_frustrated_threshold
         return sub.frustration(kind=kind, aa_freq=aa_freq, correction=correction, dense=dense)
 
@@ -794,13 +803,14 @@ class AWSEM(Frustratometer):
         the active set, in ascending residue order. ``charge_coords`` (M, 3) / ``charges``
         (M,) add an external static charge field (e.g. DNA phosphates) on the active residues.
 
-        For ``kind='configurational'`` on a selection, the active-active contacts are scored
-        directly from the contact physics (no fold; a contact's energy is local to its two
-        residues). ``decoy_scope`` chooses the pool the decoy shuffle draws from: ``'whole'``
-        (the whole protein, the default; equals the full configurational restricted to the
-        active set) or ``'active'`` (only the active residues). ``n_decoys`` sets the shuffle
-        size. An external charge field, if given, enters the configurational energy as a
-        single-body term (like burial). ``decoy_scope='active'`` is configurational-only.
+        ``decoy_scope`` chooses the pool the decoy shuffle draws from: ``'whole'`` (the whole
+        protein, the default) or ``'active'`` (only the active residues). For the mutation
+        kinds ("singleresidue," "mutational," "contact") it sets the amino-acid frequencies the
+        decoys are weighted by; for "configurational" it sets the position/identity pool of the
+        shuffle. For ``kind='configurational'`` on a selection the active-active contacts are
+        scored directly from the contact physics (no fold; a contact's energy is local to its
+        two residues), ``n_decoys`` sets the shuffle size, and an external charge field, if
+        given, enters the configurational energy as a single-body term (like burial).
         """
         if (active_residues is not None or active_selection is not None
                 or static_selection is not None or charge_coords is not None):
@@ -810,12 +820,9 @@ class AWSEM(Frustratometer):
             if kind == 'configurational':
                 return self._configurational_selection_frustration(
                     active, decoy_scope, correction, n_decoys, seed, charge_coords, charges)
-            if decoy_scope != 'whole':
-                raise NotImplementedError(
-                    f"decoy_scope={decoy_scope!r} is implemented for kind='configurational' only; "
-                    f"active-scope decoys for {kind!r} are not available yet.")
             return self._static_context_frustration(active, kind, aa_freq, correction, dense,
-                                                    charge_coords=charge_coords, charges=charges)
+                                                    charge_coords=charge_coords, charges=charges,
+                                                    decoy_scope=decoy_scope)
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):
             fmod = self._get_fast_module()
             data = self._get_fast_data()
@@ -830,7 +837,7 @@ class AWSEM(Frustratometer):
             elif kind == 'configurational':
                 return self.configurational_frustration(aa_freq=aa_freq, correction=correction,
                                                         n_decoys=n_decoys, seed=seed)
-        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction, seed=seed, dense=dense)
+        return super().frustration(sequence=sequence, kind=kind, mask=mask, aa_freq=aa_freq, correction=correction, seed=seed, dense=dense, n_decoys=n_decoys)
 
     def native_energy(self, sequence=None, ignore_couplings_of_gaps=False, ignore_fields_of_gaps=False):
         if self._frustration_data is not None and (sequence is None or sequence == self.sequence):

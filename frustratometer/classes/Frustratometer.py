@@ -275,7 +275,7 @@ class Frustratometer:
         self._ensure_dense_potts_model()
         return frustration.compute_scores(self.potts_model)
 
-    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:float = 0, seed:int = 42, dense:bool = True) -> np.ndarray:
+    def frustration(self, sequence:str = None, kind:str = 'singleresidue', mask:np.array = None, aa_freq:np.array = None, correction:float = 0, seed:int = 42, dense:bool = True, n_decoys:int = 4000) -> np.ndarray:
         """
         Calculates frustration index values.
 
@@ -315,8 +315,10 @@ class Frustratometer:
             raise ValueError(
                 "kind='configurational' (Monte-Carlo configurational frustration) is only "
                 "available on models that implement configurational_frustration (e.g. AWSEM). "
-                "For this model use kind='pseudoconfigurational' (analytic approximation)."
+                "For this model use kind='pseudoconfigurational' (the Potts-model estimate)."
             )
+        if kind == 'pseudoconfigurational':
+            return self._pseudoconfigurational_frustration(sequence, mask, n_decoys, seed, correction, dense)
         decoy_fluctuation = self.decoy_fluctuation(sequence=sequence,kind=kind, mask=mask)
         if kind == 'singleresidue':
             if aa_freq is None:
@@ -342,6 +344,28 @@ class Frustratometer:
             else:
                 frustration_values=frustration.compute_pair_frustration(decoy_fluctuation, aa_freq, correction)
             return frustration_values
+
+    def _pseudoconfigurational_frustration(self, sequence, mask, n_decoys, seed, correction, dense):
+        """Configurational frustration estimated on the Potts model by a global coupling shuffle
+        (see ``compute_pseudoconfigurational_frustration_sparse``). Returns the (L, L) matrix, or
+        a per-contact :class:`SparseMatrix` for a sparse model with ``dense=False``. Does not yet
+        fold electrostatics; rebuild with ``k_electrostatics=0``."""
+        if getattr(self, '_elec_data', None) is not None:
+            raise NotImplementedError(
+                "pseudoconfigurational frustration (global coupling shuffle) does not yet fold "
+                "electrostatics; rebuild the model with k_electrostatics=0.")
+        if self._is_sparse:
+            spm = self.sparse_potts_model
+        else:
+            spm = frustration.potts_model_dense_to_sparse(self.potts_model, mask)
+        seq_index = frustration.compute_seq_index(sequence)
+        per_contact = frustration.compute_pseudoconfigurational_frustration_sparse(
+            spm, seq_index, n_decoys=n_decoys, seed=seed, correction=correction)
+        contact_i, contact_j, L = spm['contact_i'], spm['contact_j'], spm['L']
+        if self._is_sparse and not dense:
+            from .Structure import SparseMatrix as _SM
+            return _SM(contact_i, contact_j, data=per_contact, shape=L)
+        return frustration.sparse_frustration_to_dense(per_contact, contact_i, contact_j, L)
 
     def plot_decoy_energy(self, sequence:str = None, kind:str = 'singleresidue', method:str = 'clustermap'):
         """

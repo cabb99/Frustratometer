@@ -213,13 +213,13 @@ def test_configurational_charge_field_changes_frustration(sparse_model):
     assert not np.allclose(base[finite], charged[finite])
 
 
-def test_active_scope_unsupported_for_other_kinds(sparse_model):
-    """decoy_scope='active' is implemented for configurational so far; asking for it on the
-    other kinds raises a clear error rather than silently ignoring the request."""
+def test_pseudoconfigurational_selection_raises(sparse_model):
+    """Pseudoconfigurational frustration on a selection is not supported (it has no clean
+    static-context fold), so requesting it with a selection raises a clear error."""
     model = sparse_model
     active = np.arange(0, model.N, 2)
     with pytest.raises(NotImplementedError):
-        model.frustration(kind='singleresidue', active_residues=active, decoy_scope='active')
+        model.frustration(kind='pseudoconfigurational', active_residues=active)
 
 
 def test_select_residues_string_resolves(sparse_model):
