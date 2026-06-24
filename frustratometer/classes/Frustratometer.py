@@ -348,16 +348,15 @@ class Frustratometer:
     def _pseudoconfigurational_frustration(self, sequence, mask, n_decoys, seed, correction, dense):
         """Configurational frustration estimated on the Potts model by a global coupling shuffle
         (see ``compute_pseudoconfigurational_frustration_sparse``). Returns the (L, L) matrix, or
-        a per-contact :class:`SparseMatrix` for a sparse model with ``dense=False``. Does not yet
-        fold electrostatics; rebuild with ``k_electrostatics=0``."""
-        if getattr(self, '_elec_data', None) is not None:
-            raise NotImplementedError(
-                "pseudoconfigurational frustration (global coupling shuffle) does not yet fold "
-                "electrostatics; rebuild the model with k_electrostatics=0.")
+        a per-contact :class:`SparseMatrix` for a sparse model with ``dense=False``. Membrane is
+        carried by the Potts ``h``/``J``; electrostatics, if present, are folded into the
+        couplings via ``elec_augmented_sparse_potts``."""
         if self._is_sparse:
             spm = self.sparse_potts_model
         else:
             spm = frustration.potts_model_dense_to_sparse(self.potts_model, mask)
+        if getattr(self, '_elec_data', None) is not None:
+            spm = frustration.elec_augmented_sparse_potts(spm, self._elec_data)
         seq_index = frustration.compute_seq_index(sequence)
         per_contact = frustration.compute_pseudoconfigurational_frustration_sparse(
             spm, seq_index, n_decoys=n_decoys, seed=seed, correction=correction)

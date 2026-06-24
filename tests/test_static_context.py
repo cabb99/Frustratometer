@@ -213,13 +213,61 @@ def test_configurational_charge_field_changes_frustration(sparse_model):
     assert not np.allclose(base[finite], charged[finite])
 
 
-def test_pseudoconfigurational_selection_raises(sparse_model):
-    """Pseudoconfigurational frustration on a selection is not supported (it has no clean
-    static-context fold), so requesting it with a selection raises a clear error."""
+def test_pseudoconfigurational_selection_matches_full_restricted(sparse_model):
+    """Pseudoconfigurational frustration on a selection (whole-protein decoy pool) equals the
+    full pseudoconfigurational restricted to the active-active contacts. The decoy pool is global
+    and scoring a subset of contacts changes nothing else, so this is exact at the same seed."""
     model = sparse_model
-    active = np.arange(0, model.N, 2)
-    with pytest.raises(NotImplementedError):
-        model.frustration(kind='pseudoconfigurational', active_residues=active)
+    rng = np.random.default_rng(0)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    selected = model.frustration(kind='pseudoconfigurational', active_residues=active, seed=7, n_decoys=2000)
+    full = model.frustration(kind='pseudoconfigurational', seed=7, n_decoys=2000)
+    assert selected.shape == (len(active), len(active))
+    ci = np.asarray(model.sparse_potts_model['contact_i'])
+    cj = np.asarray(model.sparse_potts_model['contact_j'])
+    active_set = set(active.tolist())
+    to_local = {int(r): k for k, r in enumerate(active)}
+    for i, j in zip(ci, cj):
+        if int(i) in active_set and int(j) in active_set:
+            np.testing.assert_allclose(selected[to_local[int(i)], to_local[int(j)]], full[i, j],
+                                       rtol=1e-9, atol=1e-9)
+
+
+def test_pseudoconfigurational_selection_boolean_mask(sparse_model):
+    """A True/False mask selects the same active-active contacts as the matching index list."""
+    model = sparse_model
+    rng = np.random.default_rng(0)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    mask = np.zeros(model.N, bool); mask[active] = True
+    by_index = model.frustration(kind='pseudoconfigurational', active_residues=active, seed=7, n_decoys=2000)
+    by_mask = model.frustration(kind='pseudoconfigurational', active_residues=mask, seed=7, n_decoys=2000)
+    np.testing.assert_allclose(by_mask, by_index, rtol=1e-9, atol=1e-9)
+
+
+def test_pseudoconfigurational_selection_scope_active_differs(sparse_model):
+    """Drawing the decoy field positions/identities from only the active residues
+    (decoy_scope='active') differs from the whole-protein pool, on the same active contacts."""
+    model = sparse_model
+    rng = np.random.default_rng(1)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    whole = model.frustration(kind='pseudoconfigurational', active_residues=active, seed=7,
+                              n_decoys=4000, decoy_scope='whole')
+    active_only = model.frustration(kind='pseudoconfigurational', active_residues=active, seed=7,
+                                    n_decoys=4000, decoy_scope='active')
+    nonzero = whole != 0
+    assert not np.allclose(whole[nonzero], active_only[nonzero])
+
+
+def test_pseudoconfigurational_selection_dense_sparse_consistent(sparse_model):
+    """dense=False returns a per-contact SparseMatrix over local active indices that expands to
+    the dense active-active matrix."""
+    model = sparse_model
+    rng = np.random.default_rng(2)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    dense = model.frustration(kind='pseudoconfigurational', active_residues=active, seed=7, n_decoys=2000)
+    sparse = model.frustration(kind='pseudoconfigurational', active_residues=active, seed=7,
+                               n_decoys=2000, dense=False)
+    np.testing.assert_allclose(sparse.to_dense(fill=0.0), dense)
 
 
 def test_select_residues_string_resolves(sparse_model):
@@ -305,11 +353,62 @@ def test_dna_charge_field_matches_explicit_potts(sparse_model):
     np.testing.assert_allclose(got, expected, atol=1e-6, rtol=1e-5)
 
 
-def test_electrostatics_not_supported():
-    """Freezing part of the model isn't supported yet when electrostatics are turned on, so
-    it raises an error."""
+@pytest.fixture(scope="module")
+def elec_model():
     structure = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A')
-    model = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
-                                 k_electrostatics=4.184, min_sequence_separation_electrostatics=1)
-    with pytest.raises(NotImplementedError):
-        model.fold_static_context(np.arange(0, model.N, 2))
+    return frustratometer.AWSEM(structure, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
+                                k_electrostatics=4.184, min_sequence_separation_electrostatics=1)
+
+
+def test_singleresidue_selection_electrostatics_matches_full_restricted(elec_model):
+    """With electrostatics on, single-residue frustration over a selection equals the full
+    electrostatic result at those residues: the electrostatics sidecar is restricted onto the
+    active set (the field already includes the static background at native), so freezing the
+    rest reproduces the full frustration. (Previously this raised NotImplementedError.)"""
+    model = elec_model
+    rng = np.random.default_rng(0)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    restricted = model.frustration(kind='singleresidue', active_residues=active)
+    full = model.frustration(kind='singleresidue')
+    np.testing.assert_allclose(restricted, full[active], rtol=1e-9, atol=1e-9)
+
+
+def test_mutational_selection_electrostatics_matches_full_restricted(elec_model):
+    """Mutational frustration over a selection with electrostatics equals the full electrostatic
+    (N, N) result restricted to the active-active sub-block."""
+    model = elec_model
+    rng = np.random.default_rng(0)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    restricted = model.frustration(kind='mutational', active_residues=active)
+    full = model.frustration(kind='mutational')
+    np.testing.assert_allclose(restricted, full[np.ix_(active, active)], rtol=1e-9, atol=1e-9)
+
+
+def test_selection_electrostatics_changes_result(elec_model):
+    """The folded electrostatics actually matter: single-residue frustration over a selection on
+    the electrostatic model differs from the same selection on a model with k_electrostatics=0."""
+    model = elec_model
+    rng = np.random.default_rng(0)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    structure = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A')
+    no_elec = frustratometer.AWSEM(structure, distance_cutoff_contact=9.5,
+                                   min_sequence_separation_contact=2, k_electrostatics=0)
+    with_elec = model.frustration(kind='singleresidue', active_residues=active)
+    without = no_elec.frustration(kind='singleresidue', active_residues=active)
+    assert not np.allclose(with_elec, without)
+
+
+def test_configurational_selection_electrostatics_matches_full_restricted(elec_model):
+    """Configurational frustration over a selection on an electrostatic model (whole-protein
+    decoy pool) equals the full result restricted to the active-active contacts. Configurational
+    includes the pairwise contact electrostatics, and the static context only restricts which
+    contacts are reported."""
+    model = elec_model
+    rng = np.random.default_rng(0)
+    active = np.sort(rng.choice(model.N, size=model.N // 2, replace=False))
+    selected = model.frustration(kind='configurational', active_residues=active, seed=7, n_decoys=2000)
+    full = model.frustration(kind='configurational', active_residues=np.arange(model.N),
+                             seed=7, n_decoys=2000)
+    restricted = full[np.ix_(active, active)]
+    finite = np.isfinite(selected)
+    np.testing.assert_allclose(selected[finite], restricted[finite], rtol=1e-9, atol=1e-9)

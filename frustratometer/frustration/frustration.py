@@ -2413,20 +2413,28 @@ def compute_pseudoconfigurational_frustration_sparse(sparse_potts_model: dict,
                                                      seq_index: np.ndarray,
                                                      n_decoys: int = 4000,
                                                      seed: int = 42,
-                                                     correction: float = 0) -> np.ndarray:
+                                                     correction: float = 0,
+                                                     score_contacts: np.ndarray = None,
+                                                     decoy_positions: np.ndarray = None) -> np.ndarray:
     """Configurational frustration estimated from a Potts model by a global coupling shuffle.
 
     A contact's native energy is its two single-body fields plus its coupling,
     ``-(h[i, s_i] + h[j, s_j]) - J[c, s_i, s_j]``, and is compared to a single global decoy
     distribution: for each decoy, a coupling is drawn from the whole contact pool, two
-    identities from the native composition, and two single-body field positions from the whole
-    protein, all independently. Returns one value per stored contact (aligned with
-    ``contact_i`` / ``contact_j``): ``(mean_decoy - native) / (std_decoy + correction)``.
+    identities from ``decoy_positions``' native composition, and two single-body field positions
+    from ``decoy_positions``, all independently. Returns one value per scored contact:
+    ``(mean_decoy - native) / (std_decoy + correction)``.
 
-    The reference is global (the whole protein), not per-pair as in the mutational decoys. On a
-    Potts model whose fields are burial and whose couplings are contacts, shuffling the coupling
-    is the same operation as shuffling the physical contact geometry, so this reproduces the
-    Monte-Carlo configurational frustration.
+    ``score_contacts`` selects which contacts (indices into ``contact_i``/``contact_j``) to score
+    (default: all). ``decoy_positions`` is the pool the decoy field positions and identities are
+    drawn from (default: the whole protein); the coupling is always drawn from the whole contact
+    pool (the geometry reference is the whole structure). With both defaults the result is
+    identical to the unscoped shuffle.
+
+    The reference is global, not per-pair as in the mutational decoys. On a Potts model whose
+    fields are burial and whose couplings are contacts, shuffling the coupling is the same
+    operation as shuffling the physical contact geometry, so this reproduces the Monte-Carlo
+    configurational frustration.
     """
     h = np.asarray(sparse_potts_model['h'])
     J = np.asarray(sparse_potts_model['J'])
@@ -2435,21 +2443,44 @@ def compute_pseudoconfigurational_frustration_sparse(sparse_potts_model: dict,
     seq_index = np.asarray(seq_index)
     L = h.shape[0]
     n_contacts = J.shape[0]
+    positions = np.arange(L) if decoy_positions is None else np.asarray(decoy_positions)
+    n_positions = positions.size
 
     rng = np.random.default_rng(seed)
     decoy_coupling = rng.integers(0, n_contacts, n_decoys)
-    decoy_aa1 = seq_index[rng.integers(0, L, n_decoys)]
-    decoy_aa2 = seq_index[rng.integers(0, L, n_decoys)]
-    decoy_pos1 = rng.integers(0, L, n_decoys)
-    decoy_pos2 = rng.integers(0, L, n_decoys)
+    decoy_aa1 = seq_index[positions[rng.integers(0, n_positions, n_decoys)]]
+    decoy_aa2 = seq_index[positions[rng.integers(0, n_positions, n_decoys)]]
+    decoy_pos1 = positions[rng.integers(0, n_positions, n_decoys)]
+    decoy_pos2 = positions[rng.integers(0, n_positions, n_decoys)]
     decoy_energy = -(h[decoy_pos1, decoy_aa1] + h[decoy_pos2, decoy_aa2]) \
         - J[decoy_coupling, decoy_aa1, decoy_aa2]
     mean_decoy = decoy_energy.mean()
     std_decoy = decoy_energy.std()
 
-    native = -(h[contact_i, seq_index[contact_i]] + h[contact_j, seq_index[contact_j]]) \
-        - J[np.arange(n_contacts), seq_index[contact_i], seq_index[contact_j]]
+    score = np.arange(n_contacts) if score_contacts is None else np.asarray(score_contacts)
+    ci = contact_i[score]
+    cj = contact_j[score]
+    native = -(h[ci, seq_index[ci]] + h[cj, seq_index[cj]]) - J[score, seq_index[ci], seq_index[cj]]
     return (mean_decoy - native) / (std_decoy + correction)
+
+
+def elec_augmented_sparse_potts(sparse_potts_model: dict, elec_data: dict) -> dict:
+    """Return a copy of ``sparse_potts_model`` with the pairwise contact electrostatics folded
+    into the couplings: ``J_eff[c,a,b] = J[c,a,b] + indicator_at_contacts[c] * q[a] * q[b]``.
+
+    ``indicator_at_contacts = -k_elec*exp(-d/screening)/d``, so the contact energy ``-J_eff``
+    gains the screened-Coulomb term ``+k_elec*exp(-d/screening)/d * q[a]*q[b]`` — the same elec
+    term the configurational energy adds per contact. The single-body field is left out (it is
+    not part of the per-contact configurational score). ``h`` is unchanged."""
+    J = np.asarray(sparse_potts_model['J'])
+    indicator = np.asarray(elec_data['indicator_at_contacts'])
+    charges = np.asarray(elec_data['charges'])
+    if indicator.shape[0] != J.shape[0]:
+        raise ValueError("indicator_at_contacts length does not match the contact couplings.")
+    qq = np.outer(charges, charges)
+    out = dict(sparse_potts_model)
+    out['J'] = J + indicator[:, None, None] * qq[None, :, :]
+    return out
 
 
 def _build_charges_array():

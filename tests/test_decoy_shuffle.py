@@ -134,6 +134,84 @@ def test_singleresidue_active_scope_matches_active_composition_shuffle(model):
     _assert_matches_shuffle(mc, active_scope[local])
 
 
+@pytest.fixture(scope="module")
+def membrane_model():
+    structure = frustratometer.Structure(f'{test_data_path}/2xov.pdb', 'A',
+                                         repair_pdb=False, sparse=True)
+    zim = np.where(np.loadtxt(f'{test_data_path}/PredictedZim') == 2, -1.0, 1.0)
+    return frustratometer.AWSEM(structure, membrane=True, zim=zim,
+                                min_sequence_separation_contact=10, min_sequence_separation_rho=2,
+                                distance_cutoff_contact=9.5, k_electrostatics=0.0)
+
+
+def test_pseudoconfigurational_membrane_matches_configurational(membrane_model):
+    """On a membrane model, pseudoconfigurational (a shuffle on the membrane-blended Potts h/J)
+    reproduces the membrane configurational frustration on the contacts it is defined on. The
+    Potts energy is the OpenAWSEM-validated membrane energy, so this also locks in the
+    configurational Zim term (its sign and preassigned-zim handling)."""
+    model = membrane_model
+    pseudo = model.frustration(kind='pseudoconfigurational', n_decoys=20000)
+    config = model.frustration(kind='configurational')
+    ci = np.asarray(model.sparse_potts_model['contact_i'])
+    cj = np.asarray(model.sparse_potts_model['contact_j'])
+    on_potts = np.zeros(pseudo.shape, bool)
+    on_potts[ci, cj] = True
+    both = on_potts & np.isfinite(config)
+    assert np.corrcoef(pseudo[both], config[both])[0, 1] > 0.95
+
+
+def test_configurational_selection_membrane_matches_full_restricted(membrane_model):
+    """Configurational frustration over a selection on a membrane model equals the full result
+    restricted to the active-active contacts (the membrane blend is in _configurational_pair_energy
+    and the static context only restricts which contacts are reported)."""
+    model = membrane_model
+    active = np.sort(np.random.default_rng(1).choice(model.N, size=model.N // 2, replace=False))
+    selected = model.frustration(kind='configurational', active_residues=active, seed=7, n_decoys=2000)
+    full = model.frustration(kind='configurational', active_residues=np.arange(model.N),
+                             seed=7, n_decoys=2000)
+    restricted = full[np.ix_(active, active)]
+    finite = np.isfinite(selected)
+    np.testing.assert_allclose(selected[finite], restricted[finite], rtol=1e-9, atol=1e-9)
+
+
+@pytest.fixture(scope="module")
+def elec_model():
+    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A')
+    return frustratometer.AWSEM(s, distance_cutoff_contact=9.5, min_sequence_separation_contact=2,
+                                k_electrostatics=4.184, min_sequence_separation_electrostatics=1)
+
+
+def test_pseudoconfigurational_elec_matches_configurational(elec_model):
+    """With electrostatics on, pseudoconfigurational folds the pairwise contact electrostatics
+    into the coupling shuffle, so it reproduces the configurational frustration (which also
+    includes that term). Previously this raised NotImplementedError."""
+    model = elec_model
+    pseudo = model.frustration(kind='pseudoconfigurational', n_decoys=20000)
+    config = model.frustration(kind='configurational')
+    ci = np.asarray(model.sparse_potts_model['contact_i'])
+    cj = np.asarray(model.sparse_potts_model['contact_j'])
+    on_potts = np.zeros(pseudo.shape, bool)
+    on_potts[ci, cj] = True
+    both = on_potts & np.isfinite(config)
+    assert np.corrcoef(pseudo[both], config[both])[0, 1] > 0.95
+
+
+def test_pseudoconfigurational_elec_changes_result(elec_model):
+    """The electrostatics fold actually changes the result: the same contacts have different
+    pseudoconfigurational frustration with vs without the charge interactions."""
+    model = elec_model
+    s = frustratometer.Structure(f'{test_data_path}/6u5e.pdb', 'A')
+    no_elec = frustratometer.AWSEM(s, distance_cutoff_contact=9.5,
+                                   min_sequence_separation_contact=2, k_electrostatics=0)
+    ci = np.asarray(model.sparse_potts_model['contact_i'])
+    cj = np.asarray(model.sparse_potts_model['contact_j'])
+    on_potts = np.zeros((model.N, model.N), bool)
+    on_potts[ci, cj] = True
+    with_elec = model.frustration(kind='pseudoconfigurational', n_decoys=20000, seed=5)
+    without = no_elec.frustration(kind='pseudoconfigurational', n_decoys=20000, seed=5)
+    assert not np.allclose(with_elec[on_potts], without[on_potts])
+
+
 def test_pseudoconfigurational_matches_configurational(model):
     """Pseudoconfigurational is the configurational shuffle done on the Potts model (sample a
     coupling from the whole contact pool, plus fields and identities). On the contacts it is

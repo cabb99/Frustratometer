@@ -199,7 +199,7 @@ class AWSEM(Frustratometer):
         is off. Requires ``self.N``/``self.sequence`` to be set."""
         if not p.membrane:
             self.alpha = self.phi_z = self.dgwoct = self.z_coords = None
-            self._dgwoct_scale = self._zim_h = None
+            self._dgwoct_scale = self._zim_h = self._zim_awsem = None
             return
         # OpenAWSEM uses CB (or CA fallback) for the preassigned Zim term and CA for the simple term.
         if p.z_source == "Auto":
@@ -229,6 +229,8 @@ class AWSEM(Frustratometer):
             self.dgwoct = np.array([self._dgwoct_scale[_AA.index(aa)] for aa in self.sequence], dtype=np.float64)
             zim_h_20 = p.k_membrane * self._dgwoct_scale[None, :] * self.phi_z[:, None]
             self._zim_h = zim_h_20[:, self.aa_map_awsem_list]
+        # (N, 20) AWSEM-ordered view of the Zim field for the configurational energy.
+        self._zim_awsem = self._zim_h[:, [_AA_21.index(aa) for aa in _AA]]
 
     def _build_physics(self, p, expose, pdb_structure):
         """Single physics path: density/contacts/burial (from the one indicator source in
@@ -489,8 +491,8 @@ class AWSEM(Frustratometer):
             m_burial2 = (-0.5 * self.k_contact * self.membrane_burial_gamma[q2] * burial_indicator[n2]).sum(axis=0)
             burial_energy1 = (1 - self.alpha[n1]) * burial_energy1 + self.alpha[n1] * m_burial1
             burial_energy2 = (1 - self.alpha[n2]) * burial_energy2 + self.alpha[n2] * m_burial2
-            burial_energy1 += self.k_membrane * self._dgwoct_scale[q1] * self.phi_z[n1]
-            burial_energy2 += self.k_membrane * self._dgwoct_scale[q2] * self.phi_z[n2]
+            burial_energy1 -= self._zim_awsem[n1, q1]
+            burial_energy2 -= self._zim_awsem[n2, q2]
 
         sigma_water_val, sigma_protein_val = self._compute_sigma_at_pairs(n1, n2)
         direct = theta[c] * self.direct_gamma[q1, q2]
@@ -642,6 +644,43 @@ class AWSEM(Frustratometer):
         frustration = -(native - mean_decoy) / (std_decoy + correction)
         return frustration[np.ix_(active, active)]
 
+    def _pseudoconfigurational_selection_frustration(self, active, decoy_scope, correction,
+                                                     n_decoys, seed, dense):
+        """Pseudoconfigurational frustration of the active-active contacts: the configurational
+        coupling shuffle on the Potts model, restricted to the active set. ``decoy_scope``
+        selects the pool the decoy field positions and identities are drawn from (``'whole'`` or
+        ``'active'``); membrane is carried by the Potts ``h``/``J`` and electrostatics, if
+        present, are folded into the couplings. Returns a ``(len(active), len(active))`` matrix
+        (0 off active-active contacts), or a per-contact :class:`SparseMatrix` over local active
+        indices when ``dense=False``."""
+        if decoy_scope not in ('whole', 'active'):
+            raise ValueError(f"decoy_scope must be 'whole' or 'active', got {decoy_scope!r}.")
+        self._ensure_potts_model()
+        spm = self.sparse_potts_model
+        if getattr(self, '_elec_data', None) is not None:
+            spm = frustration.elec_augmented_sparse_potts(spm, self._elec_data)
+        active = np.sort(np.asarray(active))
+        n_active = active.size
+        to_local = np.full(self.N, -1, dtype=np.intp)
+        to_local[active] = np.arange(n_active)
+        contact_i = np.asarray(spm['contact_i'])
+        contact_j = np.asarray(spm['contact_j'])
+        is_active = np.zeros(self.N, dtype=bool)
+        is_active[active] = True
+        score_contacts = np.where(is_active[contact_i] & is_active[contact_j])[0]
+        positions = active if decoy_scope == 'active' else np.arange(self.N)
+        seq_index = np.array([_AA_21.index(c) for c in self.sequence])
+        per_contact = frustration.compute_pseudoconfigurational_frustration_sparse(
+            spm, seq_index, n_decoys=n_decoys, seed=seed, correction=correction,
+            score_contacts=score_contacts, decoy_positions=positions)
+        local_i = to_local[contact_i[score_contacts]]
+        local_j = to_local[contact_j[score_contacts]]
+        if not dense:
+            return SparseMatrix(local_i, local_j, data=per_contact, shape=n_active)
+        out = np.zeros((n_active, n_active))
+        out[local_i, local_j] = per_contact
+        return out
+
     def select_residues(self, selection):
         """Resolve a residue selection to 0-based model residue indices.
 
@@ -697,13 +736,11 @@ class AWSEM(Frustratometer):
         (constant ``charge_k`` kJ/mol, default 17.3636; ``charge_screening`` Angstrom,
         default the model's electrostatics screening length).
 
-        Protein-protein electrostatics are not yet folded; use ``k_electrostatics=0``.
+        The returned ``(reduced, offset)`` is Potts-only: protein-protein electrostatics are
+        not folded into the reduced model or the offset here. Frustration over a selection
+        handles them separately (see ``_static_context_frustration``).
         """
         from ..awsem.physics import fold_static_context as _fold
-        if self.k_electrostatics != 0:
-            raise NotImplementedError(
-                "Static-context folding does not yet include protein electrostatics; "
-                "rebuild with k_electrostatics=0 (external charge_coords are still supported).")
         self._ensure_potts_model()
         if getattr(self, 'sparse_potts_model', None) is None:
             raise ValueError("fold_static_context requires a sparse Potts model (sparse=True).")
@@ -741,6 +778,35 @@ class AWSEM(Frustratometer):
         mean_decoy_energy, std_decoy_energy = self.compute_configurational_decoy_statistics(n_decoys=n_decoys,aa_freq=aa_freq)
         return -(self.compute_configurational_energies()-mean_decoy_energy)/(std_decoy_energy+correction)
 
+    def _restrict_elec_data(self, active):
+        """Restrict the electrostatics sidecar to the active residues for a static-context
+        frustration, or None if the model has no electrostatics. ``phi`` (the field at each
+        residue from all neighbours at native) is *restricted*, not recomputed, so it keeps the
+        static background; ``indicator_at_contacts`` is restricted to the active-active contacts
+        (the order the fold uses), so the reduced sidecar aligns with the reduced contacts. The
+        single-/pair-residue decoys hold everything else native, so this reproduces the full
+        electrostatic frustration on the active set."""
+        elec = getattr(self, '_elec_data', None)
+        if elec is None:
+            return None
+        active = np.sort(np.asarray(active))
+        is_active = np.zeros(self.N, dtype=bool)
+        is_active[active] = True
+        ci = np.asarray(self.sparse_potts_model['contact_i'])
+        cj = np.asarray(self.sparse_potts_model['contact_j'])
+        aa = is_active[ci] & is_active[cj]
+        return {
+            'charges': elec['charges'],
+            'q_native': np.asarray(elec['q_native'])[active],
+            'phi': np.asarray(elec['phi'])[active],
+            'phi_raw': np.asarray(elec['phi_raw'])[active],
+            'indicator_at_contacts': np.asarray(elec['indicator_at_contacts'])[aa],
+            'mask_at_contacts': np.asarray(elec['mask_at_contacts'])[aa],
+            'mask_mean': elec['mask_mean'],
+            'indicator': None,
+            'L': int(active.size),
+        }
+
     def _static_context_frustration(self, active_residues, kind, aa_freq, correction, dense,
                                     charge_coords=None, charges=None, decoy_scope='whole'):
         """Frustration of the active residues with the rest held as static context.
@@ -772,7 +838,7 @@ class AWSEM(Frustratometer):
         sub.sequence = ''.join(self.sequence[i] for i in active)
         sub.N = len(active)
         sub.mask = None
-        sub._elec_data = None
+        sub._elec_data = self._restrict_elec_data(active)
         sub._decoy_fluctuation = {}
         if decoy_scope == 'active':
             from ..frustration.frustration import compute_aa_freq, compute_contact_freq
@@ -820,6 +886,13 @@ class AWSEM(Frustratometer):
             if kind == 'configurational':
                 return self._configurational_selection_frustration(
                     active, decoy_scope, correction, n_decoys, seed, charge_coords, charges)
+            if kind == 'pseudoconfigurational':
+                if charge_coords is not None:
+                    raise NotImplementedError(
+                        "External charge_coords with a pseudoconfigurational selection is not "
+                        "supported yet; use kind='configurational' for an external charge field.")
+                return self._pseudoconfigurational_selection_frustration(
+                    active, decoy_scope, correction, n_decoys, seed, dense)
             return self._static_context_frustration(active, kind, aa_freq, correction, dense,
                                                     charge_coords=charge_coords, charges=charges,
                                                     decoy_scope=decoy_scope)
