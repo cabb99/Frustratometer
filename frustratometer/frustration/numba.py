@@ -159,13 +159,15 @@ def _mutational(seq_index, contact_i, contact_j, Nc, L,
 # ─── 4. Configurational frustration ──────────────────────────────────────────
 
 @njit(inline='always')
-def _conf_pair_energy(q1, q2, n1, n2, c, h_struct, gammas,
+def _conf_pair_energy(q1, q2, n1, n2, c, h_struct, gammas, alpha,
                       conf_theta, conf_thetaII, rho_r, eta_sigma, rho_0,
                       charges, conf_elec_ind, k_contact, k_elec):
     """Configurational contact energy from the SAME primitives as the frozen queries:
     the burial field ``h_struct`` (read at the decoy positions/identities) and the channel
-    contraction ``_J_val_block`` (with sigma resampled from rho at n1/n2). Three water
-    channels; membrane configurational routes through numpy."""
+    contraction ``_J_val_block`` (with sigma resampled from rho at n1/n2). With membrane
+    (``gammas`` has 6 channels) the contact term blends water (channels 0-2) and membrane
+    (channels 3-5) by ``alpha[n1]*alpha[n2]``; the membrane burial/Zim is already in
+    ``h_struct``."""
     eb = -(h_struct[n1, q1] + h_struct[n2, q2])
     sw = (0.25
           * (1.0 - np.tanh(eta_sigma * (rho_r[n1] - rho_0)))
@@ -174,7 +176,13 @@ def _conf_pair_energy(q1, q2, n1, n2, c, h_struct, gammas,
     cc[0] = conf_theta[c]
     cc[1] = sw * conf_thetaII[c]
     cc[2] = (1.0 - sw) * conf_thetaII[c]
-    ec = -_J_val_block(q1, q2, cc, gammas, k_contact)
+    water = _J_val_block(q1, q2, cc, gammas, k_contact)
+    if gammas.shape[0] == 6:
+        mem = _J_val_block(q1, q2, cc, gammas[3:], k_contact)
+        aij = alpha[n1] * alpha[n2]
+        ec = -((1.0 - aij) * water + aij * mem)
+    else:
+        ec = -water
     ee = k_elec * conf_elec_ind[c] * charges[q1] * charges[q2]
     return eb + ec + ee
 
@@ -182,7 +190,7 @@ def _conf_pair_energy(q1, q2, n1, n2, c, h_struct, gammas,
 @njit(parallel=True, cache=True)
 def _configurational(seq_index, L,
                      conf_ci, conf_cj, n_conf,
-                     h_struct, gammas,
+                     h_struct, gammas, alpha,
                      conf_theta, conf_thetaII, rho_r,
                      eta_sigma, rho_0,
                      charges, conf_elec_ind,
@@ -195,7 +203,7 @@ def _configurational(seq_index, L,
     for c in prange(n_conf):
         n1 = conf_ci[c]; n2 = conf_cj[c]
         native_e[c] = _conf_pair_energy(
-            seq_index[n1], seq_index[n2], n1, n2, c, h_struct, gammas,
+            seq_index[n1], seq_index[n2], n1, n2, c, h_struct, gammas, alpha,
             conf_theta, conf_thetaII, rho_r, eta_sigma, rho_0,
             charges, conf_elec_ind, k_contact, k_elec)
 
@@ -208,7 +216,7 @@ def _configurational(seq_index, L,
         q1 = seq_index[np.random.randint(0, L)]
         q2 = seq_index[np.random.randint(0, L)]
         decoy_e[i] = _conf_pair_energy(
-            q1, q2, n1, n2, c, h_struct, gammas,
+            q1, q2, n1, n2, c, h_struct, gammas, alpha,
             conf_theta, conf_thetaII, rho_r, eta_sigma, rho_0,
             charges, conf_elec_ind, k_contact, k_elec)
 
@@ -416,7 +424,7 @@ def configurational_frustration(data, n_decoys=4000, seed=42, correction=0.0):
     frust = _configurational(
         data.seq_index, data.L,
         data.conf_contact_i, data.conf_contact_j, data.n_conf,
-        data.h_struct, data.gammas,
+        data.h_struct, data.gammas, data.alpha,
         data.conf_theta, data.conf_thetaII, data.rho_r,
         data.eta_sigma, data.rho_0,
         data.charges, data.conf_elec_ind,

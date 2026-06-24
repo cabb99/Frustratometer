@@ -216,6 +216,7 @@ class FrustrationData:
     burial_indicator: np.ndarray    # (L, 3)
     rho_r: np.ndarray               # (L,)
     h_struct: np.ndarray            # (L, 21) precomputed field: burial (+ membrane/Zim/static)
+    alpha: np.ndarray               # (L,) per-residue membrane blend (zeros if no membrane)
 
     # Gammas (DCA 21-letter): [direct, water, protein]
     gammas: np.ndarray              # (3, 21, 21)
@@ -321,9 +322,11 @@ class FrustrationData:
             h_struct = (1 - a_res) * h_struct + a_res * h_struct_mem
             if zim_h is not None:
                 h_struct = h_struct + np.asarray(zim_h, dtype=np.float64)
+            alpha_field = np.asarray(alpha, dtype=np.float64)
         else:
             gammas = np.stack([dg, wg, pg])  # (3, 21, 21)
             coeff = np.stack([theta, tsw, tsp], axis=1)  # (Nc, 3)
+            alpha_field = np.zeros(L, dtype=np.float64)
 
         # Frequencies
         aa_freq, contact_freq = compute_frequencies(seq_index)
@@ -359,6 +362,7 @@ class FrustrationData:
             burial_indicator=C(burial_indicator),
             rho_r=C(rho_r),
             h_struct=C(h_struct),
+            alpha=C(alpha_field),
             gammas=C(gammas), bg=bg,
             aa_freq=aa_freq, contact_freq=C(contact_freq),
             charges=CHARGES.copy(),

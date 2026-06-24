@@ -58,6 +58,7 @@ def _config_pair_energy(
     c,
     h_struct,
     gammas,
+    alpha,
     conf_theta,
     conf_thetaII,
     rho_r,
@@ -69,8 +70,10 @@ def _config_pair_energy(
     k_electrostatics,
 ):
     """Configurational contact energy from the same burial field ``h_struct`` as the frozen
-    kernels (read at the decoy positions/identities); contact uses the three water channels
-    with sigma resampled from rho. Membrane configurational routes through numpy."""
+    kernels (read at the decoy positions/identities); contact uses the channel contraction with
+    sigma resampled from rho. With membrane (``gammas`` has 6 channels) the contact term blends
+    water (channels 0-2) and membrane (channels 3-5) by ``alpha[n1]*alpha[n2]``; the membrane
+    burial/Zim is already in ``h_struct``."""
     burial = -(h_struct[n1, q1] + h_struct[n2, q2])
 
     switch = (
@@ -79,11 +82,16 @@ def _config_pair_energy(
         * (1.0 - math.tanh(eta_sigma * (rho_r[n2] - rho_0)))
     )
 
-    contact = -k_contact * (
-        gammas[0, q1, q2] * conf_theta[c]
-        + gammas[1, q1, q2] * switch * conf_thetaII[c]
-        + gammas[2, q1, q2] * (1.0 - switch) * conf_thetaII[c]
-    )
+    c0 = conf_theta[c]
+    c1 = switch * conf_thetaII[c]
+    c2 = (1.0 - switch) * conf_thetaII[c]
+    water = gammas[0, q1, q2] * c0 + gammas[1, q1, q2] * c1 + gammas[2, q1, q2] * c2
+    if gammas.shape[0] == 6:
+        mem = gammas[3, q1, q2] * c0 + gammas[4, q1, q2] * c1 + gammas[5, q1, q2] * c2
+        aij = alpha[n1] * alpha[n2]
+        contact = -k_contact * ((1.0 - aij) * water + aij * mem)
+    else:
+        contact = -k_contact * water
 
     electrostatic = k_electrostatics * conf_elec_ind[c] * charges[q1] * charges[q2]
     return burial + contact + electrostatic
@@ -309,6 +317,7 @@ def _config_native_kernel(
     conf_contact_j,
     h_struct,
     gammas,
+    alpha,
     conf_theta,
     conf_thetaII,
     rho_r,
@@ -337,6 +346,7 @@ def _config_native_kernel(
         c,
         h_struct,
         gammas,
+        alpha,
         conf_theta,
         conf_thetaII,
         rho_r,
@@ -357,6 +367,7 @@ def _config_decoy_kernel(
     conf_elec_ind,
     h_struct,
     gammas,
+    alpha,
     rho_r,
     eta_sigma,
     rho_0,
@@ -390,6 +401,7 @@ def _config_decoy_kernel(
         c,
         h_struct,
         gammas,
+        alpha,
         conf_theta,
         conf_thetaII,
         rho_r,
@@ -498,6 +510,7 @@ class FrustrationCUDA:
         self.h_struct = cuda.to_device(data.h_struct)
         self.rho_r = cuda.to_device(data.rho_r)
         self.gammas = cuda.to_device(data.gammas)
+        self.alpha = cuda.to_device(data.alpha)
         self.aa_freq = cuda.to_device(data.aa_freq)
         self.contact_freq = cuda.to_device(data.contact_freq)
         self.charges = cuda.to_device(data.charges)
@@ -639,6 +652,7 @@ class FrustrationCUDA:
             self.conf_contact_j,
             self.h_struct,
             self.gammas,
+            self.alpha,
             self.conf_theta,
             self.conf_thetaII,
             self.rho_r,
@@ -658,6 +672,7 @@ class FrustrationCUDA:
             self.conf_elec_ind,
             self.h_struct,
             self.gammas,
+            self.alpha,
             self.rho_r,
             self.eta_sigma,
             self.rho_0,

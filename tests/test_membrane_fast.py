@@ -3,8 +3,9 @@
 Membrane lowers the contact coupling to six channels (water + membrane, blended by
 the per-contact alpha product) and folds the Zim field into h_struct, so the frozen
 kernels (native energy, single-residue, mutational) reproduce the slow membrane model
-with no kernel changes. Configurational on a membrane model routes through the numpy
-path (the fast configurational kernels are water-only for now), so we only check it runs.
+with no kernel changes. The configurational kernels also handle membrane (the contact
+term blends water/membrane channels by the per-decoy-position alpha product), so they
+match the numpy reference instead of routing through it.
 """
 import numpy as np
 import pytest
@@ -86,6 +87,17 @@ def test_numba_membrane_mutational_matches_slow(membrane_models):
     np.testing.assert_allclose(got[mask], ref[mask], atol=1e-5, rtol=1e-4)
 
 
+def test_numba_membrane_configurational_matches_slow(membrane_models):
+    """Configurational frustration now runs on the numba kernel (6-channel membrane blend) and
+    reproduces the numpy reference. Both are Monte-Carlo with independent RNG, but the per-contact
+    native energies match exactly, so the frustration values correlate ~1."""
+    slow, d = membrane_models
+    got = fnumba.configurational_frustration(d, n_decoys=20000, seed=1)
+    ref = slow.frustration(kind='configurational')
+    fin = np.isfinite(got) & np.isfinite(ref)
+    assert np.corrcoef(got[fin], ref[fin])[0, 1] > 0.95
+
+
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="no CUDA GPU available")
 def test_cuda_membrane_matches_slow(membrane_models):
     slow, d = membrane_models
@@ -96,6 +108,10 @@ def test_cuda_membrane_matches_slow(membrane_models):
     got = fcuda.mutational_frustration_dense(d)
     mask = ref != 0
     np.testing.assert_allclose(got[mask], ref[mask], atol=1e-5, rtol=1e-4)
+    conf_ref = slow.frustration(kind='configurational')
+    conf_got = fcuda.configurational_frustration(d, n_decoys=20000, seed=1)
+    fin = np.isfinite(conf_got) & np.isfinite(conf_ref)
+    assert np.corrcoef(conf_got[fin], conf_ref[fin])[0, 1] > 0.95
 
 
 def test_fast_membrane_model_native_matches_nonfast():
@@ -112,6 +128,9 @@ def test_fast_membrane_model_native_matches_nonfast():
     np.testing.assert_allclose(fast.native_energy(), slow.native_energy(), rtol=1e-6)
     np.testing.assert_allclose(fast.frustration(kind='singleresidue'),
                                slow.frustration(kind='singleresidue'), atol=1e-5, rtol=1e-4)
-    # configurational on a membrane fast model must run (routes through numpy) and be finite
-    conf = fast.configurational_frustration(n_decoys=2000, seed=1)
-    assert np.isfinite(conf[np.isfinite(conf)]).all()
+    # configurational on a membrane fast model now runs on the numba kernel and correlates
+    # with the numpy reference
+    conf_fast = fast.configurational_frustration(n_decoys=20000, seed=1)
+    conf_slow = slow.configurational_frustration(n_decoys=20000, seed=1)
+    fin = np.isfinite(conf_fast) & np.isfinite(conf_slow)
+    assert np.corrcoef(conf_fast[fin], conf_slow[fin])[0, 1] > 0.95

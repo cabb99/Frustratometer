@@ -763,11 +763,10 @@ class AWSEM(Frustratometer):
         return self._frustration_data
 
     def configurational_frustration(self,aa_freq=None, correction=0, n_decoys=4000, seed=42):
-        # The fast (numba/cuda) configurational kernels evaluate only the three water
-        # channels, so they do not yet reproduce the membrane blend; route membrane models
-        # through the numpy path, which does. (Frozen native/single/mutational are membrane-
-        # correct on the fast path.)
-        if self._frustration_data is not None and self.alpha is None:
+        # The fast (numba/cuda) configurational kernels now handle the membrane blend (6-channel
+        # gammas + per-decoy-position alpha) as well as electrostatics; only a custom aa_freq is
+        # still unsupported on the fast path.
+        if self._frustration_data is not None:
             if aa_freq is not None:
                 raise NotImplementedError(
                     "Custom aa_freq is not supported by the fast (numba/cuda) configurational "
