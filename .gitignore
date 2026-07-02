@@ -136,3 +136,5 @@ tests/data/*/README
 tests/data/*.rar
 
 scratch
+.history/
+.claude/

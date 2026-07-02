@@ -8,7 +8,7 @@
 """
 from .burial import build_burial_energy
 from .contact import build_sparse_potts
-from .exposure import pair_indicators_dense
+from .density import pair_indicators_dense
 from .selection import fold_static_context
 from .dna_charge import external_charge_field
 
