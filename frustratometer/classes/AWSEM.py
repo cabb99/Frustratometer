@@ -444,7 +444,7 @@ class AWSEM(Frustratometer):
 
         if fast:
             if not self._distance_is_sparse:
-                raise ValueError("fast=True requires a sparse Structure (sparse=True)")
+                raise ValueError("AWSEM(*args, **kwargs, fast=True) requires a sparse Structure(*args, **kwargs, sparse=True)")
             if backend not in ('numba', 'cuda'):
                 raise ValueError(f"backend must be 'numba' or 'cuda', got {backend!r}")
             self._init_fast(p)
