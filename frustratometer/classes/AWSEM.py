@@ -178,10 +178,12 @@ class AWSEM(Frustratometer):
                               full_pdb_distance_matrix=None,
                               expose_indicator_functions: bool = False,
                               sparse: bool = False,
+                              fast: bool = False,
+                              backend: str = 'numba',
                               z_coords=None,
                               **parameters) -> "AWSEM":
         """
-        Build an AWSEM object directly from a dense residue-residue distance
+        Build an AWSEM object directly from a residue-residue distance
         matrix, without a Structure/PDB file. Useful when the distance matrix
         was computed or obtained independently (e.g. predicted contacts, a
         coarse-grained model, or distances loaded from another pipeline).
@@ -209,6 +211,9 @@ class AWSEM(Frustratometer):
         sparse : bool
             If True, build a sparse Potts model. If False (default here, since a dense
             matrix was supplied), build the dense (N, N, Q, Q) model.
+        fast : bool
+            If True, skip Potts model construction and use the fast numba/cuda backend.
+            Requires a sparse distance_matrix and full_pdb_distance_matrix (SparseMatrix)        
         z_coords : np.ndarray (N,), optional
             Per-residue z-coordinate relative to the membrane, only required
             if `membrane=True` is also passed in `**parameters` (there is no
@@ -221,15 +226,35 @@ class AWSEM(Frustratometer):
         -------
         AWSEM
         """
+        # TODO: decide how to handle cases where one matrix is sparse and another is dense
+        if full_pdb_distance_matrix:
+            if (isinstance(distance_matrix, SparseMatrix) and not isinstance(full_pdb_distance_matrix, SparseMatrix)) or \
+             (not isinstance(distance_matrix, SparseMatrix) and isinstance(full_pdb_distance_matrix, SparseMatrix)):
+                 raise TypeError("not sure what to do when distance_matrix and full_pdb_distance_matrix are different types")
+        # check user input
+        if fast and not isinstance(distance_matrix, SparseMatrix):
+            # helpful warning
+            print('\ndistance_matrix seems to be a dense matrix. \n'
+                  f'Dense matrices cannot use the True-like argument fast={fast}. \n'
+                  'This will probably raise an Exception later on in the initialization.\n')
+                  #'Reverting to fast=False.\n')
+            #fast = False
+        #with open('before_construct_called.txt','a') as file:
+        #    file.write('construct called --------')
+        #    file.write(str(distance_matrix))
+        #    file.write('-------------------------')
         return cls._construct(
             distance_matrix=distance_matrix,
             full_pdb_distance_matrix=full_pdb_distance_matrix if full_pdb_distance_matrix is not None else distance_matrix,
             sequence=sequence,
             chain_breaks=chain_breaks,
+            sparse_distance_matrix=distance_matrix,
+            sparse_distance_matrix_elec=distance_matrix,
             z_coords=z_coords,
             expose_indicator_functions=expose_indicator_functions,
             sparse=sparse,
-            fast=False,
+            fast=fast,
+            backend=backend,
             **parameters)
 
     # ------------------------------------------------------------------
@@ -347,6 +372,10 @@ class AWSEM(Frustratometer):
         #Sparse matrices
         self._sparse_distance_matrix = sparse_distance_matrix
         self._sparse_distance_matrix_elec = sparse_distance_matrix_elec
+        #with open('construct_called.txt','a') as file:
+        #    file.write('construct called --------')
+        #    file.write(str(sparse_distance_matrix_elec))
+        #    file.write('-------------------------')
         if self._distance_is_sparse and not sparse:
             # Dense Potts model requested from a sparse distance matrix: this can
             # only be rebuilt from the original PDB file (only available when
@@ -444,7 +473,8 @@ class AWSEM(Frustratometer):
 
         if fast:
             if not self._distance_is_sparse:
-                raise ValueError("AWSEM(*args, **kwargs, fast=True) requires a sparse Structure(*args, **kwargs, sparse=True)")
+                raise ValueError("\nAWSEM(*args, **kwargs, fast=True) requires a sparse\n"
+                    "Structure(*args, **kwargs, sparse=True) or SparseMatrix distance matrix\n")
             if backend not in ('numba', 'cuda'):
                 raise ValueError(f"backend must be 'numba' or 'cuda', got {backend!r}")
             self._init_fast(p)
@@ -660,6 +690,18 @@ class AWSEM(Frustratometer):
                     f"backend='cuda' was requested but the CUDA backend could not be "
                     f"initialized: {e}. Use backend='numba' to run on CPU."
                 ) from e
+
+
+    def change_conformation(self, 
+            alt_distance_matrix, alt_full_pdb_distance_matrix,
+            _sparse_distance_matrix, _sparse_distance_matrix_elec):
+        # WARNING: assumes sparse/fast mode, and distance matrices must be sparse!
+        self.distance_matrix = alt_distance_matrix
+        self.full_pdb_distance_matrix = alt_full_pdb_distance_matrix 
+        self._sparse_distance_matrix = _sparse_distance_matrix
+        self._sparse_distance_matrix_elec = _sparse_distance_matrix_elec
+        self._init_fast(self._init_params)
+
 
     def _ensure_potts_model(self):
         """Lazily build the sparse Potts model for a fast-mode model.
